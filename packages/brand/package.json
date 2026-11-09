@@ -1,0 +1,21 @@
+{
+  "name": "@tahseel/brand",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./tokens.css": "./tokens/tokens.css",
+    "./tokens.json": "./tokens/tokens.json",
+    "./tailwind.preset": "./tokens/tailwind.preset.ts"
+  },
+  "scripts": {
+    "lint": "eslint contrast.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

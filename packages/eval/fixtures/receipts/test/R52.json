@@ -1,0 +1,18 @@
+{
+  "id": "R52",
+  "clean": false,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 129000,
+    "currency": "EGP",
+    "datetime": "2026-11-04T10:04:00Z",
+    "sender_name": "سامح نبيل جورج",
+    "sender_account_tail": "1676",
+    "reference_no": "REF-2026-1052",
+    "method": "instapay",
+    "status_text": "ناجحة",
+    "confidence": 0.9500000000000001,
+    "tamper_signals": []
+  }
+}

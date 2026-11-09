@@ -1,0 +1,27 @@
+{
+  "name": "@tahseel/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./payments-crypto": "./src/payments-crypto.ts",
+    "./files-crypto": "./src/files-crypto.ts"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "libphonenumber-js": "^1.12.24",
+    "xlsx": "0.18.5",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "fast-check": "^3.23.2",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "R44",
+  "clean": false,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 13000,
+    "currency": "EGP",
+    "datetime": "2026-11-03T10:08:00Z",
+    "sender_name": "عمر فاروق ناصر",
+    "sender_account_tail": "1572",
+    "reference_no": "REF-2026-1044",
+    "method": "instapay",
+    "status_text": "ناجحة",
+    "confidence": 0.9700000000000001,
+    "tamper_signals": []
+  }
+}

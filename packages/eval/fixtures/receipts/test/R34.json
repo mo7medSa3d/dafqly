@@ -1,0 +1,18 @@
+{
+  "id": "R34",
+  "clean": true,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 183000,
+    "currency": "EGP",
+    "datetime": "2026-11-07T10:58:00Z",
+    "sender_name": "خالد مصطفى زيدان",
+    "sender_account_tail": "1442",
+    "reference_no": "REF-2026-1034",
+    "method": "wallet",
+    "status_text": "ناجحة",
+    "confidence": 0.9700000000000001,
+    "tamper_signals": []
+  }
+}

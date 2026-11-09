@@ -1,0 +1,18 @@
+{
+  "id": "R15",
+  "clean": true,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 20050,
+    "currency": "EGP",
+    "datetime": "2026-11-02T10:45:00Z",
+    "sender_name": "إيمان سعيد حجازي",
+    "sender_account_tail": "1195",
+    "reference_no": "REF-2026-1015",
+    "method": "fawry",
+    "status_text": "ناجحة",
+    "confidence": 0.93,
+    "tamper_signals": []
+  }
+}

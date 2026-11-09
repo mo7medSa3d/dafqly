@@ -1,0 +1,18 @@
+{
+  "id": "R16",
+  "clean": true,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 57000,
+    "currency": "EGP",
+    "datetime": "2026-11-03T10:52:00Z",
+    "sender_name": "باسم فكري عوض",
+    "sender_account_tail": "1208",
+    "reference_no": "REF-2026-1016",
+    "method": "instapay",
+    "status_text": "ناجحة",
+    "confidence": 0.9400000000000001,
+    "tamper_signals": []
+  }
+}

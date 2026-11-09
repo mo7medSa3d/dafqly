@@ -1,0 +1,18 @@
+{
+  "id": "R57",
+  "clean": false,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 134050,
+    "currency": "EGP",
+    "datetime": "2026-11-02T10:39:00Z",
+    "sender_name": "شيماء رجب علي",
+    "sender_account_tail": "1741",
+    "reference_no": "REF-2026-1057",
+    "method": "bank",
+    "status_text": "ناجحة",
+    "confidence": 0.9500000000000001,
+    "tamper_signals": []
+  }
+}

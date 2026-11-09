@@ -1,0 +1,18 @@
+{
+  "id": "R35",
+  "clean": true,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 40000,
+    "currency": "EGP",
+    "datetime": "2026-11-01T10:05:00Z",
+    "sender_name": "إيمان سعيد حجازي",
+    "sender_account_tail": "1455",
+    "reference_no": "REF-2026-1035",
+    "method": "fawry",
+    "status_text": "ناجحة",
+    "confidence": 0.93,
+    "tamper_signals": []
+  }
+}

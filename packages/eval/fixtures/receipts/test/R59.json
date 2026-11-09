@@ -1,0 +1,18 @@
+{
+  "id": "R59",
+  "clean": false,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 28000,
+    "currency": "EGP",
+    "datetime": "2026-11-04T10:53:00Z",
+    "sender_name": "أميرة توفيق سالم",
+    "sender_account_tail": "1767",
+    "reference_no": "REF-2026-1059",
+    "method": "fawry",
+    "status_text": "ناجحة",
+    "confidence": 0.9700000000000001,
+    "tamper_signals": []
+  }
+}

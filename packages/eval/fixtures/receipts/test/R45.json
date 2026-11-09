@@ -1,0 +1,18 @@
+{
+  "id": "R45",
+  "clean": false,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 50050,
+    "currency": "EGP",
+    "datetime": "2026-11-04T10:15:00Z",
+    "sender_name": "سلمى خالد عادل",
+    "sender_account_tail": "1585",
+    "reference_no": "REF-2026-1045",
+    "method": "bank",
+    "status_text": "ناجحة",
+    "confidence": 0.93,
+    "tamper_signals": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "existingPhones": {},
+  "stats": {
+    "total": 5000,
+    "valid": 5000,
+    "invalid": 0,
+    "empty": 0,
+    "duplicate": 0
+  },
+  "rows": [
+    {
+      "rowNumber": 2,
+      "status": "valid",
+      "amountMinor": "1000"
+    },
+    {
+      "rowNumber": 5001,
+      "status": "valid",
+      "amountMinor": "1000"
+    }
+  ]
+}

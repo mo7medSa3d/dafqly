@@ -1,0 +1,18 @@
+{
+  "id": "R23",
+  "clean": true,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 136000,
+    "currency": "EGP",
+    "datetime": "2026-11-03T10:41:00Z",
+    "sender_name": "هالة محمود رضوان",
+    "sender_account_tail": "1299",
+    "reference_no": "REF-2026-1023",
+    "method": "fawry",
+    "status_text": "ناجحة",
+    "confidence": 0.9600000000000001,
+    "tamper_signals": []
+  }
+}

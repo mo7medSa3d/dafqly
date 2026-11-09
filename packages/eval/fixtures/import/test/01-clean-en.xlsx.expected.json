@@ -1,0 +1,33 @@
+{
+  "existingPhones": {},
+  "stats": {
+    "total": 3,
+    "valid": 3,
+    "invalid": 0,
+    "empty": 0,
+    "duplicate": 0
+  },
+  "rows": [
+    {
+      "rowNumber": 2,
+      "status": "valid",
+      "phoneE164": "+201001234567",
+      "amountMinor": "125050",
+      "dueOn": "2026-11-20"
+    },
+    {
+      "rowNumber": 3,
+      "status": "valid",
+      "phoneE164": "+201112345678",
+      "amountMinor": "30000",
+      "dueOn": "2026-11-25"
+    },
+    {
+      "rowNumber": 4,
+      "status": "valid",
+      "phoneE164": "+201021234567",
+      "amountMinor": "9999",
+      "dueOn": "2026-12-01"
+    }
+  ]
+}

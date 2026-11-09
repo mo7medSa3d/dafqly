@@ -1,0 +1,28 @@
+{
+  "existingPhones": {},
+  "stats": {
+    "total": 3,
+    "valid": 2,
+    "invalid": 1,
+    "empty": 0,
+    "duplicate": 0
+  },
+  "rows": [
+    {
+      "rowNumber": 2,
+      "status": "valid",
+      "phoneE164": "+20223456789",
+      "whatsappCapable": false
+    },
+    {
+      "rowNumber": 3,
+      "status": "invalid",
+      "errorField": "phone"
+    },
+    {
+      "rowNumber": 4,
+      "status": "valid",
+      "whatsappCapable": true
+    }
+  ]
+}

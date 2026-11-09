@@ -1,0 +1,28 @@
+{
+  "existingPhones": {
+    "+201005005001": "existing-debtor-id"
+  },
+  "stats": {
+    "total": 3,
+    "valid": 1,
+    "invalid": 0,
+    "empty": 0,
+    "duplicate": 2
+  },
+  "rows": [
+    {
+      "rowNumber": 2,
+      "status": "duplicate",
+      "duplicateDebtorId": "existing-debtor-id"
+    },
+    {
+      "rowNumber": 3,
+      "status": "valid"
+    },
+    {
+      "rowNumber": 4,
+      "status": "duplicate",
+      "duplicateOfRow": 3
+    }
+  ]
+}

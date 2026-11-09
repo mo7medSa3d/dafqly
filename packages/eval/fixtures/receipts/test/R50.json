@@ -1,0 +1,18 @@
+{
+  "id": "R50",
+  "clean": false,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 55000,
+    "currency": "EGP",
+    "datetime": "2026-11-02T10:50:00Z",
+    "sender_name": "طارق زياد منصور",
+    "sender_account_tail": "1650",
+    "reference_no": "REF-2026-1050",
+    "method": "wallet",
+    "status_text": "ناجحة",
+    "confidence": 0.93,
+    "tamper_signals": []
+  }
+}

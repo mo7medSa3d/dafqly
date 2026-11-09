@@ -1,0 +1,20 @@
+{
+  "id": "R69",
+  "clean": false,
+  "duplicate": true,
+  "duplicate_of": "R04",
+  "edited": true,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 153000,
+    "currency": "EGP",
+    "datetime": "2026-11-05T10:28:00Z",
+    "sender_name": "عمر فاروق ناصر",
+    "sender_account_tail": "1052",
+    "reference_no": "REF-2026-1004",
+    "method": "instapay",
+    "status_text": "ناجحة",
+    "confidence": 0.9700000000000001,
+    "tamper_signals": []
+  }
+}

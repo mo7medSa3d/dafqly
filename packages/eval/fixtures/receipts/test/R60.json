@@ -1,0 +1,18 @@
+{
+  "id": "R60",
+  "clean": false,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 65050,
+    "currency": "EGP",
+    "datetime": "2026-11-05T10:00:00Z",
+    "sender_name": "أحمد سامي حسن",
+    "sender_account_tail": "1780",
+    "reference_no": "REF-2026-1060",
+    "method": "instapay",
+    "status_text": "ناجحة",
+    "confidence": 0.93,
+    "tamper_signals": []
+  }
+}

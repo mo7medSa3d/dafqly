@@ -1,0 +1,18 @@
+{
+  "id": "R33",
+  "clean": true,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 146050,
+    "currency": "EGP",
+    "datetime": "2026-11-06T10:51:00Z",
+    "sender_name": "رنا عماد الدين",
+    "sender_account_tail": "1429",
+    "reference_no": "REF-2026-1033",
+    "method": "bank",
+    "status_text": "ناجحة",
+    "confidence": 0.9600000000000001,
+    "tamper_signals": []
+  }
+}

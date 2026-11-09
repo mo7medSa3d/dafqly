@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  NODE_ENV: test
+  DATABASE_URL: postgres://tahseel:tahseel@localhost:5432/tahseel
+  APP_DATABASE_URL: postgres://tahseel_app:tahseel_app_dev@localhost:5432/tahseel
+  REDIS_URL: redis://localhost:6379
+  SESSION_SECRET: ci-only-secret-not-for-production-0123456789
+  PHONE_HASH_PEPPER: ci-only-pepper-not-for-production-0123456789
+  BETTER_AUTH_SECRET: ci-only-secret-not-for-production-0123456789
+  BETTER_AUTH_URL: http://localhost:3000
+  DRY_RUN_MESSAGING: "true"
+  RUN_SANDBOX_TESTS: "0"
+  FEATURE_SHARED_BEHAVIOR: "false"
+  NEXT_PUBLIC_BRAND_FONT: "off"
+  REQUIRE_DB_TESTS: "1"
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tahseel
+          POSTGRES_PASSWORD: tahseel
+          POSTGRES_DB: tahseel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tahseel -d tahseel"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Validate docker-compose file
+        run: docker compose config -q
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Lint (eslint + brand grep test + secrets scan)
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Migrate (applies migrations to the CI database)
+        run: pnpm db:migrate
+      - name: Migration drift check (schema and migrations must be in sync)
+        run: |
+          pnpm --filter @tahseel/db generate
+          if [ -n "$(git status --porcelain packages/db/drizzle)" ]; then
+            echo "Schema changed without a generated migration:"; git status --porcelain packages/db/drizzle; exit 1
+          fi
+      - name: Test (unit + integration; REQUIRE_DB_TESTS=1 makes RLS suites mandatory)
+        run: pnpm test
+      - name: Build
+        env:
+          NODE_ENV: production
+        run: pnpm build
+      - name: Eval (synthetic smoke until real data lands; opt-out recall is a hard gate)
+        run: pnpm eval
+      - name: Dependency audit (production deps, high severity)
+        run: pnpm audit --prod --audit-level=high
+
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tahseel
+          POSTGRES_PASSWORD: tahseel
+          POSTGRES_DB: tahseel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tahseel -d tahseel"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: pnpm --filter @tahseel/web exec playwright install --with-deps chromium
+      - name: E2E (migrates + seeds first, per the root test:e2e script)
+        run: pnpm test:e2e
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report

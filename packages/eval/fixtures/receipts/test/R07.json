@@ -1,0 +1,18 @@
+{
+  "id": "R07",
+  "clean": true,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 84000,
+    "currency": "EGP",
+    "datetime": "2026-11-01T10:49:00Z",
+    "sender_name": "نورهان وليد سمير",
+    "sender_account_tail": "1091",
+    "reference_no": "REF-2026-1007",
+    "method": "fawry",
+    "status_text": "ناجحة",
+    "confidence": 0.9500000000000001,
+    "tamper_signals": []
+  }
+}

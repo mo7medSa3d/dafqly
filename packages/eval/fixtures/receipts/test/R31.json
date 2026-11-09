@@ -1,0 +1,18 @@
+{
+  "id": "R31",
+  "clean": true,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 72000,
+    "currency": "EGP",
+    "datetime": "2026-11-04T10:37:00Z",
+    "sender_name": "دينا هشام فاروق",
+    "sender_account_tail": "1403",
+    "reference_no": "REF-2026-1031",
+    "method": "fawry",
+    "status_text": "ناجحة",
+    "confidence": 0.9400000000000001,
+    "tamper_signals": []
+  }
+}

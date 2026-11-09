@@ -1,0 +1,18 @@
+{
+  "id": "R26",
+  "clean": true,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 67000,
+    "currency": "EGP",
+    "datetime": "2026-11-06T10:02:00Z",
+    "sender_name": "يوسف طارق حبيب",
+    "sender_account_tail": "1338",
+    "reference_no": "REF-2026-1026",
+    "method": "wallet",
+    "status_text": "ناجحة",
+    "confidence": 0.9400000000000001,
+    "tamper_signals": []
+  }
+}

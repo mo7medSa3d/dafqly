@@ -1,0 +1,18 @@
+{
+  "id": "R28",
+  "clean": true,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 141000,
+    "currency": "EGP",
+    "datetime": "2026-11-01T10:16:00Z",
+    "sender_name": "حسن عبد الرحمن",
+    "sender_account_tail": "1364",
+    "reference_no": "REF-2026-1028",
+    "method": "instapay",
+    "status_text": "ناجحة",
+    "confidence": 0.9600000000000001,
+    "tamper_signals": []
+  }
+}

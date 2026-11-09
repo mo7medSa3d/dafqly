@@ -1,0 +1,20 @@
+{
+  "id": "R61",
+  "clean": false,
+  "duplicate": true,
+  "duplicate_of": "R01",
+  "edited": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 42000,
+    "currency": "EGP",
+    "datetime": "2026-11-02T10:07:00Z",
+    "sender_name": "منى علي إبراهيم",
+    "sender_account_tail": "1013",
+    "reference_no": "REF-2026-1001",
+    "method": "bank",
+    "status_text": "ناجحة",
+    "confidence": 0.9400000000000001,
+    "tamper_signals": []
+  }
+}

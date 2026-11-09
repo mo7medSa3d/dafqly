@@ -1,0 +1,23 @@
+{
+  "existingPhones": {},
+  "stats": {
+    "total": 2,
+    "valid": 2,
+    "invalid": 0,
+    "empty": 0,
+    "duplicate": 0
+  },
+  "rows": [
+    {
+      "rowNumber": 2,
+      "status": "valid",
+      "amountMinor": "125050",
+      "name": "Ali, Ahmed"
+    },
+    {
+      "rowNumber": 3,
+      "status": "valid",
+      "amountMinor": "300000"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "id": "R62",
+  "clean": false,
+  "duplicate": true,
+  "duplicate_of": "R02",
+  "edited": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 79000,
+    "currency": "EGP",
+    "datetime": "2026-11-03T10:14:00Z",
+    "sender_name": "كريم فؤاد سعد",
+    "sender_account_tail": "1026",
+    "reference_no": "REF-2026-1002",
+    "method": "wallet",
+    "status_text": "ناجحة",
+    "confidence": 0.9500000000000001,
+    "tamper_signals": []
+  }
+}

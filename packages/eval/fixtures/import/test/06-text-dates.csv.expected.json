@@ -1,0 +1,32 @@
+{
+  "existingPhones": {},
+  "stats": {
+    "total": 4,
+    "valid": 4,
+    "invalid": 0,
+    "empty": 0,
+    "duplicate": 0
+  },
+  "rows": [
+    {
+      "rowNumber": 2,
+      "status": "valid",
+      "dueOn": "2026-11-20"
+    },
+    {
+      "rowNumber": 3,
+      "status": "valid",
+      "dueOn": "2026-03-05"
+    },
+    {
+      "rowNumber": 4,
+      "status": "valid",
+      "dueOn": "2026-12-15"
+    },
+    {
+      "rowNumber": 5,
+      "status": "valid",
+      "dueOn": "2027-01-01"
+    }
+  ]
+}

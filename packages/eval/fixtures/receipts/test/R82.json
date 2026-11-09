@@ -1,0 +1,18 @@
+{
+  "id": "R82",
+  "clean": false,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": false,
+    "amount_minor": null,
+    "currency": null,
+    "datetime": null,
+    "sender_name": null,
+    "sender_account_tail": null,
+    "reference_no": null,
+    "method": null,
+    "status_text": null,
+    "confidence": 0.8600000000000001,
+    "tamper_signals": []
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "R49",
+  "clean": false,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 18000,
+    "currency": "EGP",
+    "datetime": "2026-11-01T10:43:00Z",
+    "sender_name": "مريم أشرف كامل",
+    "sender_account_tail": "1637",
+    "reference_no": "REF-2026-1049",
+    "method": "bank",
+    "status_text": "ناجحة",
+    "confidence": 0.9700000000000001,
+    "tamper_signals": []
+  }
+}

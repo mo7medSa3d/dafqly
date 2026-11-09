@@ -1,0 +1,11 @@
+{
+  "id": "L22",
+  "errors": {
+    "2": {
+      "amount_minor": 46050,
+      "cellConfidence": {
+        "amount": 0.35
+      }
+    }
+  }
+}

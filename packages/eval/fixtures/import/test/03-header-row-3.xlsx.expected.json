@@ -1,0 +1,19 @@
+{
+  "existingPhones": {},
+  "stats": {
+    "total": 1,
+    "valid": 1,
+    "invalid": 0,
+    "empty": 0,
+    "duplicate": 0
+  },
+  "headerRow": 2,
+  "rows": [
+    {
+      "rowNumber": 4,
+      "status": "valid",
+      "phoneE164": "+201003334455",
+      "amountMinor": "75025"
+    }
+  ]
+}

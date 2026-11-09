@@ -1,0 +1,42 @@
+/* Brand tokens are imported ONCE here (BRAND §0.2). Never re-declare them. */
+@import "../../../packages/brand/tokens/tokens.css";
+@import "tailwindcss";
+
+/* Tailwind v4 mapping of the brand tokens (BRAND §0: the same variables via
+   @theme). `inline` keeps utilities referencing the CSS variables, so the
+   dark-mode values in tokens.css apply automatically. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-subtle: var(--text-subtle);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-fg: var(--primary-fg);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-link: var(--link);
+  --color-focus: var(--focus);
+  --color-danger: var(--status-overdue-fg);
+  --color-danger-bg: var(--status-overdue-bg);
+  --font-brand: var(--font-brand);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+}
+
+@layer base {
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-brand);
+    line-height: var(--lh-body);
+    letter-spacing: 0; /* BRAND §2.3: never apply letter-spacing to Arabic */
+  }
+  .tnum { font-variant-numeric: tabular-nums; }
+}

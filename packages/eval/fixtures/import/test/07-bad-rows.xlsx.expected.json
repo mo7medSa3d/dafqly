@@ -1,0 +1,45 @@
+{
+  "existingPhones": {},
+  "stats": {
+    "total": 7,
+    "valid": 1,
+    "invalid": 5,
+    "empty": 1,
+    "duplicate": 0
+  },
+  "rows": [
+    {
+      "rowNumber": 2,
+      "status": "invalid",
+      "errorField": "phone"
+    },
+    {
+      "rowNumber": 3,
+      "status": "invalid",
+      "errorField": "amount"
+    },
+    {
+      "rowNumber": 4,
+      "status": "invalid",
+      "errorField": "name"
+    },
+    {
+      "rowNumber": 5,
+      "status": "invalid",
+      "errorField": "dueDate"
+    },
+    {
+      "rowNumber": 6,
+      "status": "empty"
+    },
+    {
+      "rowNumber": 7,
+      "status": "valid"
+    },
+    {
+      "rowNumber": 8,
+      "status": "invalid",
+      "errorField": "amount"
+    }
+  ]
+}

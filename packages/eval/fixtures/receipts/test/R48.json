@@ -1,0 +1,18 @@
+{
+  "id": "R48",
+  "clean": false,
+  "duplicate": false,
+  "extraction": {
+    "is_receipt": true,
+    "amount_minor": 161050,
+    "currency": "EGP",
+    "datetime": "2026-11-07T10:36:00Z",
+    "sender_name": "حسن عبد الرحمن",
+    "sender_account_tail": "1624",
+    "reference_no": "REF-2026-1048",
+    "method": "instapay",
+    "status_text": "ناجحة",
+    "confidence": 0.9600000000000001,
+    "tamper_signals": []
+  }
+}
