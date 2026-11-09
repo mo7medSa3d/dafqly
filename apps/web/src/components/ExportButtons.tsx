@@ -1,7 +1,9 @@
 "use client";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
+import { DownloadSimple } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
+import { Panel } from "./ui";
 
 /** F11 CSV exports: fetched through the tenant-scoped tRPC procedures and saved as a file download. */
 export function ExportButtons() {
@@ -19,12 +21,22 @@ export function ExportButtons() {
       URL.revokeObjectURL(url);
     } finally { setBusy(false); }
   }
+  const kinds = [
+    { kind: "invoices" as const, testid: "export-invoices", label: t("exportInvoices") },
+    { kind: "payments" as const, testid: "export-payments", label: t("exportPayments") },
+    { kind: "debtors" as const, testid: "export-debtors", label: t("exportDebtors") },
+  ];
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="font-bold">{t("exportTitle")}:</span>
-      <button data-testid="export-invoices" disabled={busy} onClick={() => void download("invoices")} className="min-h-touch rounded-md border border-border px-3 py-1 font-bold">{t("exportInvoices")}</button>
-      <button data-testid="export-payments" disabled={busy} onClick={() => void download("payments")} className="min-h-touch rounded-md border border-border px-3 py-1 font-bold">{t("exportPayments")}</button>
-      <button data-testid="export-debtors" disabled={busy} onClick={() => void download("debtors")} className="min-h-touch rounded-md border border-border px-3 py-1 font-bold">{t("exportDebtors")}</button>
-    </div>
+    <Panel title={t("exportTitle")} icon={DownloadSimple}>
+      <div className="flex flex-col gap-2">
+        {kinds.map((k) => (
+          <button key={k.kind} data-testid={k.testid} disabled={busy} onClick={() => void download(k.kind)}
+            className="inline-flex min-h-touch items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 font-bold transition-colors hover:border-border-strong disabled:opacity-60">
+            <DownloadSimple size={17} weight="fill" aria-hidden className="text-text-muted" />
+            {k.label}
+          </button>
+        ))}
+      </div>
+    </Panel>
   );
 }

@@ -2,7 +2,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { formatEgp } from "@tahseel/core";
+import { BellRinging, Camera, Checks } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
+import { ChequesIllustration } from "./illustrations";
+import { EmptyState, Panel, StatusPill, btnGhost, btnPrimary, inputCls, labelCls } from "./ui";
 
 /**
  * F9 cheques UI: manual registration, photo pre-fill (extraction fills the
@@ -124,89 +127,131 @@ export function ChequesClient() {
 
   return (
     <section className="flex flex-col gap-6">
-      {msg && <p role="status" className="font-bold">{msg}</p>}
+      {msg && <p role="status" className="rounded-xl border border-border bg-surface px-4 py-3 font-bold">{msg}</p>}
 
-      <form onSubmit={onRegister} className="flex flex-col gap-3 rounded-md border border-border bg-surface p-4">
-        <h2 className="font-bold">{t("registerTitle")}</h2>
-        <div className="flex flex-col gap-1 rounded-md border border-border p-3">
-          <span className="font-bold">{t("photoTitle")}</span>
-          <span className="text-sm text-text-muted">{t("photoHint")}</span>
-          <input data-testid="cheque-photo" type="file" accept="image/*" disabled={busy}
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) void onPhoto(f); }} />
-        </div>
-        <label className="flex flex-col gap-1"><span>{t("debtor")}</span>
-          <select data-testid="cheque-debtor" required value={form.debtorId} onChange={(e) => setForm({ ...form, debtorId: e.target.value, invoiceId: "" })} className="min-h-touch rounded-md border border-border bg-surface px-3">
-            <option value="">—</option>
-            {debtors.map((d) => <option key={d.id} value={d.id}>{d.displayName}</option>)}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1"><span>{t("direction")}</span>
-          <select data-testid="cheque-direction" value={form.direction} onChange={(e) => setForm({ ...form, direction: e.target.value })} className="min-h-touch rounded-md border border-border bg-surface px-3">
-            <option value="receivable">{t("receivable")}</option>
-            <option value="payable">{t("payable")}</option>
-          </select>
-        </label>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1"><span>{t("number")}</span>
-            <input data-testid="cheque-number" required value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} className="min-h-touch rounded-md border border-border bg-surface px-3" /></label>
-          <label className="flex flex-col gap-1"><span>{t("bank")}</span>
-            <input data-testid="cheque-bank" required value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} className="min-h-touch rounded-md border border-border bg-surface px-3" /></label>
-          <label className="flex flex-col gap-1"><span>{t("amount")}</span>
-            <input data-testid="cheque-amount" required value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="min-h-touch rounded-md border border-border bg-surface px-3" /></label>
-          <label className="flex flex-col gap-1"><span>{t("invoice")}</span>
-            <select data-testid="cheque-invoice" value={form.invoiceId} onChange={(e) => setForm({ ...form, invoiceId: e.target.value })} className="min-h-touch rounded-md border border-border bg-surface px-3">
-              <option value="">{t("none")}</option>
-              {invoices.map((i) => <option key={i.id} value={i.id}>{i.reference ?? i.id} — {formatEgp(BigInt(i.amountMinor))}</option>)}
-            </select></label>
-          <label className="flex flex-col gap-1"><span>{t("issueDate")}</span>
-            <input data-testid="cheque-issue" required type="date" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} className="min-h-touch rounded-md border border-border bg-surface px-3" /></label>
-          <label className="flex flex-col gap-1"><span>{t("dueDate")}</span>
-            <input data-testid="cheque-due" required type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className="min-h-touch rounded-md border border-border bg-surface px-3" /></label>
-        </div>
-        <button data-testid="cheque-submit" type="submit" disabled={busy} className="min-h-touch rounded-md bg-primary px-4 py-2 font-bold text-primary-fg">{t("register")}</button>
-      </form>
-
-      <div className="flex flex-col gap-2 rounded-md border border-border bg-surface p-4">
-        <div className="flex items-center justify-between">
-          <h2 className="font-bold">{t("alertsTitle")}</h2>
-          <button data-testid="cheque-run-alerts" onClick={onRunAlerts} disabled={busy} className="min-h-touch rounded-md border border-border px-3 py-1 font-bold">{t("runAlerts")}</button>
-        </div>
-        {alerts.map((a) => (
-          <p key={a.id} data-testid="cheque-alert" className="text-sm">{t(a.alertKind as "due_in_3_days" | "due_today")} — {a.alertDate}</p>
-        ))}
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <h2 className="font-bold">{t("listTitle")}</h2>
-        {cheques.length === 0 && <p className="text-text-muted">{t("empty")}</p>}
-        {cheques.map((c) => (
-          <article key={c.id} data-testid="cheque-row" className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface p-3">
-            <span className="font-bold">{c.number}</span>
-            <span>{c.bank}</span>
-            <span>{debtorName(c.debtorId)}</span>
-            <span>{t(c.direction as "receivable" | "payable")}</span>
-            {money(c.amountMinor)}
-            <span>{c.dueDate}</span>
-            <span data-testid="cheque-status" className="font-bold">{t(c.status as "held")}</span>
-            <span className="flex gap-2">
-              {(NEXT[c.status] ?? []).map((n) => (
-                <button key={n.to} data-testid={`cheque-to-${n.to}`} disabled={busy}
-                  onClick={() => void onTransition(c.id, n.to)}
-                  className="min-h-touch rounded-md border border-border px-3 py-1 font-bold">{t(n.label as "deposit")}</button>
-              ))}
-            </span>
-          </article>
-        ))}
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <h2 className="font-bold">{t("calendarTitle")}</h2>
-        {calendar.map((g) => (
-          <div key={g.weekStart} className="rounded-md border border-border bg-surface p-3">
-            <p className="font-bold">{t("weekOf")} <span dir="ltr">{g.weekStart}</span></p>
-            {g.cheques.map((c) => <p key={c.id} className="text-sm">{c.number} — {c.dueDate} — {money(c.amountMinor)}</p>)}
+      <Panel title={t("registerTitle")} icon={Checks}>
+        <form onSubmit={onRegister} className="flex flex-col gap-4">
+          <label className="brand-pattern-light flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-dashed border-border-strong bg-surface-muted/40 px-4 py-6 text-center transition-colors hover:bg-surface-muted/70">
+            <Camera size={26} weight="fill" aria-hidden className="text-teal-600 dark:text-teal-300" />
+            <span className="font-bold">{t("photoTitle")}</span>
+            <span className="text-sm text-text-muted">{t("photoHint")}</span>
+            <input data-testid="cheque-photo" type="file" accept="image/*" disabled={busy} className="sr-only"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) void onPhoto(f); }} />
+          </label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className={labelCls}><span>{t("debtor")}</span>
+              <select data-testid="cheque-debtor" required value={form.debtorId} onChange={(e) => setForm({ ...form, debtorId: e.target.value, invoiceId: "" })} className={inputCls}>
+                <option value="">—</option>
+                {debtors.map((d) => <option key={d.id} value={d.id}>{d.displayName}</option>)}
+              </select>
+            </label>
+            <label className={labelCls}><span>{t("direction")}</span>
+              <select data-testid="cheque-direction" value={form.direction} onChange={(e) => setForm({ ...form, direction: e.target.value })} className={inputCls}>
+                <option value="receivable">{t("receivable")}</option>
+                <option value="payable">{t("payable")}</option>
+              </select>
+            </label>
           </div>
-        ))}
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+            <label className={labelCls}><span>{t("number")}</span>
+              <input data-testid="cheque-number" required value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} className={inputCls} /></label>
+            <label className={labelCls}><span>{t("bank")}</span>
+              <input data-testid="cheque-bank" required value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} className={inputCls} /></label>
+            <label className={labelCls}><span>{t("amount")}</span>
+              <input data-testid="cheque-amount" required value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={inputCls} /></label>
+            <label className={labelCls}><span>{t("invoice")}</span>
+              <select data-testid="cheque-invoice" value={form.invoiceId} onChange={(e) => setForm({ ...form, invoiceId: e.target.value })} className={inputCls}>
+                <option value="">{t("none")}</option>
+                {invoices.map((i) => <option key={i.id} value={i.id}>{i.reference ?? i.id} — {formatEgp(BigInt(i.amountMinor))}</option>)}
+              </select></label>
+            <label className={labelCls}><span>{t("issueDate")}</span>
+              <input data-testid="cheque-issue" required type="date" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} className={inputCls} /></label>
+            <label className={labelCls}><span>{t("dueDate")}</span>
+              <input data-testid="cheque-due" required type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className={inputCls} /></label>
+          </div>
+          <div>
+            <button data-testid="cheque-submit" type="submit" disabled={busy} className={btnPrimary}>{t("register")}</button>
+          </div>
+        </form>
+      </Panel>
+
+      <Panel
+        title={t("alertsTitle")}
+        icon={BellRinging}
+        actions={<button data-testid="cheque-run-alerts" onClick={onRunAlerts} disabled={busy} className={btnGhost}>{t("runAlerts")}</button>}
+      >
+        {alerts.length === 0
+          ? <p className="text-text-muted">—</p>
+          : (
+            <ul className="flex flex-col divide-y divide-border">
+              {alerts.map((a) => (
+                <li key={a.id} data-testid="cheque-alert" className="flex items-center gap-2.5 py-2.5 text-sm">
+                  <BellRinging size={16} weight="fill" aria-hidden className="shrink-0 text-status-due-fg" />
+                  {t(a.alertKind as "due_in_3_days" | "due_today")} — <span dir="ltr">{a.alertDate}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+      </Panel>
+
+      <div className="flex flex-col gap-3">
+        <h2 className="text-lg font-extrabold">{t("listTitle")}</h2>
+        {cheques.length === 0
+          ? <EmptyState illustration={<ChequesIllustration size={84} />} title={t("empty")} />
+          : (
+            <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
+              <ul className="flex flex-col divide-y divide-border">
+                {cheques.map((c) => (
+                  <li key={c.id} data-testid="cheque-row" className="flex flex-col gap-2.5 p-4 transition-colors hover:bg-surface-muted/50 sm:p-5">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                      <span className="font-extrabold" dir="ltr">{c.number}</span>
+                      <span className="text-text-muted">{c.bank}</span>
+                      <span className="font-semibold">{debtorName(c.debtorId)}</span>
+                      <span className="rounded-full bg-surface-muted px-2 py-0.5 text-xs font-bold">{t(c.direction as "receivable" | "payable")}</span>
+                      <span className="ms-auto"><StatusPill status={c.status} label={t(c.status as "held")} testId="cheque-status" /></span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                      <span className="tnum text-lg font-extrabold">{money(c.amountMinor)}</span>
+                      <span className="text-sm text-text-muted">{t("dueDate")}: <span dir="ltr">{c.dueDate}</span></span>
+                      <span className="ms-auto flex flex-wrap gap-1.5">
+                        {(NEXT[c.status] ?? []).map((n) => (
+                          <button key={n.to} data-testid={`cheque-to-${n.to}`} disabled={busy}
+                            onClick={() => void onTransition(c.id, n.to)}
+                            className="inline-flex min-h-[32px] items-center rounded-full border border-border px-3 py-1 text-xs font-bold transition-colors hover:border-border-strong hover:bg-surface-muted disabled:opacity-60">
+                            {t(n.label as "deposit")}
+                          </button>
+                        ))}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <h2 className="text-lg font-extrabold">{t("calendarTitle")}</h2>
+        {calendar.length === 0
+          ? <p className="text-text-muted">—</p>
+          : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {calendar.map((g) => (
+                <div key={g.weekStart} className="rounded-xl border border-border bg-surface p-4 panel-shadow sm:p-5">
+                  <p className="mb-2 font-bold">{t("weekOf")} <span dir="ltr">{g.weekStart}</span></p>
+                  <ul className="flex flex-col divide-y divide-border">
+                    {g.cheques.map((c) => (
+                      <li key={c.id} className="flex items-center gap-2 py-2 text-sm">
+                        <span dir="ltr" className="font-semibold">{c.number}</span>
+                        <span className="text-text-muted" dir="ltr">{c.dueDate}</span>
+                        <span className="ms-auto font-bold">{money(c.amountMinor)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
       </div>
     </section>
   );

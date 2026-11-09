@@ -1,14 +1,14 @@
 {
-  "name": "تحصيل",
-  "short_name": "تحصيل",
-  "description": "متابعة المستحقات وتحصيلها",
+  "name": "DAFQLY",
+  "short_name": "DAFQLY",
+  "description": "منصة إدارة المستحقات والتحصيل",
   "lang": "ar",
   "dir": "rtl",
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#F7F7F5",
-  "theme_color": "#154E5B",
+  "background_color": "#F6F8F7",
+  "theme_color": "#14243A",
   "icons": [
     {
       "src": "/icons/icon-192.png",

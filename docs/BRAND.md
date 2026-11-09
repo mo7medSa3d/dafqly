@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-11-09, DAFQLY rebrand, ADR-025):** this is the old Tahseel brand spec, kept for history. The implemented brand guidelines are in `docs/BRAND_GUIDELINES.md`.
+
 # Tahseel (تحصيل): Brand and Design System Spec for the Build Agent
 
 *Companion to the Build Plan. Add this kit to the repo as `packages/brand/` and treat this file as `docs/BRAND.md`. Where this file and the plan overlap (UI, i18n, RTL, PWA), this file wins for anything visual.*

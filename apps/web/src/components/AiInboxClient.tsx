@@ -1,7 +1,10 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { formatEgp } from "@tahseel/core";
+import { CheckCircle, Robot, UploadSimple, XCircle } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
+import { InitialAvatar, Panel, btnPrimary, inputCls, labelCls } from "./ui";
 
 /**
  * The AI inbox (F7/F8): reply classifications a human must review, receipt
@@ -72,52 +75,85 @@ export function AiInboxClient() {
 
   return (
     <section className="flex flex-col gap-6">
-      {msg && <p role="status" className="font-bold">{msg}</p>}
+      {msg && <p role="status" className="rounded-xl border border-border bg-surface px-4 py-3 font-bold">{msg}</p>}
 
-      <div className="flex flex-col gap-2 rounded-md border border-border bg-surface p-4">
-        <h2 className="font-bold">{t("receiptUploadTitle")}</h2>
-        <label className="flex flex-col gap-1">
-          <span>{t("debtor")}</span>
-          <select data-testid="receipt-debtor" className="rounded-md border border-border bg-surface p-2"
-            value={debtorId} onChange={(e) => setDebtorId(e.target.value)}>
-            <option value="">{t("pickDebtor")}</option>
-            {debtors.map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}
-          </select>
-        </label>
-        <input data-testid="receipt-file" type="file" accept="image/*" disabled={busy}
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) void onReceiptFile(f); }} />
+      <Panel title={t("receiptUploadTitle")} icon={UploadSimple}>
+        <div className="flex flex-col gap-4">
+          <label className={labelCls}>
+            <span>{t("debtor")}</span>
+            <select data-testid="receipt-debtor" className={inputCls}
+              value={debtorId} onChange={(e) => setDebtorId(e.target.value)}>
+              <option value="">{t("pickDebtor")}</option>
+              {debtors.map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}
+            </select>
+          </label>
+          <label className="brand-pattern-light flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-dashed border-border-strong bg-surface-muted/40 px-4 py-6 text-center transition-colors hover:bg-surface-muted/70">
+            <UploadSimple size={26} weight="fill" aria-hidden className="text-teal-600 dark:text-teal-300" />
+            <span className="font-bold">{t("receiptUploadTitle")}</span>
+            <input data-testid="receipt-file" type="file" accept="image/*" disabled={busy} className="sr-only"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) void onReceiptFile(f); }} />
+          </label>
+        </div>
+      </Panel>
+
+      <div className="flex flex-col gap-3">
+        <h2 className="text-lg font-extrabold">{t("claimsTitle")}</h2>
+        {claims.length === 0
+          ? <p className="rounded-xl border border-dashed border-border-strong bg-surface px-5 py-6 text-center text-text-muted">{t("claimsEmpty")}</p>
+          : (
+            <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
+              <ul className="flex flex-col divide-y divide-border">
+                {claims.map((c) => (
+                  <li key={c.id} data-testid={`claim-${c.id}`} className="flex flex-wrap items-center gap-3 p-4 sm:p-5">
+                    <InitialAvatar name={c.debtorName} size={40} />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-bold">{c.debtorName}</p>
+                      <p className="text-sm text-text-muted">{c.method} · <span dir="ltr">{c.receivedOn}</span>{c.referenceNo ? ` · ${c.referenceNo}` : ""}</p>
+                    </div>
+                    <span className="tnum text-lg font-extrabold" dir="ltr">{formatEgp(BigInt(c.amountMinor))}</span>
+                    <span className="flex gap-2">
+                      <button type="button" disabled={busy} className={`${btnPrimary} px-3 py-1.5 text-sm`}
+                        onClick={() => void actOnClaim(c.id, "confirm")}>
+                        <CheckCircle size={16} weight="fill" aria-hidden />
+                        {t("confirm")}
+                      </button>
+                      <button type="button" disabled={busy} className="inline-flex min-h-[40px] items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-bold transition-colors hover:border-border-strong disabled:opacity-60"
+                        onClick={() => void actOnClaim(c.id, "reject")}>
+                        <XCircle size={16} weight="fill" aria-hidden />
+                        {t("reject")}
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
       </div>
 
-      <div className="flex flex-col gap-2">
-        <h2 className="font-bold">{t("claimsTitle")}</h2>
-        {claims.length === 0 && <p className="text-text-muted">{t("claimsEmpty")}</p>}
-        <ul className="flex flex-col gap-2">
-          {claims.map((c) => (
-            <li key={c.id} data-testid={`claim-${c.id}`} className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface p-3">
-              <span className="font-bold">{c.debtorName}</span>
-              <span>{(Number(c.amountMinor) / 100).toFixed(2)}</span>
-              <span className="text-text-muted">{c.method} · {c.receivedOn}{c.referenceNo ? ` · ${c.referenceNo}` : ""}</span>
-              <button type="button" disabled={busy} className="rounded-md bg-primary px-3 py-1 font-bold text-primary-fg"
-                onClick={() => void actOnClaim(c.id, "confirm")}>{t("confirm")}</button>
-              <button type="button" disabled={busy} className="rounded-md border border-border px-3 py-1"
-                onClick={() => void actOnClaim(c.id, "reject")}>{t("reject")}</button>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <h2 className="font-bold">{t("intentsTitle")}</h2>
-        {intents.length === 0 && <p className="text-text-muted">{t("intentsEmpty")}</p>}
-        <ul className="flex flex-col gap-2">
-          {intents.map((i) => (
-            <li key={i.id} data-testid={`intent-${i.id}`} className="flex flex-col gap-1 rounded-md border border-border bg-surface p-3">
-              <span className="font-bold">{i.debtorName ?? ""} · {i.intent} · {Math.round(i.confidence * 100)}%</span>
-              {i.text && <span>{i.text}</span>}
-              <span className="text-xs text-text-muted">{i.actionTaken ?? ""} · {i.createdAt.slice(0, 10)}</span>
-            </li>
-          ))}
-        </ul>
+      <div className="flex flex-col gap-3">
+        <h2 className="flex items-center gap-2 text-lg font-extrabold">
+          <Robot size={22} weight="fill" aria-hidden className="text-teal-600 dark:text-teal-300" />
+          {t("intentsTitle")}
+        </h2>
+        {intents.length === 0
+          ? <p className="rounded-xl border border-dashed border-border-strong bg-surface px-5 py-6 text-center text-text-muted">{t("intentsEmpty")}</p>
+          : (
+            <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
+              <ul className="flex flex-col divide-y divide-border">
+                {intents.map((i) => (
+                  <li key={i.id} data-testid={`intent-${i.id}`} className="flex flex-col gap-1.5 p-4 sm:p-5">
+                    <p className="flex flex-wrap items-center gap-2 font-bold">
+                      {i.debtorName ?? ""}
+                      <span className="rounded-full bg-teal-50 px-2.5 py-0.5 text-xs font-bold text-teal-700 dark:bg-surface-muted dark:text-teal-300">{i.intent}</span>
+                      <span className="tnum text-sm text-text-muted" dir="ltr">{Math.round(i.confidence * 100)}%</span>
+                    </p>
+                    {i.text && <p className="text-text">{i.text}</p>}
+                    <p className="text-xs text-text-muted">{i.actionTaken ?? ""} · <span dir="ltr">{i.createdAt.slice(0, 10)}</span></p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
       </div>
     </section>
   );

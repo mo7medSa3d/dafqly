@@ -5,24 +5,58 @@ import { notFound } from "next/navigation";
 import tokens from "@tahseel/brand/tokens.json";
 import { routing, localeDir } from "@/i18n/routing";
 import { brandFontEnabled } from "@/lib/brand";
+import { BRAND } from "@tahseel/brand/brand";
+import "@fontsource/plus-jakarta-sans/400.css";
+import "@fontsource/plus-jakarta-sans/500.css";
+import "@fontsource/plus-jakarta-sans/600.css";
+import "@fontsource/plus-jakarta-sans/700.css";
+import "@fontsource/plus-jakarta-sans/800.css";
+import "@fontsource/ibm-plex-sans-arabic/400.css";
+import "@fontsource/ibm-plex-sans-arabic/500.css";
+import "@fontsource/ibm-plex-sans-arabic/600.css";
+import "@fontsource/ibm-plex-sans-arabic/700.css";
 import "../globals.css";
 
 export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));
 }
 
-// Theme color from the brand tokens (BRAND §9): petrol-700, with a dark variant.
+// Theme color from the brand tokens: navy-700, with a dark variant.
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: tokens.color.petrol["700"] },
-    { media: "(prefers-color-scheme: dark)", color: tokens.color.petrol["800"] },
+    { media: "(prefers-color-scheme: light)", color: tokens.color.navy["700"] },
+    { media: "(prefers-color-scheme: dark)", color: tokens.color.navy["800"] },
   ],
   colorScheme: "light dark",
 };
 
 export const metadata: Metadata = {
-  title: "تحصيل",
-  description: "متابعة المستحقات وتحصيلها",
+  metadataBase: new URL(process.env.APP_URL ?? "http://localhost:3000"),
+  title: BRAND.name,
+  description: BRAND.descriptionAr,
+  openGraph: {
+    title: BRAND.name,
+    description: `${BRAND.tagline} — ${BRAND.supportingLine}`,
+    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: BRAND.name }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: BRAND.name,
+    description: `${BRAND.tagline} — ${BRAND.supportingLine}`,
+    images: ["/og-image.png"],
+  },
+  appleWebApp: {
+    capable: true,
+    title: BRAND.name,
+    startupImage: [
+      { url: "/splash/splash-750x1624.png", media: "(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3)" },
+      { url: "/splash/splash-828x1792.png", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2)" },
+      { url: "/splash/splash-1080x2340.png", media: "(device-width: 360px) and (device-height: 780px) and (-webkit-device-pixel-ratio: 3)" },
+      { url: "/splash/splash-1170x2532.png", media: "(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)" },
+      { url: "/splash/splash-1242x2688.png", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3)" },
+      { url: "/splash/splash-1290x2796.png", media: "(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)" },
+    ],
+  },
 };
 
 export default async function LocaleLayout({

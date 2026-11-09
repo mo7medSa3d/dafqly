@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "Tahseel"
+    "name": "DAFQLY"
   },
   "auth": {
     "email": "Email",
@@ -19,7 +19,9 @@
     "back": "Back",
     "continue": "Continue",
     "loading": "Loading",
-    "save": "Save"
+    "save": "Save",
+    "errorTitle": "Something went wrong",
+    "retry": "Try again"
   },
   "dashboard": {
     "collectedThisMonth": "Collected this month",
@@ -323,5 +325,17 @@
     "deleteConfirmPlaceholder": "Business name or DELETE",
     "deleted": "All data was deleted.",
     "delete": "Delete permanently"
+  },
+  "landing": {
+    "heroTagline": "Track. Follow. Get Paid.",
+    "heroSupporting": "Smarter Receivables. Better Cash Flow.",
+    "ctaSignup": "Create account",
+    "ctaLogin": "Sign in",
+    "step1Title": "Create the invoice",
+    "step1Body": "Record what each customer owes you.",
+    "step2Title": "Send a reminder",
+    "step2Body": "Polite WhatsApp reminders go out on schedule.",
+    "step3Title": "Record the payment",
+    "step3Body": "Close the invoice when it is paid and see your cash flow."
   }
 }

@@ -1,6 +1,10 @@
 "use client";
 import { useState } from "react";
 import { formatEgp } from "@tahseel/core";
+import { BRAND } from "@tahseel/brand/brand";
+import { BrandMark } from "./BrandMark";
+import { PaymentSuccessIllustration } from "./illustrations";
+import { StatusPill } from "./ui";
 
 /**
  * The debtor-facing statement (F10): business name, open invoices, payment
@@ -82,96 +86,126 @@ export function StatementClient({ token, initial }: { token: string; initial: St
 
   return (
     <main data-testid="statement-page" className="mx-auto flex min-h-dvh w-full max-w-xl flex-col gap-5 p-4 sm:p-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-sm text-text-muted">كشف حساب من</p>
-        <h1 data-testid="statement-business" className="text-2xl font-bold">{data.businessName}</h1>
-        <p className="text-text-muted">{data.debtorName}</p>
+      {/* Brand band: who issued this statement + the total due */}
+      <header className="hero-band panel-shadow relative overflow-hidden rounded-2xl p-6 text-white">
+        <div className="brand-pattern absolute inset-0" aria-hidden />
+        <div className="relative flex flex-col gap-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col gap-1">
+              <p className="text-sm text-navy-100">كشف حساب من</p>
+              <h1 data-testid="statement-business" className="text-2xl font-extrabold leading-snug">{data.businessName}</h1>
+              <p className="text-navy-100">{data.debtorName}</p>
+            </div>
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-white/10">
+              <BrandMark variant="white" size={26} />
+            </span>
+          </div>
+          <div className="border-t border-white/15 pt-4">
+            <p className="text-sm text-navy-100">إجمالي المستحق</p>
+            <p className="mt-1 text-4xl font-extrabold leading-none">
+              <span data-testid="statement-total" className="tnum" dir="ltr">{fmt(data.totalDueMinor)}</span>
+              <span className="ms-2 align-middle text-base font-bold text-navy-100">ج.م.</span>
+            </p>
+            {data.gatewayEnabled && openInvoices.length > 0 && (
+              <button data-testid="statement-pay-total" disabled={busy} onClick={() => void onPay()}
+                className="mt-4 inline-flex min-h-touch w-full items-center justify-center rounded-md bg-accent px-4 py-2.5 font-bold text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-60">
+                دفع الإجمالي الآن
+              </button>
+            )}
+          </div>
+        </div>
       </header>
 
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <p className="text-sm text-text-muted">إجمالي المستحق</p>
-        <p className="mt-1 text-3xl font-bold">
-          <span data-testid="statement-total" className="tnum" dir="ltr">{fmt(data.totalDueMinor)}</span>
-          <span className="text-base font-normal"> ج.م.</span>
-        </p>
-        {data.gatewayEnabled && openInvoices.length > 0 && (
-          <button data-testid="statement-pay-total" disabled={busy} onClick={() => void onPay()}
-            className="mt-3 min-h-touch w-full rounded-md bg-primary px-4 font-bold text-primary-fg hover:bg-primary-hover disabled:opacity-60">
-            دفع الإجمالي الآن
-          </button>
+      {msg && <p role="status" data-testid="statement-msg" className="rounded-xl border border-border bg-surface p-4 text-sm font-semibold">{msg}</p>}
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-lg font-extrabold">الفواتير</h2>
+        {data.invoices.length === 0 && <p className="text-text-muted">لا توجد فواتير.</p>}
+        <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
+          <div className="flex flex-col divide-y divide-border">
+            {data.invoices.map((inv) => (
+              <article key={inv.id} data-testid="statement-invoice" className="flex flex-col gap-2 p-4 sm:p-5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-extrabold" dir="ltr">{inv.reference ?? "فاتورة"}</span>
+                  <span className="ms-auto">
+                    <StatusPill status={inv.status} label={STATUS_AR[inv.status] ?? inv.status} testId={`statement-invoice-status-${inv.id}`} />
+                  </span>
+                </div>
+                {inv.description && <p className="text-sm">{inv.description}</p>}
+                <p className="text-sm text-text-muted">
+                  المبلغ: <span className="tnum font-bold text-text" dir="ltr">{fmt(inv.amountMinor)}</span> · المدفوع:{" "}
+                  <span className="tnum font-bold text-text" dir="ltr">{fmt(inv.paidMinor)}</span> · المتبقي:{" "}
+                  <span className="tnum font-bold text-text" dir="ltr">{fmt(inv.outstandingMinor)}</span>
+                </p>
+                <p className="text-sm text-text-muted">الاستحقاق: <span dir="ltr">{inv.dueOn}</span></p>
+                {(inv.status === "open" || inv.status === "partially_paid") && (
+                  <div className="mt-1.5 flex flex-col gap-2">
+                    <div className="flex gap-2">
+                      {data.gatewayEnabled && (
+                        <button data-testid={`statement-pay-${inv.id}`} disabled={busy} onClick={() => void onPay(inv.id)}
+                          className="inline-flex min-h-touch flex-1 items-center justify-center rounded-md bg-primary px-4 py-2 font-bold text-primary-fg transition-colors hover:bg-primary-hover disabled:opacity-60">
+                          دفع هذه الفاتورة
+                        </button>
+                      )}
+                      {!disputedIds.has(inv.id) && (
+                        <button data-testid={`statement-dispute-${inv.id}`} disabled={busy}
+                          onClick={() => setDisputeFor(disputeFor === inv.id ? null : inv.id)}
+                          className="inline-flex min-h-touch flex-1 items-center justify-center rounded-md border border-border px-4 py-2 font-bold transition-colors hover:border-border-strong">
+                          الاعتراض على الفاتورة
+                        </button>
+                      )}
+                    </div>
+                    {disputeFor === inv.id && (
+                      <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); void onDispute(inv.id); }}>
+                        <label className="flex flex-col gap-1.5 text-sm font-semibold">
+                          <span>سبب الاعتراض</span>
+                          <textarea data-testid={`dispute-reason-${inv.id}`} required maxLength={1000} value={reason}
+                            onChange={(e) => setReason(e.target.value)}
+                            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-text" rows={3} />
+                        </label>
+                        <button data-testid={`dispute-submit-${inv.id}`} disabled={busy || reason.trim() === ""}
+                          className="inline-flex min-h-touch items-center justify-center rounded-md bg-primary px-4 py-2 font-bold text-primary-fg transition-colors hover:bg-primary-hover disabled:opacity-60">
+                          إرسال الاعتراض
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                )}
+                {disputedIds.has(inv.id) && <p className="rounded-lg bg-status-disputed-bg px-3 py-2 text-sm font-semibold text-status-disputed-fg">تم تسجيل اعتراض على هذه الفاتورة وجارٍ مراجعته.</p>}
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-lg font-extrabold">سجل المدفوعات</h2>
+        {data.payments.length === 0 && (
+          <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border-strong bg-surface px-5 py-8 text-center">
+            <PaymentSuccessIllustration size={72} />
+            <p className="text-text-muted">لا توجد مدفوعات مسجلة بعد.</p>
+          </div>
+        )}
+        {data.payments.length > 0 && (
+          <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
+            <ul className="flex flex-col divide-y divide-border">
+              {data.payments.map((p) => (
+                <li key={p.id} data-testid="statement-payment" className="flex flex-wrap items-center gap-x-2.5 gap-y-1 p-4 text-sm sm:px-5">
+                  <span className="tnum text-base font-extrabold" dir="ltr">{fmt(p.amountMinor)}</span>
+                  <span>ج.م.</span>
+                  <span className="text-text-muted">· {METHOD_AR[p.method] ?? p.method} · <span dir="ltr">{p.receivedOn}</span></span>
+                  <span className="ms-auto"><StatusPill status={p.status} label={STATUS_AR[p.status] ?? p.status} /></span>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </section>
 
-      {msg && <p role="status" data-testid="statement-msg" className="rounded-lg border border-border bg-surface p-3 text-sm">{msg}</p>}
-
-      <section className="flex flex-col gap-2">
-        <h2 className="font-bold">الفواتير</h2>
-        {data.invoices.length === 0 && <p className="text-text-muted">لا توجد فواتير.</p>}
-        {data.invoices.map((inv) => (
-          <article key={inv.id} data-testid="statement-invoice" className="rounded-lg border border-border bg-surface p-4">
-            <div className="flex items-center justify-between">
-              <span className="font-bold">{inv.reference ?? "فاتورة"}</span>
-              <span data-testid={`statement-invoice-status-${inv.id}`}>{STATUS_AR[inv.status] ?? inv.status}</span>
-            </div>
-            {inv.description && <p className="text-sm">{inv.description}</p>}
-            <p className="text-sm text-text-muted">
-              المبلغ: <span className="tnum" dir="ltr">{fmt(inv.amountMinor)}</span> · المدفوع:{" "}
-              <span className="tnum" dir="ltr">{fmt(inv.paidMinor)}</span> · المتبقي:{" "}
-              <span className="tnum" dir="ltr">{fmt(inv.outstandingMinor)}</span>
-            </p>
-            <p className="text-sm text-text-muted">الاستحقاق: <span dir="ltr">{inv.dueOn}</span></p>
-            {(inv.status === "open" || inv.status === "partially_paid") && (
-              <div className="mt-3 flex flex-col gap-2">
-                <div className="flex gap-2">
-                  {data.gatewayEnabled && (
-                    <button data-testid={`statement-pay-${inv.id}`} disabled={busy} onClick={() => void onPay(inv.id)}
-                      className="min-h-touch flex-1 rounded-md bg-primary px-4 font-bold text-primary-fg hover:bg-primary-hover disabled:opacity-60">
-                      دفع هذه الفاتورة
-                    </button>
-                  )}
-                  {!disputedIds.has(inv.id) && (
-                    <button data-testid={`statement-dispute-${inv.id}`} disabled={busy}
-                      onClick={() => setDisputeFor(disputeFor === inv.id ? null : inv.id)}
-                      className="min-h-touch flex-1 rounded-md border border-border px-4 font-bold">
-                      الاعتراض على الفاتورة
-                    </button>
-                  )}
-                </div>
-                {disputeFor === inv.id && (
-                  <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); void onDispute(inv.id); }}>
-                    <label className="flex flex-col gap-1">
-                      <span className="text-sm">سبب الاعتراض</span>
-                      <textarea data-testid={`dispute-reason-${inv.id}`} required maxLength={1000} value={reason}
-                        onChange={(e) => setReason(e.target.value)}
-                        className="w-full rounded-md border border-border bg-surface px-3 py-2 text-text" rows={3} />
-                    </label>
-                    <button data-testid={`dispute-submit-${inv.id}`} disabled={busy || reason.trim() === ""}
-                      className="min-h-touch rounded-md bg-primary px-4 font-bold text-primary-fg hover:bg-primary-hover disabled:opacity-60">
-                      إرسال الاعتراض
-                    </button>
-                  </form>
-                )}
-              </div>
-            )}
-            {disputedIds.has(inv.id) && <p className="mt-2 text-sm">تم تسجيل اعتراض على هذه الفاتورة وجارٍ مراجعته.</p>}
-          </article>
-        ))}
-      </section>
-
-      <section className="flex flex-col gap-2">
-        <h2 className="font-bold">سجل المدفوعات</h2>
-        {data.payments.length === 0 && <p className="text-text-muted">لا توجد مدفوعات مسجلة بعد.</p>}
-        <ul className="flex flex-col gap-2">
-          {data.payments.map((p) => (
-            <li key={p.id} data-testid="statement-payment" className="rounded-lg border border-border bg-surface p-3 text-sm">
-              <span className="tnum" dir="ltr">{fmt(p.amountMinor)}</span> ج.م. · {METHOD_AR[p.method] ?? p.method} ·{" "}
-              <span dir="ltr">{p.receivedOn}</span> · {STATUS_AR[p.status] ?? p.status}
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <footer className="text-center text-xs text-text-muted">صفحة كشف حساب آمنة من {data.businessName} عبر تحصيل</footer>
+      <footer className="flex items-center justify-center gap-2 pb-2 text-center text-xs text-text-muted">
+        <BrandMark variant="mono" size={16} />
+        <span>صفحة كشف حساب آمنة من {data.businessName} عبر {BRAND.name}</span>
+      </footer>
     </main>
   );
 }

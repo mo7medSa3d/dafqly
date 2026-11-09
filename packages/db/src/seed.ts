@@ -1,7 +1,6 @@
 // Seed: SYNTHETIC demo data only (no real people, phones or amounts owed by
 // anyone real). Demo login: demo@tahseel.test / demo-password-123 — dev only,
 // documented in RUNBOOK.md. Idempotent: safe to run repeatedly.
-import "./load-env";
 import { createHmac, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 // Password hashing MUST match the web auth config (argon2id, BUILD_PLAN §3):

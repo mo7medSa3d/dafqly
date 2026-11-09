@@ -2,7 +2,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { formatEgp } from "@tahseel/core";
+import { MagnifyingGlass, Plus, WarningCircle } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
+import { EmptyInvoicesIllustration } from "./illustrations";
+import { EmptyState, Panel, StatusPill, btnGhost, btnPrimary, inputCls, labelCls } from "./ui";
 
 interface Invoice {
   id: string; debtorId: string; reference: string | null; description: string | null;
@@ -74,83 +77,107 @@ export function InvoicesClient() {
     await load();
   }
 
-  const inputCls = "w-full rounded-md border border-border bg-surface px-3 min-h-touch text-text";
   return (
     <section className="flex flex-col gap-6">
-      <form className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4" onSubmit={(e) => { e.preventDefault(); void onCreate(); }}>
-        <h2 className="font-bold">{t("add")}</h2>
-        <label className="flex flex-col gap-1"><span>{t("debtor")}</span>
-          <select data-testid="inv-debtor" className={inputCls} value={debtorId} onChange={(e) => setDebtorId(e.target.value)}>
-            {debtors.map((d) => <option key={d.id} value={d.id}>{d.displayName}</option>)}
-          </select></label>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1"><span>{t("amount")}</span>
-            <input data-testid="inv-amount" className={inputCls} dir="ltr" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required /></label>
-          <label className="flex flex-col gap-1"><span>{t("reference")}</span>
-            <input data-testid="inv-reference" className={inputCls} value={reference} onChange={(e) => setReference(e.target.value)} /></label>
-          <label className="flex flex-col gap-1"><span>{t("issuedOn")}</span>
-            <input data-testid="inv-issued" type="date" className={inputCls} dir="ltr" value={issuedOn} onChange={(e) => setIssuedOn(e.target.value)} required /></label>
-          <label className="flex flex-col gap-1"><span>{t("dueOn")}</span>
-            <input data-testid="inv-due" type="date" className={inputCls} dir="ltr" value={dueOn} onChange={(e) => setDueOn(e.target.value)} /></label>
-        </div>
-        {error && <p role="alert" className="text-sm">{error}</p>}
-        <button data-testid="inv-create" disabled={!debtorId || amount.trim() === ""} className="min-h-touch rounded-md bg-primary px-4 font-bold text-primary-fg hover:bg-primary-hover disabled:opacity-60">{t("add")}</button>
-      </form>
+      <Panel title={t("add")} icon={Plus}>
+        <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void onCreate(); }}>
+          <label className={labelCls}><span>{t("debtor")}</span>
+            <select data-testid="inv-debtor" className={inputCls} value={debtorId} onChange={(e) => setDebtorId(e.target.value)}>
+              {debtors.map((d) => <option key={d.id} value={d.id}>{d.displayName}</option>)}
+            </select></label>
+          <div className="grid grid-cols-2 gap-4">
+            <label className={labelCls}><span>{t("amount")}</span>
+              <input data-testid="inv-amount" className={inputCls} dir="ltr" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required /></label>
+            <label className={labelCls}><span>{t("reference")}</span>
+              <input data-testid="inv-reference" className={inputCls} value={reference} onChange={(e) => setReference(e.target.value)} /></label>
+            <label className={labelCls}><span>{t("issuedOn")}</span>
+              <input data-testid="inv-issued" type="date" className={inputCls} dir="ltr" value={issuedOn} onChange={(e) => setIssuedOn(e.target.value)} required /></label>
+            <label className={labelCls}><span>{t("dueOn")}</span>
+              <input data-testid="inv-due" type="date" className={inputCls} dir="ltr" value={dueOn} onChange={(e) => setDueOn(e.target.value)} /></label>
+          </div>
+          {error && <p role="alert" className="text-sm text-status-overdue-fg">{error}</p>}
+          <div>
+            <button data-testid="inv-create" disabled={!debtorId || amount.trim() === ""} className={btnPrimary}>
+              <Plus size={18} weight="fill" aria-hidden />
+              {t("add")}
+            </button>
+          </div>
+        </form>
+      </Panel>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <label className="flex flex-col gap-1"><span>{t("search")}</span>
-          <input data-testid="inv-search" className={inputCls} value={search} onChange={(e) => setSearch(e.target.value)} /></label>
-        <label className="flex flex-col gap-1"><span>{t("status")}</span>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <label className={labelCls}><span>{t("search")}</span>
+          <span className="relative block">
+            <MagnifyingGlass size={17} weight="fill" aria-hidden className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-text-subtle" />
+            <input data-testid="inv-search" className={`${inputCls} ps-9`} value={search} onChange={(e) => setSearch(e.target.value)} />
+          </span></label>
+        <label className={labelCls}><span>{t("status")}</span>
           <select data-testid="inv-status-filter" className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">{t("allStatuses")}</option>
             {STATUSES.map((s) => <option key={s} value={s}>{t(`statuses.${s}`)}</option>)}
           </select></label>
-        <label className="flex flex-col gap-1"><span>{t("aging")}</span>
+        <label className={labelCls}><span>{t("aging")}</span>
           <select data-testid="inv-aging-filter" className={inputCls} value={bucket} onChange={(e) => setBucket(e.target.value)}>
             <option value="">—</option>
             {BUCKETS.map((b) => <option key={b} value={b}>{t(`buckets.${b}`)}</option>)}
           </select></label>
-        <label className="flex items-center gap-2 pt-6">
-          <input data-testid="inv-overdue-filter" type="checkbox" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} />
-          <span>{t("overdueOnly")}</span></label>
+        <label className="flex items-center gap-2 self-end pb-2">
+          <input data-testid="inv-overdue-filter" type="checkbox" className="size-[18px] accent-[var(--teal-600)]" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} />
+          <span className="font-semibold">{t("overdueOnly")}</span></label>
       </div>
 
-      <div className="flex items-center gap-2">
-        <select data-testid="inv-bulk-to" className="rounded-md border border-border bg-surface px-3 min-h-touch" value={bulkTo} onChange={(e) => setBulkTo(e.target.value)}>
+      <div className="flex flex-wrap items-center gap-2">
+        <select data-testid="inv-bulk-to" className="min-h-touch rounded-md border border-border bg-surface px-3" value={bulkTo} onChange={(e) => setBulkTo(e.target.value)}>
           {STATUSES.map((s) => <option key={s} value={s}>{t(`statuses.${s}`)}</option>)}
         </select>
-        <button data-testid="inv-bulk-apply" onClick={() => void onBulk()} className="min-h-touch rounded-md border border-border px-4 font-bold">{t("bulkApply")}</button>
-        <span data-testid="inv-count" className="text-sm text-text-muted">{items.length}</span>
+        <button data-testid="inv-bulk-apply" onClick={() => void onBulk()} className={btnGhost}>{t("bulkApply")}</button>
+        <span className="ms-auto inline-flex items-center gap-2 text-sm text-text-muted">
+          {t("title")}: <span data-testid="inv-count" className="tnum font-bold text-text" dir="ltr">{items.length}</span>
+        </span>
       </div>
 
       {items.length === 0 ? (
-        <p data-testid="invoices-empty" className="rounded-lg border border-border bg-surface p-6 text-center text-text-muted">{t("empty")}</p>
+        <EmptyState testId="invoices-empty" illustration={<EmptyInvoicesIllustration size={84} />} title={t("empty")} />
       ) : (
-        <ul className="flex flex-col gap-2">
-          {items.map((i) => (
-            <li key={i.id} data-testid="invoice-row" className="rounded-lg border border-border bg-surface p-4">
-              <div className="flex items-center justify-between gap-2">
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" data-testid="inv-select" checked={selected.has(i.id)}
-                    onChange={(e) => setSelected((s) => { const n = new Set(s); if (e.target.checked) n.add(i.id); else n.delete(i.id); return n; })} />
-                  <span className="font-bold">{i.reference ?? "—"}</span>
-                </label>
-                <span data-testid="invoice-status">{t(`statuses.${i.status}`)}</span>
-              </div>
-              <p className="text-sm text-text-muted">
-                {t("amount")}: <span className="tnum" dir="ltr">{fmt(i.amountMinor)}</span> · {t("remaining")}: <span className="tnum" dir="ltr">{fmt(i.outstandingMinor)}</span> · {t("dueOn")}: <span dir="ltr">{i.dueOn}</span>
-                {i.overdue && <> · <span data-testid="invoice-overdue">{t("overdueOnly")}</span></>}
-              </p>
-              {i.currencyWarning && <p className="text-sm">{t("currencyWarning")}</p>}
-              <div className="mt-2 flex flex-wrap gap-2">
-                {(["disputed", "written_off", "cancelled", "open"] as const).map((to) => (
-                  <button key={to} data-testid={`inv-transition-${to}`} onClick={() => void onTransition(i.id, to)}
-                    className="rounded-md border border-border px-3 py-1 text-sm">{t(`statuses.${to}`)}</button>
-                ))}
-              </div>
-            </li>
-          ))}
-        </ul>
+        <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
+          <ul className="flex flex-col divide-y divide-border">
+            {items.map((i) => (
+              <li key={i.id} data-testid="invoice-row" className="flex flex-col gap-2.5 p-4 transition-colors hover:bg-surface-muted/50 sm:p-5">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <label className="flex items-center gap-2.5">
+                    <input type="checkbox" data-testid="inv-select" className="size-[18px] accent-[var(--teal-600)]" checked={selected.has(i.id)}
+                      onChange={(e) => setSelected((s) => { const n = new Set(s); if (e.target.checked) n.add(i.id); else n.delete(i.id); return n; })} />
+                    <span className="font-extrabold" dir="ltr">{i.reference ?? "—"}</span>
+                  </label>
+                  {i.description && <span className="text-sm text-text-muted">{i.description}</span>}
+                  <span className="ms-auto flex items-center gap-2">
+                    {i.overdue && (
+                      <span data-testid="invoice-overdue" className="inline-flex items-center gap-1 text-xs font-bold text-status-overdue-fg">
+                        <WarningCircle size={14} weight="fill" aria-hidden />
+                        {t("overdueOnly")}
+                      </span>
+                    )}
+                    <StatusPill status={i.status} label={t(`statuses.${i.status}`)} testId="invoice-status" />
+                  </span>
+                </div>
+                <p className="text-sm text-text-muted">
+                  {t("amount")}: <span className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor)}</span>
+                  {" · "}{t("remaining")}: <span className="tnum font-bold text-text" dir="ltr">{fmt(i.outstandingMinor)}</span>
+                  {" · "}{t("dueOn")}: <span dir="ltr">{i.dueOn}</span>
+                </p>
+                {i.currencyWarning && <p className="text-sm font-semibold text-status-due-fg">{t("currencyWarning")}</p>}
+                <div className="flex flex-wrap gap-1.5">
+                  {(["disputed", "written_off", "cancelled", "open"] as const).map((to) => (
+                    <button key={to} data-testid={`inv-transition-${to}`} onClick={() => void onTransition(i.id, to)}
+                      className="inline-flex min-h-[32px] items-center rounded-full border border-border px-3 py-1 text-xs font-bold transition-colors hover:border-border-strong hover:bg-surface-muted">
+                      {t(`statuses.${to}`)}
+                    </button>
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </section>
   );

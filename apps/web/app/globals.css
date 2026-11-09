@@ -23,6 +23,44 @@
   --color-focus: var(--focus);
   --color-danger: var(--status-overdue-fg);
   --color-danger-bg: var(--status-overdue-bg);
+  --color-status-paid-fg: var(--status-paid-fg);
+  --color-status-paid-bg: var(--status-paid-bg);
+  --color-status-due-fg: var(--status-due_soon-fg);
+  --color-status-due-bg: var(--status-due_soon-bg);
+  --color-status-overdue-fg: var(--status-overdue-fg);
+  --color-status-overdue-bg: var(--status-overdue-bg);
+  --color-status-disputed-fg: var(--status-disputed-fg);
+  --color-status-disputed-bg: var(--status-disputed-bg);
+  --color-status-partial-fg: var(--status-partial-fg);
+  --color-status-partial-bg: var(--status-partial-bg);
+  --color-status-draft-fg: var(--status-draft-fg);
+  --color-status-draft-bg: var(--status-draft-bg);
+  --color-navy-50: var(--navy-50);
+  --color-navy-100: var(--navy-100);
+  --color-navy-200: var(--navy-200);
+  --color-navy-300: var(--navy-300);
+  --color-navy-400: var(--navy-400);
+  --color-navy-500: var(--navy-500);
+  --color-navy-600: var(--navy-600);
+  --color-navy-700: var(--navy-700);
+  --color-navy-800: var(--navy-800);
+  --color-navy-900: var(--navy-900);
+  --color-navy-950: var(--navy-950);
+  --color-teal-50: var(--teal-50);
+  --color-teal-100: var(--teal-100);
+  --color-teal-200: var(--teal-200);
+  --color-teal-300: var(--teal-300);
+  --color-teal-400: var(--teal-400);
+  --color-teal-500: var(--teal-500);
+  --color-teal-600: var(--teal-600);
+  --color-teal-700: var(--teal-700);
+  --color-teal-800: var(--teal-800);
+  --color-teal-900: var(--teal-900);
+  --color-slate-100: var(--slate-100);
+  --color-slate-200: var(--slate-200);
+  --color-slate-300: var(--slate-300);
+  --color-slate-400: var(--slate-400);
+  --color-slate-500: var(--slate-500);
   --font-brand: var(--font-brand);
   --radius-sm: var(--radius-sm);
   --radius-md: var(--radius-md);
@@ -39,4 +77,45 @@
     letter-spacing: 0; /* BRAND §2.3: never apply letter-spacing to Arabic */
   }
   .tnum { font-variant-numeric: tabular-nums; }
+}
+
+@layer utilities {
+  /* Soft, token-tinted elevation for panels (no raw color values). */
+  .panel-shadow {
+    box-shadow:
+      0 1px 2px color-mix(in srgb, var(--navy-950) 5%, transparent),
+      0 12px 32px -16px color-mix(in srgb, var(--navy-950) 14%, transparent);
+  }
+  /* Dot pattern in brand teal at very low opacity, for hero/header zones. */
+  .brand-pattern {
+    background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--teal-300) 26%, transparent) 1.4px, transparent 0);
+    background-size: 22px 22px;
+  }
+  .brand-pattern-light {
+    background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--navy-700) 9%, transparent) 1.4px, transparent 0);
+    background-size: 22px 22px;
+  }
+  /* Navy gradient band (dashboard header, statement header, auth side). */
+  .hero-band {
+    background: linear-gradient(140deg, var(--navy-800) 0%, var(--navy-700) 52%, var(--navy-600) 100%);
+  }
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+}
+
+/* Section reveal: pure CSS so first paint never depends on JS hydration.
+   Reduced motion collapses the duration via tokens.css (media query there),
+   leaving content visible immediately. */
+@keyframes reveal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.reveal {
+  animation: reveal-in 0.35s ease-out both;
 }

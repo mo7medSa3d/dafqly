@@ -1,7 +1,9 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { ArrowUp, Gauge, WarningCircle } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
+import { Panel } from "./ui";
 
 /**
  * F13 billing UI on the dashboard: the monthly quota banner (warn at 80%,
@@ -35,29 +37,50 @@ export function BillingClient({ locale }: { locale: string }) {
     } catch { setMsg(null); } finally { setBusy(false); }
   }
 
+  const pct = quota && quota.quota ? Math.min(100, Math.round((quota.used / quota.quota) * 100)) : null;
   return (
-    <section className="flex flex-col gap-3">
+    <section className="flex flex-col gap-4">
       {quota && quota.state !== "ok" && (
-        <p data-testid="quota-banner" role="alert" className="rounded-md border border-border bg-surface p-3 font-bold">
-          {quota.state === "exceeded" ? t("quotaExceeded") : t("quotaWarn")}
-          {" — "}<span dir="ltr">{quota.used} {t("quotaOf")} {quota.quota ?? "∞"}</span>
+        <p data-testid="quota-banner" role="alert" className="flex items-start gap-2.5 rounded-xl border border-status-due-fg/40 bg-status-due-bg p-4 font-bold text-status-due-fg">
+          <WarningCircle size={20} weight="fill" aria-hidden className="mt-0.5 shrink-0" />
+          <span>
+            {quota.state === "exceeded" ? t("quotaExceeded") : t("quotaWarn")}
+            {" — "}<span dir="ltr">{quota.used} {t("quotaOf")} {quota.quota ?? "∞"}</span>
+          </span>
         </p>
       )}
       {msg && <p role="status" className="font-bold">{msg}</p>}
-      <div className="flex flex-col gap-2 rounded-md border border-border bg-surface p-4">
-        <h2 className="font-bold">{t("plansTitle")}</h2>
-        <p className="text-sm text-text-muted">{t("placeholderPrices")}</p>
-        {quota && <p className="text-sm">{t("currentPlan")}: <span className="font-bold">{quota.planKey}</span> — <span dir="ltr">{quota.used} {t("quotaOf")} {quota.quota ?? "∞"}</span></p>}
-        {plans.map((p) => (
-          <div key={p.key} className="flex items-center justify-between gap-3">
-            <span>{locale === "ar" ? p.nameAr : p.nameEn} — {p.monthlyMessageQuota ?? "∞"} {t("perMonth")}</span>
-            {quota?.planKey !== p.key && (
-              <button data-testid={`upgrade-${p.key}`} disabled={busy} onClick={() => void upgrade(p.key)}
-                className="min-h-touch rounded-md bg-primary px-3 py-1 font-bold text-primary-fg">{t("upgrade")}</button>
-            )}
-          </div>
-        ))}
-      </div>
+      <Panel title={t("plansTitle")} icon={Gauge}>
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-text-muted">{t("placeholderPrices")}</p>
+          {quota && (
+            <div className="flex flex-col gap-2">
+              <p className="text-sm">
+                {t("currentPlan")}: <span className="font-bold">{quota.planKey}</span> — <span dir="ltr">{quota.used} {t("quotaOf")} {quota.quota ?? "∞"}</span>
+              </p>
+              {pct !== null && (
+                <div className="h-2.5 w-full overflow-hidden rounded-full bg-surface-muted" dir="ltr" role="img" aria-label={`${pct}%`}>
+                  <span className={`block h-full rounded-full ${quota.state === "exceeded" ? "bg-status-overdue-fg" : quota.state === "warn" ? "bg-status-due-fg" : "bg-teal-500"}`} style={{ width: `${pct}%` }} />
+                </div>
+              )}
+            </div>
+          )}
+          <ul className="flex flex-col divide-y divide-border">
+            {plans.map((p) => (
+              <li key={p.key} className="flex items-center justify-between gap-3 py-3">
+                <span className="font-semibold">{locale === "ar" ? p.nameAr : p.nameEn} <span className="text-sm font-normal text-text-muted">— {p.monthlyMessageQuota ?? "∞"} {t("perMonth")}</span></span>
+                {quota?.planKey !== p.key && (
+                  <button data-testid={`upgrade-${p.key}`} disabled={busy} onClick={() => void upgrade(p.key)}
+                    className="inline-flex min-h-touch shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-bold text-primary-fg transition-colors hover:bg-primary-hover disabled:opacity-60">
+                    <ArrowUp size={15} weight="fill" aria-hidden />
+                    {t("upgrade")}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Panel>
     </section>
   );
 }

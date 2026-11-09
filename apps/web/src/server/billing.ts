@@ -127,7 +127,7 @@ export async function changePlan(
     const link = await deps.provider.createPaymentLink({
       amountMinor: BigInt(plan.priceMinor), currency: "EGP",
       reference: `sub_${created.id}`,
-      debtorName: "Tahseel tenant", debtorEmail: "billing@tahseel.test", debtorPhone: "+201000000000",
+      debtorName: "DAFQLY tenant", debtorEmail: "billing@tahseel.test", debtorPhone: "+201000000000",
     }).catch(() => null);
     if (!deps.providerIsFake) {
       // Real provider: pending payment — record the intention, plan unchanged.

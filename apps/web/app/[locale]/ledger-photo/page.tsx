@@ -4,9 +4,9 @@ import { getTranslations } from "next-intl/server";
 import { auth } from "@/server/auth";
 import { ownerDb } from "@/server/db";
 import { listTenantsForUser } from "@/server/services";
-import { AppNav } from "@/components/AppNav";
+import { AppShell } from "@/components/AppShell";
+import { PageHeader } from "@/components/ui";
 import { LedgerPhotoClient } from "@/components/LedgerPhotoClient";
-
 export default async function Page({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   const session = await auth.api.getSession({ headers: await headers() });
@@ -15,12 +15,9 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
   if (!mine[0]) redirect(`/${locale}/onboarding`);
   const t = await getTranslations("ledgerPhoto");
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 p-6">
-      <header className="flex flex-col gap-3">
-        <h1 className="text-xl font-bold">{t("title")}</h1>
-        <AppNav locale={locale} />
-      </header>
+    <AppShell locale={locale} businessName={mine[0].businessNameAr}>
+      <PageHeader title={t("title")} />
       <LedgerPhotoClient />
-    </main>
+    </AppShell>
   );
 }

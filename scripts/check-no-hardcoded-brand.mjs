@@ -12,7 +12,7 @@ const skipFiles = new Set([
   // tokens.css; it references var(--...) only, which this checker verifies.
 ]);
 const hexRe = /#[0-9a-fA-F]{3,8}\b/;
-const fontNameRe = /\bThmanyah\b|\bNoto Sans Arabic\b/;
+const fontNameRe = /\bThmanyah\b|\bNoto Sans Arabic\b|\bPlus Jakarta Sans\b|\bIBM Plex Sans Arabic\b/;
 let failed = false;
 
 function walk(dir) {

@@ -7,13 +7,22 @@ import { appDb, ownerDb } from "@/server/db";
 import { getDashboardSummary, listTenantsForUser, todayInTimezone } from "@/server/services";
 import { getKpis, getForecast } from "@/server/reports";
 import Link from "next/link";
-import { BrandMark } from "@/components/BrandMark";
-import { LogoutButton } from "@/components/LogoutButton";
-import { AppNav } from "@/components/AppNav";
+import { AppShell } from "@/components/AppShell";
 import { BillingClient } from "@/components/BillingClient";
 import { ExportButtons } from "@/components/ExportButtons";
 import { DangerZone } from "@/components/DangerZone";
+import { EmptyInvoicesIllustration, ForecastIllustration, HeroBandArt } from "@/components/illustrations";
+import { Reveal } from "@/components/motion";
+import { AgingBar, ForecastChart } from "@/components/charts";
+import { EmptyState, InitialAvatar, Panel } from "@/components/ui";
 
+/**
+ * Dashboard (v0.9.0 premium redesign). SAME server data as before —
+ * getDashboardSummary + getKpis + getForecast — composed, not shuffled:
+ * a navy header band, ONE summary panel (hero outstanding + a divided
+ * stat row), then a two-column region (forecast chart, aging, top
+ * debtors | reminder performance, plan, exports, danger zone).
+ */
 export default async function DashboardPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   const session = await auth.api.getSession({ headers: await headers() });
@@ -24,6 +33,8 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
 
   const t = await getTranslations("dashboard");
   const tr = await getTranslations("reports");
+  const ti = await getTranslations("invoices");
+  const tn = await getTranslations("nav");
   const today = todayInTimezone(tenant.timezone);
   const summary = await getDashboardSummary(appDb(), tenant.tenantId, today);
   // F11/F12: the extended reports (core-computed KPIs + forecast).
@@ -35,107 +46,170 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
 
   // BRAND §2.3: amounts are wrapped in dir="ltr" so digits never reorder
   // inside RTL text; the currency label stays in the normal RTL flow.
-  const kpis = [
-    { key: "outstanding", label: t("totalOutstanding"), amount: fmt(summary.totalOutstandingMinor), currency: true },
-    { key: "overdue", label: t("overdue"), amount: fmt(summary.overdueMinor), currency: true },
-    { key: "open", label: t("openInvoices"), amount: String(summary.openInvoices), currency: false },
-    { key: "debtors", label: t("debtors"), amount: String(summary.debtors), currency: false },
-    { key: "collected", label: t("collectedThisMonth"), amount: fmt(summary.collectedThisMonthMinor), currency: true },
+  const stats = [
+    { key: "overdue", label: t("overdue"), testid: "kpi-overdue", value: fmt(summary.overdueMinor), currency: true, alert: BigInt(summary.overdueMinor) > 0n },
+    { key: "collected", label: t("collectedThisMonth"), testid: "kpi-collected", value: fmt(summary.collectedThisMonthMinor), currency: true, alert: false },
+    { key: "rate", label: tr("collectionRate"), testid: "kpi-collection-rate", value: `${(kpisFull.collectionRate * 100).toFixed(1)}%`, currency: false, alert: false },
+    { key: "dso", label: tr("dso"), testid: "kpi-dso", value: kpisFull.dsoDays.toFixed(1), currency: false, alert: false },
   ];
+  const aging = [
+    { key: "current", label: tr("current"), amountMinor: kpisFull.agingBuckets.current, formatted: fmtN(kpisFull.agingBuckets.current) },
+    { key: "0-7", label: "0-7", amountMinor: kpisFull.agingBuckets["0-7"], formatted: fmtN(kpisFull.agingBuckets["0-7"]) },
+    { key: "8-30", label: "8-30", amountMinor: kpisFull.agingBuckets["8-30"], formatted: fmtN(kpisFull.agingBuckets["8-30"]) },
+    { key: "31-60", label: "31-60", amountMinor: kpisFull.agingBuckets["31-60"], formatted: fmtN(kpisFull.agingBuckets["31-60"]) },
+    { key: "60+", label: "60+", amountMinor: kpisFull.agingBuckets["60+"], formatted: fmtN(kpisFull.agingBuckets["60+"]) },
+  ];
+  const perf = kpisFull.reminderPerformance;
 
   return (
-    <main data-testid="dashboard" className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 p-6">
-      <header className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <BrandMark variant="color" size={40} />
-          <div>
-            <h1 className="text-xl font-bold">{t("title")}</h1>
-            <p className="text-text-muted">{tenant.businessNameAr}</p>
+    <AppShell locale={locale} businessName={tenant.businessNameAr} testId="dashboard">
+      {/* Header band */}
+      <section className="hero-band panel-shadow relative overflow-hidden rounded-2xl text-white">
+        <div className="brand-pattern absolute inset-0" aria-hidden />
+        <div className="relative flex flex-wrap items-center gap-6 p-6 sm:p-8">
+          <div className="flex min-w-[230px] flex-1 flex-col items-start gap-2.5">
+            <p className="text-sm font-bold text-teal-300">{tenant.businessNameAr}</p>
+            <h1 className="text-3xl font-extrabold leading-tight">{t("title")}</h1>
+            <p className="text-sm text-navy-100"><span dir="ltr">{today}</span></p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Link href={`/${locale}/invoices`} className="inline-flex min-h-touch items-center gap-2 rounded-md bg-accent px-4 py-2 font-bold text-accent-fg transition-opacity hover:opacity-90">
+                {ti("add")}
+              </Link>
+              <Link href={`/${locale}/import`} className="inline-flex min-h-touch items-center gap-2 rounded-md border border-white/40 px-4 py-2 font-bold text-white transition-colors hover:bg-white/10">
+                {tn("import")}
+              </Link>
+            </div>
+          </div>
+          <div className="hidden shrink-0 md:block" aria-hidden>
+            <HeroBandArt />
           </div>
         </div>
-        <LogoutButton />
-      </header>
-      <AppNav locale={locale} />
-
-      <section aria-label="kpis" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {kpis.map((kpi) => (
-          <article key={kpi.key} className="rounded-lg border border-border bg-surface p-4">
-            <p className="text-sm text-text-muted">{kpi.label}</p>
-            <p className="mt-1 text-2xl font-bold">
-              <span data-testid={`kpi-${kpi.key}`} className="tnum" dir="ltr">{kpi.amount}</span>
-              {kpi.currency && <span className="text-base font-normal"> {t("currency")}</span>}
-            </p>
-          </article>
-        ))}
       </section>
 
-      <BillingClient locale={locale} />
-
-      <section data-testid="reports" className="flex flex-col gap-4">
-        <h2 className="text-lg font-bold">{tr("title")}</h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <article className="rounded-lg border border-border bg-surface p-4">
-            <p className="text-sm text-text-muted">{tr("collectionRate")}</p>
-            <p className="mt-1 text-2xl font-bold"><span data-testid="kpi-collection-rate" className="tnum" dir="ltr">{(kpisFull.collectionRate * 100).toFixed(1)}%</span></p>
-          </article>
-          <article className="rounded-lg border border-border bg-surface p-4">
-            <p className="text-sm text-text-muted">{tr("dso")}</p>
-            <p className="mt-1 text-2xl font-bold"><span data-testid="kpi-dso" className="tnum" dir="ltr">{kpisFull.dsoDays.toFixed(1)}</span></p>
-          </article>
-          <article className="rounded-lg border border-border bg-surface p-4">
-            <p className="text-sm text-text-muted">{tr("reminderPerfTitle")}</p>
-            <p className="mt-1 text-sm">
-              {tr("sent")}: <span data-testid="perf-sent" dir="ltr">{kpisFull.reminderPerformance.sent}</span> ·{" "}
-              {tr("delivered")}: <span dir="ltr">{kpisFull.reminderPerformance.delivered}</span> ·{" "}
-              {tr("replied")}: <span dir="ltr">{kpisFull.reminderPerformance.replied}</span> ·{" "}
-              {tr("paidWithin7d")}: <span dir="ltr">{kpisFull.reminderPerformance.paidWithin7d}</span>
-            </p>
-          </article>
-        </div>
-
-        <div className="rounded-lg border border-border bg-surface p-4">
-          <h3 className="font-bold">{tr("agingTitle")}</h3>
-          <p className="mt-1 text-sm">
-            {tr("current")}: {fmtN(kpisFull.agingBuckets.current)} · 0-7: {fmtN(kpisFull.agingBuckets["0-7"])} · 8-30: {fmtN(kpisFull.agingBuckets["8-30"])} · 31-60: {fmtN(kpisFull.agingBuckets["31-60"])} · 60+: {fmtN(kpisFull.agingBuckets["60+"])}
-          </p>
-          <h3 className="mt-3 font-bold">{tr("topDebtorsTitle")}</h3>
-          {kpisFull.topDebtors.length === 0
-            ? <p className="text-sm text-text-muted">—</p>
-            : kpisFull.topDebtors.map((d) => (
-              <p key={d.debtorId} className="text-sm">{d.displayName}: {fmtN(d.outstandingMinor)}</p>
-            ))}
-        </div>
-
-        <div data-testid="forecast" className="rounded-lg border border-border bg-surface p-4">
-          <h3 className="font-bold">{tr("forecastTitle")}</h3>
-          {!forecast.enoughData ? (
-            <p data-testid="forecast-not-enough" className="mt-1 text-sm text-text-muted">{tr("forecastNotEnough")}</p>
-          ) : (
-            <>
-              <p className="text-sm text-text-muted">{tr("forecastMethod")}</p>
-              {forecast.weeks.map((w) => (
-                <p key={w.weekStart} className="text-sm">
-                  <span dir="ltr">{w.weekStart}</span> — {tr("expected")}: {fmtN(w.expectedMinor)} · {tr("conservative")}: {fmtN(w.conservativeMinor)}
-                </p>
+      {/* Composed KPI summary: hero metric + divided stat row */}
+      <Reveal>
+        <section aria-label="kpis" className="panel-shadow overflow-hidden rounded-2xl border border-border bg-surface">
+          <div className="grid lg:grid-cols-[minmax(250px,1fr)_1.9fr]">
+            <div className="flex flex-col justify-center gap-2 border-b border-border p-6 sm:p-7 lg:border-b-0 lg:border-e">
+              <p className="text-sm font-semibold text-text-muted">{t("totalOutstanding")}</p>
+              <p className="text-[38px] font-extrabold leading-none sm:text-[44px]">
+                <span data-testid="kpi-outstanding" className="tnum" dir="ltr">{fmt(summary.totalOutstandingMinor)}</span>
+                <span className="ms-2 align-middle text-base font-bold text-text-muted">{t("currency")}</span>
+              </p>
+              <p className="text-sm text-text-muted">
+                <span data-testid="kpi-open" className="tnum font-bold text-text" dir="ltr">{summary.openInvoices}</span> {t("openInvoices")}
+                {" · "}
+                <span data-testid="kpi-debtors" className="tnum font-bold text-text" dir="ltr">{summary.debtors}</span> {t("debtors")}
+              </p>
+            </div>
+            <dl className="grid grid-cols-2 gap-px bg-border">
+              {stats.map((s) => (
+                <div key={s.key} className="flex flex-col justify-center gap-1.5 bg-surface p-5 sm:p-6">
+                  <dt className="text-sm font-semibold text-text-muted">{s.label}</dt>
+                  <dd className={`text-2xl font-extrabold sm:text-[28px] ${s.alert ? "text-status-overdue-fg" : ""}`}>
+                    <span data-testid={s.testid} className="tnum" dir="ltr">{s.value}</span>
+                    {s.currency && <span className="ms-1.5 align-middle text-sm font-bold text-text-muted">{t("currency")}</span>}
+                  </dd>
+                </div>
               ))}
-            </>
-          )}
-        </div>
-
-        <ExportButtons />
-        <DangerZone />
-      </section>
+            </dl>
+          </div>
+        </section>
+      </Reveal>
 
       {isEmpty && (
-        <section data-testid="empty-state" className="flex flex-col items-center gap-3 rounded-lg border border-border bg-surface p-8 text-center">
-          <BrandMark variant="mono" size={48} />
-          <h2 className="text-lg font-bold">{t("emptyTitle")}</h2>
-          <p className="text-text-muted">{t("emptyBody")}</p>
-          <Link href={`/${locale}/invoices`} className="min-h-touch rounded-md bg-primary px-4 py-3 font-bold text-primary-fg">
+        <EmptyState
+          testId="empty-state"
+          illustration={<EmptyInvoicesIllustration size={96} />}
+          title={t("emptyTitle")}
+          body={t("emptyBody")}
+        >
+          <Link href={`/${locale}/invoices`} className="inline-flex min-h-touch items-center rounded-md bg-primary px-4 py-2 font-bold text-primary-fg hover:bg-primary-hover">
             {t("emptyCta")}
           </Link>
-        </section>
+        </EmptyState>
       )}
-    </main>
+
+      {/* Reports & forecast */}
+      <section data-testid="reports" className="flex flex-col gap-6">
+        <h2 className="text-xl font-extrabold">{tr("title")}</h2>
+        <div className="grid items-start gap-6 lg:grid-cols-3">
+          <div className="flex flex-col gap-6 lg:col-span-2">
+            <Reveal>
+              <Panel testId="forecast" title={tr("forecastTitle")}>
+                {!forecast.enoughData ? (
+                  <div className="flex flex-col items-center gap-2 py-4 text-center">
+                    <ForecastIllustration size={88} />
+                    <p data-testid="forecast-not-enough" className="max-w-md text-text-muted">{tr("forecastNotEnough")}</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-4">
+                    <p className="text-sm text-text-muted">{tr("forecastMethod")}</p>
+                    <ForecastChart
+                      weeks={forecast.weeks}
+                      expectedLabel={tr("expected")}
+                      conservativeLabel={tr("conservative")}
+                      format={fmtN}
+                    />
+                  </div>
+                )}
+              </Panel>
+            </Reveal>
+
+            <Reveal>
+              <Panel title={tr("agingTitle")}>
+                <AgingBar buckets={aging} />
+              </Panel>
+            </Reveal>
+
+            <Reveal>
+              <Panel title={tr("topDebtorsTitle")}>
+                {kpisFull.topDebtors.length === 0 ? (
+                  <p className="text-text-muted">—</p>
+                ) : (
+                  <ul className="flex flex-col divide-y divide-border">
+                    {kpisFull.topDebtors.map((d) => (
+                      <li key={d.debtorId}>
+                        <Link href={`/${locale}/debtors/${d.debtorId}`} className="flex items-center gap-3 py-3 transition-colors hover:bg-surface-muted/60">
+                          <InitialAvatar name={d.displayName} size={38} />
+                          <span className="min-w-0 flex-1 truncate font-bold">{d.displayName}</span>
+                          <span className="tnum font-extrabold" dir="ltr">{fmtN(d.outstandingMinor)}</span>
+                          <span className="text-sm font-normal text-text-muted">{t("currency")}</span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Panel>
+            </Reveal>
+          </div>
+
+          {/* Side rail */}
+          <div className="flex flex-col gap-6">
+            <Reveal>
+              <Panel title={tr("reminderPerfTitle")}>
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-4">
+                  {[
+                    { label: tr("sent"), value: perf.sent, testid: "perf-sent" },
+                    { label: tr("delivered"), value: perf.delivered, testid: undefined },
+                    { label: tr("replied"), value: perf.replied, testid: undefined },
+                    { label: tr("paidWithin7d"), value: perf.paidWithin7d, testid: undefined },
+                  ].map((x) => (
+                    <div key={x.label} className="flex flex-col gap-0.5">
+                      <dt className="text-sm text-text-muted">{x.label}</dt>
+                      <dd className="text-xl font-extrabold"><span data-testid={x.testid} className="tnum" dir="ltr">{x.value}</span></dd>
+                    </div>
+                  ))}
+                </dl>
+              </Panel>
+            </Reveal>
+
+            <BillingClient locale={locale} />
+            <ExportButtons />
+            <DangerZone />
+          </div>
+        </div>
+      </section>
+    </AppShell>
   );
 }

@@ -1,6 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import tokens from "@tahseel/brand/tokens.json";
 import "../globals.css";
+import "@fontsource/plus-jakarta-sans/400.css";
+import "@fontsource/plus-jakarta-sans/700.css";
+import "@fontsource/ibm-plex-sans-arabic/400.css";
+import "@fontsource/ibm-plex-sans-arabic/700.css";
 
 /**
  * Root layout for the public statement pages (/s/...): Arabic-first RTL,
@@ -8,14 +12,14 @@ import "../globals.css";
  * root layout lives under [locale] and statement URLs carry no locale.
  */
 export const metadata: Metadata = {
-  title: "كشف حساب — تحصيل",
+  title: "كشف حساب — DAFQLY",
   robots: { index: false, follow: false },
 };
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: tokens.color.petrol["700"] },
-    { media: "(prefers-color-scheme: dark)", color: tokens.color.petrol["800"] },
+    { media: "(prefers-color-scheme: light)", color: tokens.color.navy["700"] },
+    { media: "(prefers-color-scheme: dark)", color: tokens.color.navy["800"] },
   ],
   colorScheme: "light dark",
 };

@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 
 interface Tokens {
-  color: { brass: Record<string, string> };
+  color: { teal: Record<string, string> };
   semantic: Record<"light" | "dark", Record<string, string>>;
   status: Record<"light" | "dark", Record<string, { fg: string; bg: string }>>;
 }
@@ -34,15 +34,9 @@ for (const mode of ["light", "dark"] as const) {
   describe(`contrast (${mode})`, () => {
     const sem = tokens.semantic[mode];
     for (const [fg, bg] of TEXT_PAIRS) {
-      // KNOWN KIT DEFECT (found by this test, 2026-11-09): light text_subtle
-      // #6D7571 on bg #F7F7F5 computes to 4.42:1, just under AA 4.5:1, contrary
-      // to BRAND §4's claim. The kit may not be edited by the agent, so this
-      // pair is pinned with it.fails: the suite goes red again the day the
-      // human fixes the token, which is the signal to remove the marker.
-      // Every other pair is asserted strictly. See DECISIONS ADR-010.
-      const knownDefect = mode === "light" && fg === "text_subtle" && bg === "bg";
-      const run = knownDefect ? it.fails : it;
-      run(`${fg} on ${bg} >= 4.5:1`, () => {
+      // ADR-010 defect closed by the DAFQLY rebrand palette (ADR-025):
+      // light text_subtle #556777 on bg #F6F8F7 passes AA strictly.
+      it(`${fg} on ${bg} >= 4.5:1`, () => {
         expect(contrastRatio(sem[fg]!, sem[bg]!)).toBeGreaterThanOrEqual(4.5);
       });
     }
@@ -55,10 +49,10 @@ for (const mode of ["light", "dark"] as const) {
         expect(contrastRatio(pair.fg, pair.bg)).toBeGreaterThanOrEqual(4.5);
       });
     }
-    it("brass is never a text color on light backgrounds (BRAND §4)", () => {
-      const brass = tokens.color.brass["400"]!.toLowerCase();
+    it("teal is never a text color", () => {
+      const teal = tokens.color.teal["400"]!.toLowerCase();
       for (const key of ["text", "text_muted", "text_subtle", "link"]) {
-        expect(sem[key]!.toLowerCase()).not.toBe(brass);
+        expect(sem[key]!.toLowerCase()).not.toBe(teal);
       }
     });
   });

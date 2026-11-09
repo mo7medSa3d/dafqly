@@ -13,7 +13,7 @@ import * as schema from "@tahseel/db/schema";
  * through this connection.
  */
 export const auth = betterAuth({
-  appName: "Tahseel",
+  appName: "DAFQLY",
   secret: process.env.BETTER_AUTH_SECRET ?? env().SESSION_SECRET,
   baseURL: process.env.BETTER_AUTH_URL ?? env().APP_URL,
   database: drizzleAdapter(ownerDb(), {

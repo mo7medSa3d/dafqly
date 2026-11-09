@@ -40,18 +40,19 @@ test("seeded demo user sees hand-computed totals, no empty state", async ({ page
   await expect(page.getByTestId("empty-state")).toHaveCount(0);
 });
 
-test("brand wiring: manifest is RTL Arabic, theme color is petrol-700, font flag off", async ({ page, request }) => {
+test("brand wiring: manifest is RTL Arabic, theme color is navy-700, font flag on", async ({ page, request }) => {
   const manifestRes = await request.get("/manifest.webmanifest");
   expect(manifestRes.ok()).toBeTruthy();
   const manifest = (await manifestRes.json()) as { lang: string; dir: string; theme_color: string };
   expect(manifest.lang).toBe("ar");
   expect(manifest.dir).toBe("rtl");
-  expect(manifest.theme_color).toBe("#154E5B");
+  expect(manifest.theme_color).toBe("#14243A");
+  expect((manifest as { name?: string }).name).toBe("DAFQLY");
 
   await page.goto("/ar/login");
   const themeColor = await page.locator('meta[name="theme-color"][media*="light"]').getAttribute("content");
-  expect(themeColor).toBe("#154E5B");
-  await expect(page.locator("html")).toHaveAttribute("data-brand-font", "off");
+  expect(themeColor).toBe("#14243A");
+  await expect(page.locator("html")).toHaveAttribute("data-brand-font", "on");
 });
 
 test("brand evidence: favicon at 16px and dark-mode dashboard screenshots", async ({ page, browser }) => {
