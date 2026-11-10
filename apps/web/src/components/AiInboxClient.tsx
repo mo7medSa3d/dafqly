@@ -198,7 +198,11 @@ export function AiInboxClient() {
             <label className="brand-pattern-light flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border-strong bg-surface-muted/40 p-6 text-center transition-colors hover:bg-surface-muted/70">
               <UploadSimple size={28} weight="fill" aria-hidden className="text-primary" />
               <span className="font-bold text-sm text-text">{t("receiptUploadTitle")}</span>
-              <span className="text-xs text-text-muted">يدعم صور التحويلات البنكية ومحافظ الهاتف (PNG, JPG)</span>
+              <span className="text-xs text-text-muted">
+                {isAr
+                  ? "يدعم صور التحويلات البنكية ومحافظ الهاتف (PNG, JPG)"
+                  : "Supports bank transfers and mobile wallets (PNG, JPG)"}
+              </span>
               <input
                 data-testid="receipt-file"
                 type="file"

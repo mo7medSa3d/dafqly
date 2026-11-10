@@ -12,6 +12,7 @@ interface SubInvoice { id: string; planKey: string; periodStart: string; periodE
 
 export function BillingClient({ locale }: { locale: string }) {
   const t = useTranslations("reports");
+  const isAr = locale === "ar";
   const [quota, setQuota] = useState<Quota | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [subInvoices, setSubInvoices] = useState<SubInvoice[]>([]);
@@ -91,7 +92,7 @@ export function BillingClient({ locale }: { locale: string }) {
           {subInvoices.length > 0 && (
             <div className="border-t border-border pt-3">
               <p className="mb-2 flex items-center gap-1.5 text-xs font-bold text-text-muted">
-                <Receipt size={14} weight="fill" aria-hidden /> فواتير الاشتراك
+                <Receipt size={14} weight="fill" aria-hidden /> {isAr ? "فواتير الاشتراك" : "Subscription Invoices"}
               </p>
               <ul className="flex flex-col gap-1.5 text-xs">
                 {subInvoices.slice(0, 5).map((inv) => (

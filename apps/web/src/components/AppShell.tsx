@@ -218,7 +218,7 @@ export function AppShell({
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[var(--brand-tile-border)] bg-[var(--brand-tile-bg)] shadow-xs">
                   <BrandMark variant="white" size={18} />
                 </span>
-                <span className="text-base font-extrabold text-text">دافقلي</span>
+                <span className="text-base font-extrabold text-text">{isEn ? "Dafqly" : "دافقلي"}</span>
               </Link>
 
               {/* Desktop Breadcrumb/Page Indicator */}

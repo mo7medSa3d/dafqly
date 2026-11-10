@@ -115,7 +115,9 @@ export function ImportClient() {
               {t("pick")}
             </span>
             <p className="text-xs text-text-muted">
-              يدعم ملفات إكسل وجداول البيانات الشائعة حتى 10 ميجابايت
+              {isAr
+                ? "يدعم ملفات إكسل وجداول البيانات الشائعة حتى 10 ميجابايت"
+                : "Supports Excel files and common spreadsheets up to 10 MB"}
             </p>
           </div>
 
@@ -143,32 +145,38 @@ export function ImportClient() {
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
               <FileText size={20} weight="fill" className="text-primary" />
-              <h2 className="text-base font-bold text-text">تجهيز ملف الفواتير</h2>
+              <h2 className="text-base font-bold text-text">
+                {isAr ? "تجهيز ملف الفواتير" : "Preparing Your Invoice File"}
+              </h2>
             </div>
             <p className="text-xs leading-relaxed text-text-muted">
-              يمكنك رفع أي ملف إكسل أو CSV يحتوي على أسماء العملاء وأرقامهم والمبالغ المستحقة. سيتعرف النظام تلقائياً على الأعمدة ويمنحك فرصة مراجعتها قبل التأكيد.
+              {isAr
+                ? "يمكنك رفع أي ملف إكسل أو CSV يحتوي على أسماء العملاء وأرقامهم والمبالغ المستحقة. سيتعرف النظام تلقائياً على الأعمدة ويمنحك فرصة مراجعتها قبل التأكيد."
+                : "Upload any Excel or CSV file with customer names, phones, and amounts due. The system automatically detects columns and gives you a chance to review before confirming."}
             </p>
             <ul className="flex flex-col gap-1.5 pt-1 text-xs text-text-muted">
               <li className="flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-teal-500" />
-                <span>الاسم (العميل أو الشركة المدين)</span>
+                <span>{isAr ? "الاسم (العميل أو الشركة المدين)" : "Name (Customer or Debtor Company)"}</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-teal-500" />
-                <span>الهاتف (محلي أو بصيغة دولية)</span>
+                <span>{isAr ? "الهاتف (محلي أو بصيغة دولية)" : "Phone (Local or International)"}</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-teal-500" />
-                <span>المبلغ بالجنيه المصري</span>
+                <span>{isAr ? "المبلغ بالجنيه المصري" : "Amount (EGP)"}</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-teal-500" />
-                <span>تاريخ الاستحقاق (اختياري)</span>
+                <span>{isAr ? "تاريخ الاستحقاق (اختياري)" : "Due Date (Optional)"}</span>
               </li>
             </ul>
           </div>
           <div className="mt-4 rounded-xl bg-surface-muted/60 p-3 text-[11px] text-text-muted">
-            🛡️ يتم فحص الملف تلقائياً لمنع أي تكرار وتنبيهك قبل حفظ البيانات.
+            {isAr
+              ? "🛡️ يتم فحص الملف تلقائياً لمنع أي تكرار وتنبيهك قبل حفظ البيانات."
+              : "🛡️ Files are automatically checked to prevent duplicates and warn you before saving."}
           </div>
         </div>
       </div>

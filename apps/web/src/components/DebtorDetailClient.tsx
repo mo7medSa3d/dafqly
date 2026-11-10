@@ -53,6 +53,7 @@ export function DebtorDetailClient({ debtorId, businessName = "شركة الني
   const tg = useTranslations("gateway");
   const ts = useTranslations("statements");
   const locale = useLocale();
+  const isAr = locale === "ar";
   const router = useRouter();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -221,7 +222,7 @@ export function DebtorDetailClient({ debtorId, businessName = "شركة الني
               {detail.riskFlag && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-status-overdue-bg px-2.5 py-0.5 text-xs font-bold text-status-overdue-fg">
                   <WarningCircle size={13} weight="fill" aria-hidden />
-                  شيك مرتد / مخاطرة
+                  {locale === "ar" ? "شيك مرتد / مخاطرة" : "Bounced Cheque / High Risk"}
                 </span>
               )}
             </div>
@@ -271,7 +272,7 @@ export function DebtorDetailClient({ debtorId, businessName = "شركة الني
             <div className="flex flex-wrap items-center justify-between gap-3">
               <label className="flex items-center gap-2 text-sm font-semibold">
                 <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={editRisk} onChange={(e) => setEditRisk(e.target.checked)} />
-                <span>علامة مخاطرة ائتمانية (شيك مرتد / تأخر متكرر)</span>
+                <span>{locale === "ar" ? "علامة مخاطرة ائتمانية (شيك مرتد / تأخر متكرر)" : "Credit Risk Flag (Bounced Cheque / Chronic Late Payer)"}</span>
               </label>
               <button type="button" disabled={busy} onClick={() => void onSaveDebtor()} className={btnPrimary}>
                 <Check size={16} weight="bold" aria-hidden /> {tc("save")}
@@ -378,7 +379,7 @@ export function DebtorDetailClient({ debtorId, businessName = "شركة الني
           )}
           <SecurityNotice
             compact
-            body="يتم تحديث حالة الفاتورة تلقائيًا فور إتمام العميل لعملية السداد."
+            body={isAr ? "يتم تحديث حالة الفاتورة تلقائيًا فور إتمام العميل لعملية السداد." : "Invoice status is updated automatically as soon as the customer completes payment."}
           />
         </div>
       </Panel>
@@ -498,7 +499,7 @@ export function DebtorDetailClient({ debtorId, businessName = "شركة الني
                         onClick={() => { setRefundForId(refundForId === p.id ? null : p.id); setRefundAmount(""); }}
                         className={btnSmall}
                       >
-                        مبلغ مخصص
+                        {isAr ? "مبلغ مخصص" : "Custom amount"}
                       </button>
                     </>
                   )}

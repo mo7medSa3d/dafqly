@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useLocale } from "next-intl";
 
 /**
  * Data visuals aligned with Yaseir Design Guide v2.1 (#analytics):
@@ -18,6 +19,8 @@ export function ForecastChart({
   conservativeLabel: string;
   format: (minor: number) => string;
 }) {
+  const locale = useLocale();
+  const isAr = locale === "ar";
   const [showTable, setShowTable] = useState(false);
   const W = 640, H = 232, BASE = 196, MAXH = 148;
   const max = Math.max(1, ...weeks.map((w) => w.expectedMinor));
@@ -40,7 +43,7 @@ export function ForecastChart({
           onClick={() => setShowTable((v) => !v)}
           className="inline-flex min-h-[32px] items-center rounded-full border border-border-strong/50 bg-callout px-3 py-1 text-xs font-bold text-primary transition-colors hover:bg-primary hover:text-white"
         >
-          {showTable ? "عرض الرسم البياني" : "عرض القيم كجدول نصي"}
+          {showTable ? (isAr ? "عرض الرسم البياني" : "Show Chart") : (isAr ? "عرض القيم كجدول نصي" : "Show Table")}
         </button>
       </div>
       {showTable ? (
@@ -48,7 +51,7 @@ export function ForecastChart({
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-surface-muted text-start">
-                <th className="px-3 py-2 text-start font-bold">الأسبوع</th>
+                <th className="px-3 py-2 text-start font-bold">{isAr ? "الأسبوع" : "Week"}</th>
                 <th className="px-3 py-2 text-start font-bold">{expectedLabel}</th>
                 <th className="px-3 py-2 text-start font-bold">{conservativeLabel}</th>
               </tr>
