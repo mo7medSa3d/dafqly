@@ -17,7 +17,7 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
   return (
     <AppShell locale={locale} businessName={mine[0].businessNameAr}>
       <PageHeader title={t("title")} />
-      <DebtorsClient />
+      <DebtorsClient businessName={mine[0].businessNameAr} />
     </AppShell>
   );
 }

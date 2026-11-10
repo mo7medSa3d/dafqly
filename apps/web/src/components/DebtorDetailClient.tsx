@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { formatEgp } from "@tahseel/core";
 import {
-  Check, Clock, FileText, HandCoins, LinkSimple, PaperPlaneTilt, PencilSimple,
+  BellRinging, BellSlash, Check, Clock, FileText, HandCoins, LinkSimple, PaperPlaneTilt, PencilSimple,
   Receipt, Trash, Wallet, WarningCircle,
 } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
@@ -139,6 +139,22 @@ export function DebtorDetailClient({ debtorId, businessName = "شركة الني
     } catch { setMsg(tp("failed")); } finally { setBusy(false); }
   }
 
+  async function onToggleReminders(enabled: boolean) {
+    setBusy(true); setMsg(null);
+    try {
+      await trpc.debtors.toggleReminders.mutate({ id: debtorId, enabled });
+      setMsg(enabled
+        ? (isAr ? "تم إعادة تفعيل التذكيرات التلقائية لهذا العميل بنجاح." : "Automatic reminders re-enabled successfully.")
+        : (isAr ? "تم إيقاف التذكيرات التلقائية لهذا العميل." : "Automatic reminders paused for this customer.")
+      );
+      await load();
+    } catch {
+      setMsg(isAr ? "تعذّر تعديل حالة التذكيرات" : "Failed to update reminder status");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onDelete() {
     await trpc.debtors.remove.mutate({ id: debtorId });
     router.push(`/${locale}/debtors`);
@@ -227,10 +243,38 @@ export function DebtorDetailClient({ debtorId, businessName = "شركة الني
               )}
             </div>
             <p className="text-text-muted" dir="ltr">{detail.phoneE164}</p>
-            {detail.optedOut && (
-              <p data-testid="debtor-opted-out" className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-full bg-surface-muted px-2.5 py-1 text-xs font-bold text-text-muted">
-                {t("optedOut")}
-              </p>
+            {detail.optedOut ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                <span className="font-bold">⚠️ {isAr ? "التذكيرات التلقائية متوقفة لهذا العميل" : "Automatic reminders are paused for this customer"}</span>
+                <button
+                  type="button"
+                  data-testid="debtor-resume-reminders"
+                  disabled={busy}
+                  onClick={() => void onToggleReminders(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 font-bold text-white shadow-xs hover:bg-emerald-700 active:scale-95 transition-all"
+                >
+                  <BellRinging size={14} weight="fill" />
+                  <span>{isAr ? "تفعيل التذكيرات الآن" : "Re-enable Reminders Now"}</span>
+                </button>
+              </div>
+            ) : (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-text-muted">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 font-bold text-emerald-600 dark:text-emerald-400">
+                  <BellRinging size={13} weight="fill" />
+                  <span>{isAr ? "التذكيرات التلقائية مفعلة" : "Auto Reminders Active"}</span>
+                </span>
+                <button
+                  type="button"
+                  data-testid="debtor-pause-reminders"
+                  disabled={busy}
+                  onClick={() => void onToggleReminders(false)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[11px] font-semibold text-text-muted hover:border-danger hover:text-danger active:scale-95 transition-all"
+                  title={isAr ? "إيقاف التذكيرات التلقائية لهذا العميل مؤقتاً" : "Pause Automatic Reminders"}
+                >
+                  <BellSlash size={12} weight="fill" />
+                  <span>{isAr ? "إيقاف التذكيرات" : "Pause Reminders"}</span>
+                </button>
+              </div>
             )}
             {detail.notes && <p className="text-sm text-text-muted">{detail.notes}</p>}
           </div>

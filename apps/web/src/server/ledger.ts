@@ -48,11 +48,19 @@ export type CreateDebtorInput = z.infer<typeof createDebtorInput>;
 export interface DebtorView {
   id: string; displayName: string; phoneE164: string; phoneValid: boolean;
   whatsappStatus: string; optedOut: boolean; notes: string | null; riskFlag: boolean;
+  totalOutstandingMinor: string;
+  totalPaidMinor: string;
+  openInvoicesCount: number;
+  totalInvoicesCount: number;
 }
 
-const toDebtorView = (r: typeof debtors.$inferSelect): DebtorView => ({
+const toDebtorView = (r: typeof debtors.$inferSelect, stats?: { outstanding: bigint; paid: bigint; openCount: number; totalCount: number }): DebtorView => ({
   id: r.id, displayName: r.displayName, phoneE164: r.phoneE164, phoneValid: r.phoneValid,
   whatsappStatus: r.whatsappStatus, optedOut: r.optedOutAt !== null, notes: r.notes, riskFlag: r.riskFlag,
+  totalOutstandingMinor: (stats?.outstanding ?? 0n).toString(),
+  totalPaidMinor: (stats?.paid ?? 0n).toString(),
+  openInvoicesCount: stats?.openCount ?? 0,
+  totalInvoicesCount: stats?.totalCount ?? 0,
 });
 
 export async function createDebtor(app: Db, tenantId: string, actor: string, input: CreateDebtorInput): Promise<DebtorView> {
@@ -110,7 +118,38 @@ export async function listDebtorsPage2(app: Db, tenantId: string, opts: { cursor
     const rows = await tx.select().from(debtors).where(and(...conditions)).orderBy(asc(debtors.id)).limit(limit + 1);
     const hasMore = rows.length > limit;
     const items = hasMore ? rows.slice(0, limit) : rows;
-    return { items: items.map(toDebtorView), nextCursor: hasMore ? { id: items[items.length - 1]!.id } : null };
+
+    const statsMap: Record<string, { outstanding: bigint; paid: bigint; openCount: number; totalCount: number }> = {};
+    if (items.length > 0) {
+      const debtorIds = items.map((d) => d.id);
+      const invRows = await tx.select({
+        debtorId: invoices.debtorId,
+        amountMinor: invoices.amountMinor,
+        paidMinor: invoices.paidMinor,
+        status: invoices.status,
+      }).from(invoices).where(inArray(invoices.debtorId, debtorIds));
+
+      for (const inv of invRows) {
+        if (!statsMap[inv.debtorId]) {
+          statsMap[inv.debtorId] = { outstanding: 0n, paid: 0n, openCount: 0, totalCount: 0 };
+        }
+        const s = statsMap[inv.debtorId]!;
+        s.totalCount += 1;
+        s.paid += inv.paidMinor;
+        if (["open", "partially_paid", "disputed"].includes(inv.status)) {
+          const diff = inv.amountMinor - inv.paidMinor;
+          if (diff > 0n) {
+            s.outstanding += diff;
+            s.openCount += 1;
+          }
+        }
+      }
+    }
+
+    return {
+      items: items.map((r) => toDebtorView(r, statsMap[r.id])),
+      nextCursor: hasMore ? { id: items[items.length - 1]!.id } : null,
+    };
   });
 }
 

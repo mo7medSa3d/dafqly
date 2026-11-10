@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { decodeCursor, encodeCursor, type InvoiceStatus } from "@tahseel/core";
+import { applyOptOut, resumeReminders } from "@tahseel/reminders";
 import { router, publicProcedure, protectedProcedure, tenantProcedure } from "./trpc";
-import { createTenantInput, createTenantForUser, listTenantsForUser, getDashboardSummary, listDebtorsPage, todayInTimezone, getTenantSettingsAndIntegrations, updateTenantSettings, updateTenantSettingsInput } from "./services";
+import { createTenantInput, createTenantForUser, listTenantsForUser, getDashboardSummary, todayInTimezone, getTenantSettingsAndIntegrations, updateTenantSettings, updateTenantSettingsInput } from "./services";
 import {
   createDebtor, createDebtorInput, updateDebtor, softDeleteDebtor, listDebtorsPage2,
   createInvoice, createInvoiceInput, listInvoicesPage, updateInvoice, transitionInvoice,
@@ -67,11 +68,7 @@ export const appRouter = router({
     list: tenantProcedure
       .input(z.object({ cursor: z.string().optional(), limit: z.number().optional(), search: z.string().optional() }).optional())
       .query(async ({ ctx, input }) => {
-        if (input?.search !== undefined) {
-          return encodePage(await listDebtorsPage2(ctx.appDb, ctx.tenantId, { ...pageArgs(input), search: input.search }));
-        }
-        const page = await listDebtorsPage(ctx.appDb, ctx.tenantId, pageArgs(input));
-        return { items: page.items, nextCursor: page.nextCursor ? encodeCursor(page.nextCursor) : null };
+        return encodePage(await listDebtorsPage2(ctx.appDb, ctx.tenantId, { ...pageArgs(input), search: input?.search }));
       }),
     create: tenantProcedure
       .input(createDebtorInput)
@@ -82,6 +79,18 @@ export const appRouter = router({
     remove: tenantProcedure
       .input(z.object({ id: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => { await softDeleteDebtor(ctx.appDb, ctx.tenantId, ctx.user.id, input.id); return { ok: true }; }),
+    toggleReminders: tenantProcedure
+      .input(z.object({ id: z.string().uuid(), enabled: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        const deps = engineDeps();
+        if (input.enabled) {
+          const res = await resumeReminders(deps, ctx.tenantId, input.id, new Date());
+          return { ok: true, optedOut: false, plannedInvoices: res.plannedInvoices };
+        } else {
+          const res = await applyOptOut(deps, ctx.tenantId, input.id, new Date(), "merchant_manual");
+          return { ok: true, optedOut: true, cancelledReminders: res.cancelledReminders };
+        }
+      }),
     get: tenantProcedure
       .input(z.object({ id: z.string().uuid() }))
       .query(async ({ ctx, input }) => getDebtorDetail(ctx.appDb, ctx.tenantId, input.id, await tenantToday(ctx))),

@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import {
   auditLog, debtors, invoices, messages, optOuts, plans, reminders, statementLinks, tenants, usageLedger,
   withTenant, type Db, type TenantSettings,
@@ -615,6 +615,27 @@ export async function applyOptOut(deps: EngineDeps, tenantId: string, debtorId: 
       await audit(tx, tenantId, "debtor.opted_out", "debtor", debtorId, { source, cancelledReminders: future.length });
     }
     return { applied: true, cancelledReminders: future.length };
+  });
+}
+
+/** Re-enable automatic reminders for a debtor: clear opted_out_at, remove opt-out records, and re-plan future reminders. */
+export async function resumeReminders(deps: EngineDeps, tenantId: string, debtorId: string, now: Date): Promise<{ resumed: boolean; plannedInvoices: number }> {
+  return withTenant(deps.app, tenantId, async (tx) => {
+    const [debtor] = await tx.select().from(debtors).where(eq(debtors.id, debtorId));
+    if (!debtor) return { resumed: false, plannedInvoices: 0 };
+    if (debtor.optedOutAt) {
+      await tx.update(debtors).set({ optedOutAt: null, updatedAt: now }).where(eq(debtors.id, debtorId));
+    }
+    await tx.delete(optOuts).where(and(eq(optOuts.tenantId, tenantId), or(eq(optOuts.debtorId, debtorId), eq(optOuts.phoneHash, debtor.phoneHash))));
+    await audit(tx, tenantId, "debtor.reminders_resumed", "debtor", debtorId, { action: "reminders_resumed" });
+    const openInvs = await tx.select().from(invoices).where(and(
+      eq(invoices.debtorId, debtorId),
+      inArray(invoices.status, ["open", "partially_paid"])
+    ));
+    for (const inv of openInvs) {
+      void planForInvoice(deps, tenantId, inv.id, now);
+    }
+    return { resumed: true, plannedInvoices: openInvs.length };
   });
 }
 
