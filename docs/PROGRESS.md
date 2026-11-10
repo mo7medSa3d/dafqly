@@ -8,6 +8,13 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
 ### Strategic Value & Trust Enhancements (2026-11-10) — **COMPLETE**
+- **Customer Control, Financial Filters & Auto-Reminders Toggle (`/debtors` & `/debtors/[id]`)**:
+  - Enriched `listDebtorsPage2` with single-query financial aggregations (`totalOutstandingMinor`, `totalPaidMinor`, `openInvoicesCount`, `totalInvoicesCount`).
+  - Added 4 interactive top overview cards: Total Outstanding, Fully Settled, Total Debtors, and Paused Reminders.
+  - Implemented 5 instant quick filter pills: All, Has Balance (عليهم متبقي), Fully Settled (مسددين بالكامل), Paused Reminders (تذكيرات متوقفة), and High Risk (شيكات ومخاطرة).
+  - Added sort selector: Highest balance first, Newest, and Alphabetical.
+  - Added instant WhatsApp chat button on every customer card with smart context-aware templates (balance reminder vs. thank-you note).
+  - Added one-click toggle for WhatsApp automatic reminders (`toggleReminders` mutation calling `resumeReminders` and `applyOptOut`) on both debtor rows and debtor detail screen, with database audit logging.
 - **Complete English (en) i18n Parity Across All Helper Panels & Cards**:
   - Localized the "Preparing Your Invoice File" panel and format guide on `/import` (`ImportClient.tsx`).
   - Localized the "How Smart Scan Works" 3-step extraction guide and low-confidence warning on `/ledger-photo` (`LedgerPhotoClient.tsx`).
