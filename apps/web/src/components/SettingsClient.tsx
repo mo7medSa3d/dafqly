@@ -7,6 +7,7 @@ import {
 import { trpc } from "@/lib/trpc-client";
 import { ExportButtons } from "./ExportButtons";
 import { DangerZone } from "./DangerZone";
+import { AuditTrail } from "./AuditTrail";
 import { SecurityLockBadge } from "./illustrations";
 import { Panel, btnPrimary, inputCls, labelCls } from "./ui";
 
@@ -432,6 +433,11 @@ export function SettingsClient({ locale }: { locale: string }) {
           </button>
         </div>
       </form>
+
+      {/* Security & Audit Trail */}
+      <div className="mt-8">
+        <AuditTrail />
+      </div>
 
       {/* Secondary Operations: CSV Exports & Danger Zone */}
       <div className="mt-4 border-t border-border pt-8">

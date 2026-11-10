@@ -9,6 +9,7 @@ import {
 } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
 import { Panel, SecurityNotice, StatusPill, btnGhost, btnPrimary, btnSmall, inputCls, labelCls, linkAction } from "./ui";
+import { WhatsAppShareButton, invoiceShareMessage, totalShareMessage } from "./WhatsAppShare";
 
 interface Invoice { id: string; reference: string | null; amountMinor: string; paidMinor: string; outstandingMinor: string; status: string; dueOn: string; currencyWarning: boolean }
 interface Detail {
@@ -44,7 +45,7 @@ function copyTextSafe(text: string) {
   } catch { /* ignore */ }
 }
 
-export function DebtorDetailClient({ debtorId }: { debtorId: string }) {
+export function DebtorDetailClient({ debtorId, businessName = "شركة النيل للتجارة" }: { debtorId: string; businessName?: string }) {
   const t = useTranslations("debtors");
   const tc = useTranslations("common");
   const ti = useTranslations("invoices");
@@ -233,6 +234,17 @@ export function DebtorDetailClient({ debtorId }: { debtorId: string }) {
             {detail.notes && <p className="text-sm text-text-muted">{detail.notes}</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <WhatsAppShareButton
+              phone={detail.phoneE164}
+              message={totalShareMessage({
+                businessName,
+                totalAmount: fmt(detail.totalOutstandingMinor),
+                locale,
+              })}
+              size="md"
+              label={locale === "ar" ? "مشاركة عبر واتساب" : "Share on WhatsApp"}
+              showCopy
+            />
             <button
               type="button"
               onClick={() => setEditingDebtor((v) => !v)}
@@ -435,13 +447,24 @@ export function DebtorDetailClient({ debtorId }: { debtorId: string }) {
                 {ti("amount")}: <span className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor)}</span> · {ti("paid")}: <span className="tnum font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor)}</span> · {ti("dueOn")}: <span dir="ltr">{i.dueOn}</span>
               </p>
               {i.currencyWarning && <p className="text-sm font-semibold text-status-due-fg">{ti("currencyWarning")}</p>}
-              {(i.status === "open" || i.status === "partially_paid") && (
-                <div>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {(i.status === "open" || i.status === "partially_paid") && (
                   <button data-testid="gw-create-invoice" onClick={() => void onCreateGatewayLink(i.id)} className={linkAction}>
                     {tg("createInvoiceLink")}
                   </button>
-                </div>
-              )}
+                )}
+                <WhatsAppShareButton
+                  phone={detail.phoneE164}
+                  message={invoiceShareMessage({
+                    businessName,
+                    amount: fmt(i.outstandingMinor),
+                    dueDate: i.dueOn,
+                    locale,
+                  })}
+                  size="sm"
+                  label={locale === "ar" ? "مشاركة الفاتورة" : "Share Invoice"}
+                />
+              </div>
             </li>
           ))}
         </ul>

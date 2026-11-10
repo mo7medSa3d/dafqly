@@ -29,6 +29,7 @@ import {
 import { exportTenantData, deleteTenantData } from "./tenant-data";
 import { FakePaymentProvider } from "@tahseel/providers";
 import { paymentProviderFromEnv, realGatewayConfigured } from "./gateway";
+import { globalSearch, listAuditTrail } from "./search";
 
 const pageArgs = (input: { cursor?: string; limit?: number } | undefined) => ({
   cursor: input?.cursor ? decodeCursor(input.cursor) : undefined,
@@ -307,6 +308,16 @@ export const appRouter = router({
     deleteAll: tenantProcedure
       .input(z.object({ confirmation: z.string().min(1).max(200) }))
       .mutation(async ({ ctx, input }) => deleteTenantData(ctx.ownerDb, ctx.tenantId, { userId: ctx.user.id, role: ctx.role }, input.confirmation)),
+  },
+  search: {
+    global: tenantProcedure
+      .input(z.object({ q: z.string().trim().min(1).max(100) }))
+      .query(async ({ ctx, input }) => globalSearch(ctx.appDb, ctx.tenantId, input.q)),
+  },
+  audit: {
+    list: tenantProcedure
+      .input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional())
+      .query(async ({ ctx, input }) => listAuditTrail(ctx.appDb, ctx.tenantId, input?.limit ?? 25)),
   },
 });
 export type AppRouter = typeof appRouter;

@@ -7,6 +7,25 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### Strategic Value & Trust Enhancements (2026-11-10) — **COMPLETE**
+- **Direct WhatsApp Sharing (`wa.me/?text=...`)**:
+  - Implemented reusable `WhatsAppShareButton` in `apps/web/src/components/WhatsAppShare.tsx` with one-click direct chat opening and polite customized Arabic/English templates.
+  - Added per-invoice WhatsApp share buttons in `InvoicesClient.tsx` (next to status pill and edit button).
+  - Added statement and invoice WhatsApp share buttons in `DebtorDetailClient.tsx` with copy fallback. Zero API cost, immediate daily merchant value.
+- **Global Quick Search / Command Palette (`Ctrl+K`)**:
+  - Implemented `apps/web/src/server/search.ts` with RLS-scoped `globalSearch` over customers (by name and phone) and invoices (by reference and description).
+  - Built `apps/web/src/components/CommandPalette.tsx` modal with real-time debounced query, keyboard navigation (`ArrowUp`/`ArrowDown`/`Enter`/`Escape`), and direct page navigation.
+  - Integrated into `AppShell.tsx` header with search button and global `Ctrl+K` / `⌘K` listener.
+- **Security & Trust: Immutable Audit Trail (`AuditTrail.tsx`)**:
+  - Exposed `audit.list` query in `routers.ts` backed by `listAuditTrail` in `search.ts`.
+  - Added `AuditTrail` component to `SettingsClient.tsx` displaying the immutable log of database operations (invoices created, transitions, payments confirmed, settings updated) with timestamps, actor IDs, and tamper-resistant assurance badges.
+- **Verification & Test Coverage**:
+  - `pnpm lint`: 0 errors (brand tokens and secrets verified).
+  - `pnpm typecheck`: 0 errors across all 9 workspace packages.
+  - `pnpm test`: all unit & integration tests passing.
+  - `apps/web/e2e/new-features.spec.ts`: 3/3 Playwright E2E tests passing.
+  - Screenshots captured in `artifacts/fixes/` (`feature_command_palette.png`, `feature_command_palette_results.png`, `feature_invoices_whatsapp.png`, `feature_settings_audit_trail.png`).
+
 ### Final World-Class Polish & Overhaul (2026-11-10) — **COMPLETE**
 - **Restoration of Signature Blue Hero Banner (`/dashboard`)**:
   - Restored `.hero-band` with `brand-pattern`, `SecurityLockBadge`, `HeroBandArt`, dynamic date indicator, and rapid CTAs (`+ فاتورة جديدة` and `استيراد البيانات`).

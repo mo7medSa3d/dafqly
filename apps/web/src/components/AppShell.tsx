@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -9,6 +9,7 @@ import {
   CloudArrowUp,
   CreditCard,
   List,
+  MagnifyingGlass,
   Receipt,
   Scan,
   ShieldCheck,
@@ -23,6 +24,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { LocaleToggle } from "./LocaleToggle";
 import { LogoutButton } from "./LogoutButton";
 import { InitialAvatar } from "./ui";
+import { CommandPalette } from "./CommandPalette";
 
 const ITEMS = [
   { href: "dashboard", key: "dashboard", testid: "nav-dashboard", Icon: SquaresFour },
@@ -48,7 +50,20 @@ export function AppShell({
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const isEn = locale === "en";
+
+  // Global Ctrl+K / Cmd+K shortcut listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const isActive = (href: string) => pathname === `/${locale}/${href}` || pathname.startsWith(`/${locale}/${href}/`);
   const activeItem = ITEMS.find((i) => isActive(i.href)) ?? ITEMS[0];
@@ -220,6 +235,19 @@ export function AppShell({
 
             {/* Header Right Controls */}
             <div className="flex items-center gap-1.5 sm:gap-2">
+              <button
+                type="button"
+                onClick={() => setSearchOpen(true)}
+                className="flex items-center gap-1.5 sm:gap-2 rounded-full border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text-muted transition-colors hover:border-primary hover:text-text sm:px-3.5"
+                title={isEn ? "Quick search (Ctrl+K)" : "بحث سريع (Ctrl+K)"}
+              >
+                <MagnifyingGlass size={15} weight="bold" className="text-primary" />
+                <span className="hidden sm:inline">{isEn ? "Quick search..." : "بحث سريع..."}</span>
+                <kbd className="hidden rounded bg-surface-muted px-1.5 py-0.5 text-[10px] font-semibold text-text-subtle md:inline-block">
+                  Ctrl K
+                </kbd>
+              </button>
+
               <span className="hidden items-center gap-1.5 rounded-full border border-[var(--icon-box-border)] bg-[var(--icon-box-bg)] px-3 py-1 text-xs font-bold text-[var(--icon-box-fg)] md:inline-flex">
                 <ShieldCheck size={15} weight="fill" aria-hidden />
                 <span>{isEn ? "Encrypted & Secure" : "اتصال آمن ومشفّر"}</span>
@@ -238,6 +266,8 @@ export function AppShell({
           {children}
         </main>
       </div>
+
+      <CommandPalette isOpen={searchOpen} onClose={() => setSearchOpen(false)} locale={locale} />
     </div>
   );
 }

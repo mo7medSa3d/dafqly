@@ -22,7 +22,7 @@ export default async function DebtorDetailPage({ params }: { params: Promise<{ l
         <BackLink href={`/${locale}/debtors`} label={tc("back")} />
         <h1 className="text-2xl font-extrabold leading-snug sm:text-[28px]">{t("title")}</h1>
       </div>
-      <DebtorDetailClient debtorId={id} />
+      <DebtorDetailClient debtorId={id} businessName={mine[0].businessNameAr} />
     </AppShell>
   );
 }

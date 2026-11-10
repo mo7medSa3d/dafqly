@@ -340,5 +340,32 @@
     "step2Body": "Polite WhatsApp reminders go out on schedule.",
     "step3Title": "Record the payment",
     "step3Body": "Close the invoice when it is paid and see your cash flow."
+  },
+  "share": {
+    "whatsapp": "Share on WhatsApp",
+    "shareInvoice": "Share invoice",
+    "shareAccount": "Share statement",
+    "copied": "Copied"
+  },
+  "search": {
+    "title": "Quick Search",
+    "placeholder": "Search customer by name or phone, or invoice reference...",
+    "customers": "Customers",
+    "invoices": "Invoices",
+    "noResults": "No matching results for \"{query}\"",
+    "quickHint": "Press Ctrl+K for quick search anytime",
+    "totalOutstanding": "Due",
+    "select": "Select",
+    "navigate": "Navigate",
+    "close": "Close"
+  },
+  "audit": {
+    "title": "Audit Log & Security Trail",
+    "subtitle": "Immutable log documenting all actions and modifications to protect your data integrity",
+    "actor": "User",
+    "action": "Action",
+    "entity": "Entity",
+    "date": "Date",
+    "noLogs": "No recent actions recorded"
   }
 }

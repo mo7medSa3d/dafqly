@@ -6,13 +6,14 @@ import { Check, MagnifyingGlass, PencilSimple, Plus, Sparkle, WarningCircle, X }
 import { trpc } from "@/lib/trpc-client";
 import { EmptyInvoicesIllustration, ReceivablesIllustration } from "./illustrations";
 import { EmptyState, Panel, SecurityNotice, StatusPill, btnGhost, btnPrimary, btnSmall, inputCls, labelCls } from "./ui";
+import { WhatsAppShareButton, invoiceShareMessage } from "./WhatsAppShare";
 
 interface Invoice {
   id: string; debtorId: string; reference: string | null; description: string | null;
   amountMinor: string; paidMinor: string; outstandingMinor: string; currency: string; currencyWarning: boolean;
   issuedOn: string; dueOn: string; status: string; overdue: boolean; agingBucket: string; source: string;
 }
-interface DebtorLite { id: string; displayName: string }
+interface DebtorLite { id: string; displayName: string; phoneE164?: string }
 
 const STATUSES = ["open", "partially_paid", "paid", "disputed", "written_off", "cancelled"] as const;
 const BUCKETS = ["current", "0-7", "8-30", "31-60", "60+"] as const;
@@ -25,7 +26,7 @@ function addDaysIso(baseIso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-export function InvoicesClient() {
+export function InvoicesClient({ businessName = "شركة النيل للتجارة" }: { businessName?: string }) {
   const t = useTranslations("invoices");
   const tc = useTranslations("common");
   const locale = useLocale();
@@ -139,6 +140,7 @@ export function InvoicesClient() {
   }
 
   const debtorName = (id: string) => debtors.find((d) => d.id === id)?.displayName ?? "—";
+  const debtorPhone = (id: string) => debtors.find((d) => d.id === id)?.phoneE164;
 
   return (
     <section className="flex flex-col gap-6">
@@ -326,6 +328,16 @@ export function InvoicesClient() {
                       </span>
                     )}
                     <StatusPill status={i.status} label={t(`statuses.${i.status}`)} testId="invoice-status" />
+                    <WhatsAppShareButton
+                      phone={debtorPhone(i.debtorId)}
+                      message={invoiceShareMessage({
+                        businessName,
+                        amount: fmt(i.outstandingMinor),
+                        dueDate: i.dueOn,
+                        locale,
+                      })}
+                      size="sm"
+                    />
                     <button
                       type="button"
                       onClick={() => editingId === i.id ? setEditingId(null) : startEdit(i)}
