@@ -165,7 +165,6 @@ describe("workbook reading (F2 edge: merged cells)", () => {
   it("decodes Windows-1256 encoded Arabic CSV from Egyptian Windows Excel exports", () => {
     // Windows-1256 byte sequence for "الاسم,الموبايل,المبلغ\nأحمد,01001234567,500\n"
     // Encode text as windows-1256 using TextEncoder or custom buffer
-    const text = "الاسم,الموبايل,المبلغ\nأحمد,01001234567,500\n";
     // In windows-1256: 'ا'=0xC7, 'ل'=0xE1, 'ا'=0xC7, 'س'=0xD3, 'م'=0xE3
     const win1256Bytes = Buffer.from([
       0xC7, 0xE1, 0xC7, 0xD3, 0xE3, 0x2C, // الاسم,

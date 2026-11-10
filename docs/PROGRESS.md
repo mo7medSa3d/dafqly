@@ -7,6 +7,27 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### World-Class Language Switching & Robust Excel/CSV Import Polish (2026-11-10) — **COMPLETE**
+- **Smooth Language Switching & Direction Transition (`LocaleToggle.tsx` & `AppShell.tsx`)**:
+  - Replaced `<a>` tag with interactive `<button type="button">`, removing any browser hover URL preview tooltip in the bottom/top status bar.
+  - Eliminated the black/white theme inversion and visual flickering when switching between Arabic (RTL) and English (LTR):
+    - Changed `AppShell` desktop sidebar transition from `lg:transition-all` to `lg:transition-[width]` and main container transition from `transition-all` to `transition-[padding]`, preventing the sidebar from sweeping horizontally across the viewport during direction flips.
+    - Synchronized `dafqly-theme` directly to `document.cookie` and `localStorage` before navigation, ensuring SSR returns the target locale with the exact matching theme and direction on first paint with zero React hydration judder.
+    - Added `.switching-locale` transition freeze class to prevent layout morphing.
+  - Verified with Playwright: dark mode is preserved seamlessly between `/ar/dashboard` and `/en/dashboard`, direction flips cleanly, and button has `href: false`.
+- **Robust Excel & CSV Imports with Multi-sheet & Encoding Support (`packages/core/src/import.ts` & `apps/web/src/server/imports.ts`)**:
+  - Added `decodeCsvBuffer` handling UTF-16LE with BOM, UTF-8, and `windows-1256` (standard Arabic Windows Excel CSV exports) with automatic fallback, eliminating mojibake.
+  - Added multi-sheet workbook support in `readWorkbookGrid`: scans all sheets in `.xlsx/.xls` files and selects the active invoice data sheet over blank cover/notes sheets.
+  - Expanded `HEADER_ALIASES` with all common Egyptian accounting ledger headers (e.g., "جهة التعامل", "الطرف المدين", "بيان العميل", "موبايل التواصل", "تليفون العميل", "صافي المبلغ المطلوب", "المطلوب سداده", "تاريخ الاستحقاق المتوقع", "كود الفاتورة").
+  - Extended header detection scan depth to 25 rows (`maxScanRows = 25`) and enhanced data pattern inspection to detect Egyptian mobile numbers (`010/011/012/015`), currency amounts, and names even when headers have non-standard wording.
+  - Verified with 21 core import unit tests, 19 eval golden tests (including `11-big-5000.xlsx`), and Playwright E2E with both Tashkeel CSV and Windows-1256 CSV exports.
+- **Verification & Test Coverage**:
+  - `pnpm lint`: 0 errors (brand tokens and secrets checks passed).
+  - `pnpm typecheck`: 0 errors across all 9 packages.
+  - `pnpm test`: 100% passed across all workspace packages.
+  - Playwright E2E (`node --experimental-strip-types apps/web/e2e/verify-full-system.mts`): 100% passed.
+  - Screenshots captured in `artifacts/fixes/`: `ar_dashboard_dark_smooth.png`, `en_dashboard_dark_smooth.png`, `ar_import_preview_tashkeel_success.png`, `ar_import_preview_win1256_success.png`.
+
 ### Strategic Value & Trust Enhancements (2026-11-10) — **COMPLETE**
 - **Customer Control, Financial Filters & Auto-Reminders Toggle (`/debtors` & `/debtors/[id]`)**:
   - Enriched `listDebtorsPage2` with single-query financial aggregations (`totalOutstandingMinor`, `totalPaidMinor`, `openInvoicesCount`, `totalInvoicesCount`).
