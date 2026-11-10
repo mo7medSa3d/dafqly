@@ -127,3 +127,12 @@
 .reveal {
   animation: reveal-in 0.35s ease-out both;
 }
+
+/* Prevent layout stretching, theme flashes, and judder when mirroring direction (RTL <-> LTR) */
+html.switching-locale,
+html.switching-locale *,
+html.switching-locale *::before,
+html.switching-locale *::after {
+  transition: none !important;
+  animation-duration: 0s !important;
+}

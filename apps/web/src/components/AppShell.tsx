@@ -81,7 +81,7 @@ export function AppShell({
 
       {/* Sidebar / Mobile Drawer Navigation */}
       <aside
-        className={`fixed inset-y-0 start-0 z-50 flex flex-col border-e border-border bg-surface shadow-2xl transition-transform duration-300 ease-in-out lg:z-40 lg:shadow-none lg:transition-all ${
+        className={`fixed inset-y-0 start-0 z-50 flex flex-col border-e border-border bg-surface shadow-2xl transition-transform duration-300 ease-in-out lg:z-40 lg:shadow-none lg:transition-[width] ${
           collapsed ? "w-[280px] lg:w-[80px]" : "w-[280px] lg:w-[272px]"
         } ${
           mobileOpen ? "translate-x-0" : "max-lg:-translate-x-full rtl:max-lg:translate-x-full lg:translate-x-0"
@@ -191,7 +191,7 @@ export function AppShell({
       </aside>
 
       {/* Main Content Area: Zero offset on mobile (full width), offset on desktop */}
-      <div className={`flex min-h-dvh flex-col min-w-0 max-w-full overflow-x-hidden transition-all ps-0 ${
+      <div className={`flex min-h-dvh flex-col min-w-0 max-w-full overflow-x-hidden transition-[padding] ps-0 ${
         collapsed ? "lg:ps-[80px]" : "lg:ps-[272px]"
       }`}>
         {/* Top Header Bar */}

@@ -20,37 +20,108 @@ export type ImportField = (typeof IMPORT_FIELDS)[number];
 export type ColumnMapping = Partial<Record<ImportField, number>>;
 
 const HEADER_ALIASES: Record<ImportField, readonly string[]> = {
-  name: ["name", "customer", "customername", "client", "debtor", "الاسم", "اسم", "اسم العميل", "العميل", "اسم المدين", "المدين"],
-  phone: ["phone", "phonenumber", "mobile", "mobilenumber", "telephone", "whatsapp", "الهاتف", "رقم الهاتف", "الموبايل", "رقم الموبايل", "التليفون", "رقم التليفون", "جوال"],
-  amount: ["amount", "total", "balance", "due", "amountdue", "owed", "price", "value", "المبلغ", "المبلغ المستحق", "القيمة", "المستحق", "الرصيد", "المديونية"],
-  dueDate: ["duedate", "due", "deadline", "تاريخ الاستحقاق", "الاستحقاق", "تاريخ السداد", "موعد السداد"],
-  issuedDate: ["issueddate", "issued", "date", "invoicedate", "التاريخ", "تاريخ الإصدار", "تاريخ الفاتورة", "تاريخ الاصدار"],
-  reference: ["reference", "ref", "invoiceno", "invoicenumber", "invoice", "no", "number", "المرجع", "رقم الفاتورة", "رقم", "كود الفاتورة"],
-  description: ["description", "desc", "details", "item", "الوصف", "البيان", "التفاصيل"],
-  notes: ["notes", "note", "comments", "comment", "remarks", "ملاحظات", "ملحوظات"],
+  name: [
+    "name", "customer", "customername", "client", "clientname", "debtor", "debtorname",
+    "accountname", "contact", "contactname", "fullname", "party", "partyname", "person", "merchant", "user",
+    "الاسم", "اسم", "اسم العميل", "العميل", "اسم المدين", "المدين", "اسم المشترك",
+    "المشترك", "اسم المشتري", "المشتري", "اسم الزبون", "الزبون", "الطرف", "طرف التعامل",
+    "جهة التعامل", "اسم جهة التعامل", "اسم الحساب", "الحساب", "صاحب الحساب", "التاجر", "اسم التاجر", "الاسم بالكامل",
+    "الاسم الكامل", "الاسم رباعي", "اسم الشخص", "اسم الطرف", "الطرف المدين", "بيان العميل", "بيان الحساب",
+    "الشركة", "اسم الشركة", "المؤسسة", "طرف ثان", "الطرف الثاني", "المستفيد", "اسم المستفيد", "بيانات العميل",
+  ],
+  phone: [
+    "phone", "phonenumber", "mobile", "mobilenumber", "telephone", "telephonenumber",
+    "tel", "cell", "whatsapp", "whatsappnumber", "contact", "contactnumber",
+    "الهاتف", "رقم الهاتف", "الموبايل", "رقم الموبايل", "التليفون", "رقم التليفون",
+    "جوال", "الجوال", "رقم الجوال", "واتساب", "واتس", "رقم الواتساب", "رقم الواتس",
+    "رقم التواصل", "التواصل", "تواصل", "الاتصال", "رقم الاتصال", "المحمول", "رقم المحمول",
+    "تليفون", "موبايل", "هاتف", "تلفون", "موبايلات", "هواتف", "تليفونات",
+    "ارقام الهواتف", "ارقام الموبايل", "تليفون العميل", "موبايل العميل", "هاتف العميل", "رقم هاتف العميل",
+    "رقم تليفون العميل", "جهة الاتصال", "رقم العميل",
+  ],
+  amount: [
+    "amount", "amountdue", "total", "totaldue", "balance", "balanceoutstanding",
+    "due", "owed", "price", "value", "debit", "net", "remaining", "outstanding", "money",
+    "المبلغ", "المبلغ المستحق", "المستحق", "المديونية", "الرصيد", "القيمة",
+    "اجمالي", "الاجمالي", "إجمالي", "الإجمالي", "إجمالي المبلغ", "اجمالي المبلغ", "اجمالي المطلوب",
+    "صافي", "الصافي", "صافي المبلغ", "صافي القيمة", "المتبقي", "المبلغ المتبقي", "رصيد المدين",
+    "رصيد العميل", "المطلوب", "المبلغ المطلوب", "الدين", "قيمة الفاتورة", "مبلغ الفاتورة",
+    "مستحق", "اصل الدين", "الرصيد الحالي", "الحساب المستحق", "المبلغ الاجمالي", "المبلغ المطلوب سداده",
+    "المطلوب سداده", "المستحق دفعه", "الباقي", "المتبقي عليه", "له / عليه", "عليه", "مدين",
+    "رصيد ختامي", "رصيد سابق", "رصيد حالي", "حساب مستحق", "قيمة البضاعة", "اجمالي الفاتورة", "اجمالي الحساب",
+    "مجموع الفاتورة", "المجموع",
+  ],
+  dueDate: [
+    "duedate", "due", "deadline", "paymentdate", "paydate", "expiry", "expdate", "maturitydate",
+    "تاريخ الاستحقاق", "الاستحقاق", "تاريخ السداد", "موعد السداد", "ميعاد السداد",
+    "تاريخ الدفع", "موعد الدفع", "ميعاد الدفع", "تاريخ الاستحقاق المتوقع", "تاريخ الانتهاء", "الاستحقاق المتوقع",
+    "ميعاد الدفع المتوقع", "أجل السداد", "اجل السداد", "تاريخ الوعد", "ميعاد الوعد", "موعد الاستحقاق",
+  ],
+  issuedDate: [
+    "issueddate", "issued", "date", "invoicedate", "billdate", "createddate", "transdate",
+    "التاريخ", "تاريخ الإصدار", "تاريخ الفاتورة", "تاريخ الاصدار", "تاريخ التحرير",
+    "تاريخ المعاملة", "تاريخ الحركة", "تاريخ القيد", "تاريخ الفاتوره", "تاريخ المستند",
+    "تاريخ العملية", "تاريخ البيع", "تاريخ الشراء", "تاريخ الارسال", "تاريخ الاذن", "تاريخ اليوم",
+  ],
+  reference: [
+    "reference", "ref", "refno", "referenceno", "invoiceno", "invoicenumber",
+    "invoice", "billno", "billnumber", "no", "number", "id", "code", "invoiceid",
+    "المرجع", "رقم الفاتورة", "رقم الفاتوره", "رقم", "كود الفاتورة", "كود الفاتوره",
+    "رقم السند", "رقم الاشعار", "رقم الإشعار", "كود العميل", "رقم الاذن", "رقم العملية",
+    "مسلسل", "الكود", "كود", "رقم الوصل", "رقم المستند", "رقم المعاملة", "رقم القيد",
+    "رقم الإذن", "رقم الحركة", "رقم الطلب", "رقم الايصال", "رقم الإيصال",
+  ],
+  description: [
+    "description", "desc", "details", "item", "items", "service", "particulars",
+    "الوصف", "البيان", "التفاصيل", "شرح", "البند", "الصنف", "الخدمة", "ملاحظة البيان",
+    "تفاصيل الفاتورة", "شرح القيد",
+  ],
+  notes: [
+    "notes", "note", "comments", "comment", "remarks", "memo",
+    "ملاحظات", "ملحوظات", "تعليق", "تعليقات", "ملاحظة", "تنبيه",
+  ],
 };
 
-function normalizeHeader(raw: unknown): string {
+export function normalizeHeader(raw: unknown): string {
   return normalizeDigits(String(raw ?? ""))
     .trim()
     .toLowerCase()
-    .replace(/[\s_\-().:：/\\|]+/g, "")
+    .replace(/[\u064B-\u065F\u0670]/g, "") // remove Tashkeel / Harakat
+    .replace(/\u0640/g, "") // remove Tatweel / Kashida
+    .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "") // remove zero-width & non-breaking spaces
     .replace(/[أإآ]/g, "ا")
-    .replace(/ة/g, "ه");
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/[#*?!~`'"’“”«»[\]{}()<>_\-.:：/\\|,\s]+/g, "");
 }
+
 const ALIAS_SETS = Object.fromEntries(
   IMPORT_FIELDS.map((f) => [f, new Set(HEADER_ALIASES[f].map(normalizeHeader))]),
 ) as unknown as Record<ImportField, ReadonlySet<string>>;
 
+// Pre-sorted alias list with length descending so specific matches win over generic prefixes
+interface AliasEntry { field: ImportField; alias: string }
+const SORTED_ALIASES: AliasEntry[] = [];
+for (const f of IMPORT_FIELDS) {
+  for (const rawAlias of HEADER_ALIASES[f]) {
+    const norm = normalizeHeader(rawAlias);
+    if (norm.length >= 3) {
+      SORTED_ALIASES.push({ field: f, alias: norm });
+    }
+  }
+}
+SORTED_ALIASES.sort((a, b) => b.alias.length - a.alias.length);
+
 function matchField(cell: unknown): ImportField | null {
   const n = normalizeHeader(cell);
   if (!n) return null;
+  // 1. Exact match
   for (const f of IMPORT_FIELDS) if (ALIAS_SETS[f].has(n)) return f;
-  // Containment fallback for headers like "Customer Name (EN)" or "اسم العميل بالكامل"
-  for (const f of IMPORT_FIELDS) {
-    for (const alias of ALIAS_SETS[f]) {
-      if (alias.length >= 3 && n.includes(alias)) return f;
-    }
+  // 2. Longest substring containment match
+  for (const { field, alias } of SORTED_ALIASES) {
+    if (n.includes(alias)) return field;
   }
   return null;
 }
@@ -66,16 +137,109 @@ export function suggestMapping(headers: readonly unknown[]): ColumnMapping {
 
 const REQUIRED_FIELDS: readonly ImportField[] = ["name", "phone", "amount"];
 
+function inferFieldFromData(grid: Grid, colIdx: number, startRow: number): "phone" | "amount" | "name" | null {
+  let phoneCount = 0;
+  let amountCount = 0;
+  let nameCount = 0;
+  let nonEmpty = 0;
+  const sampleLimit = Math.min(grid.length, startRow + 10);
+  for (let r = startRow; r < sampleLimit; r++) {
+    const raw = grid[r]?.[colIdx];
+    if (raw === null || raw === undefined || raw === "") continue;
+    nonEmpty++;
+    const s = normalizeDigits(String(raw)).trim();
+    // Egyptian mobile phone
+    if (/^(01[0125]\d{8}|\+201[0125]\d{8}|00201[0125]\d{8})$/.test(s.replace(/[\s\-()]/g, ""))) {
+      phoneCount++;
+      continue;
+    }
+    // Numeric amount
+    if (typeof raw === "number" && !isNaN(raw)) {
+      amountCount++;
+      continue;
+    }
+    const cleanNum = s.replace(/EGP|egp|L\.?E\.?|جنيه|جنيها|ج\.م\.?|جم/gi, "").replace(/[, \s]/g, "");
+    if (/^\d+(\.\d{1,2})?$/.test(cleanNum) && !/^(01[0125])/.test(cleanNum)) {
+      amountCount++;
+      continue;
+    }
+    // Text name
+    if (/[\p{L}]/u.test(s) && !/^\d+$/.test(s)) {
+      nameCount++;
+    }
+  }
+  if (nonEmpty === 0) return null;
+  if (phoneCount / nonEmpty >= 0.5) return "phone";
+  if (amountCount / nonEmpty >= 0.5) return "amount";
+  if (nameCount / nonEmpty >= 0.5) return "name";
+  return null;
+}
+
 /** Scans the first rows for a header row matching at least the required-ish fields. */
-export function detectHeaderRow(grid: Grid, maxScanRows = 10): { rowIndex: number; mapping: ColumnMapping } | null {
+export function detectHeaderRow(grid: Grid, maxScanRows = 25): { rowIndex: number; mapping: ColumnMapping } | null {
   let best: { rowIndex: number; mapping: ColumnMapping; score: number } | null = null;
   const limit = Math.min(grid.length, maxScanRows);
+
   for (let r = 0; r < limit; r++) {
-    const mapping = suggestMapping(grid[r] ?? []);
-    const score = Object.keys(mapping).length;
+    const row = grid[r] ?? [];
+    const nonNullCells = row.filter((c) => c !== null && c !== undefined && String(c).trim() !== "");
+    if (nonNullCells.length === 0) continue;
+
+    // Filter out title/merged rows where all columns have identical text
+    const uniqueValues = new Set(nonNullCells.map((c) => String(c).trim().toLowerCase()));
+    if (uniqueValues.size <= 1) continue;
+
+    const directMapping = suggestMapping(row);
+    const directCount = Object.keys(directMapping).length;
+    const directCoreCount = (directMapping.name !== undefined ? 1 : 0) +
+      (directMapping.phone !== undefined ? 1 : 0) +
+      (directMapping.amount !== undefined ? 1 : 0);
+
+    const mapping = { ...directMapping };
+    const mappedCols = new Set(Object.values(mapping));
+    const unmappedCols: number[] = [];
+    for (let c = 0; c < row.length; c++) {
+      if (!mappedCols.has(c)) unmappedCols.push(c);
+    }
+
+    // Apply data inspection if the row already directly matched at least 1 header, or if early row
+    let inferredCount = 0;
+    if (r + 1 < grid.length && (directCount >= 1 || r <= 1)) {
+      for (const required of REQUIRED_FIELDS) {
+        if (mapping[required] === undefined) {
+          for (const colIdx of unmappedCols) {
+            if (inferFieldFromData(grid, colIdx, r + 1) === required) {
+              mapping[required] = colIdx;
+              mappedCols.add(colIdx);
+              inferredCount++;
+              break;
+            }
+          }
+        }
+      }
+    }
+
     const hasCore = mapping.phone !== undefined && mapping.amount !== undefined && mapping.name !== undefined;
-    if (hasCore && score >= 3 && (!best || score > best.score)) best = { rowIndex: r, mapping, score };
+
+    // Scoring: direct matches have highest weight (1000s), inferred core matches second (500s)
+    let score = 0;
+    if (hasCore) {
+      if (directCoreCount === 3) {
+        score = 1000 + directCount * 10;
+      } else {
+        score = 500 + directCount * 10 + inferredCount * 2;
+      }
+    } else if (directCoreCount >= 2 && directCount >= 2) {
+      score = 100 + directCount;
+    } else if (directCoreCount >= 1 && (directCoreCount + inferredCount >= 2)) {
+      score = 50 + directCount + inferredCount;
+    }
+
+    if (score > (best?.score ?? 0)) {
+      best = { rowIndex: r, mapping, score };
+    }
   }
+
   return best ? { rowIndex: best.rowIndex, mapping: best.mapping } : null;
 }
 
@@ -179,7 +343,10 @@ function parseRow(row: CellValue[], mapping: ColumnMapping, rowNumber: number): 
     }
   } else {
     try {
-      amountMinor = parseEgp(cellText(amountRaw).replace(/جنيه|ج\.م\.?/g, "").trim());
+      const cleanedAmount = cellText(amountRaw)
+        .replace(/EGP|egp|L\.?E\.?|جنيه|جنيها|ج\.م\.?|جم/gi, "")
+        .trim();
+      amountMinor = parseEgp(cleanedAmount);
       if (amountMinor <= 0n) errors.push({ field: "amount", reason: "amount must be positive" });
     } catch {
       errors.push({ field: "amount", reason: `unparseable amount: ${cellText(amountRaw)}` });
@@ -241,25 +408,93 @@ export function dedupeImportRows(rows: readonly ParsedImportRow[], existingByPho
 // ------------------------------------------------------------------ workbook
 export interface WorkbookGrid { grid: Grid; sheetName: string }
 
-/** Reads the first sheet of an .xlsx/.xls buffer to a grid, forward-filling merged-cell values (F2 edge case). */
+/** Reads the best sheet of an .xlsx/.xls buffer to a grid, forward-filling merged-cell values (F2 edge case). */
 export function readWorkbookGrid(data: Uint8Array): WorkbookGrid {
   const wb = XLSX.read(data, { type: "array", cellDates: false });
-  const sheetName = wb.SheetNames[0];
-  if (!sheetName) throw new Error("workbook has no sheets");
-  const ws = wb.Sheets[sheetName]!;
-  const grid = XLSX.utils.sheet_to_json<CellValue[]>(ws, { header: 1, raw: true, defval: null }) as Grid;
-  for (const merge of ws["!merges"] ?? []) {
-    const value = grid[merge.s.r]?.[merge.s.c] ?? null;
-    for (let r = merge.s.r; r <= merge.e.r; r++) {
-      while ((grid[r]?.length ?? 0) <= merge.e.c) (grid[r] ??= []).push(null);
-      for (let c = merge.s.c; c <= merge.e.c; c++) grid[r]![c] = value;
+  if (!wb.SheetNames || wb.SheetNames.length === 0) throw new Error("workbook has no sheets");
+
+  let bestSheetName = wb.SheetNames[0]!;
+  let bestGrid: Grid = [];
+  let bestScore = -1;
+
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    if (!ws) continue;
+    const candidateGrid = XLSX.utils.sheet_to_json<CellValue[]>(ws, { header: 1, raw: true, defval: null }) as Grid;
+    if (candidateGrid.length === 0) continue;
+
+    for (const merge of ws["!merges"] ?? []) {
+      const value = candidateGrid[merge.s.r]?.[merge.s.c] ?? null;
+      for (let r = merge.s.r; r <= merge.e.r; r++) {
+        while ((candidateGrid[r]?.length ?? 0) <= merge.e.c) (candidateGrid[r] ??= []).push(null);
+        for (let c = merge.s.c; c <= merge.e.c; c++) candidateGrid[r]![c] = value;
+      }
+    }
+
+    const detected = detectHeaderRow(candidateGrid);
+    const score = (detected ? 10000 : 0) + candidateGrid.length;
+    if (score > bestScore) {
+      bestScore = score;
+      bestSheetName = sheetName;
+      bestGrid = candidateGrid;
     }
   }
-  return { grid, sheetName };
+
+  // Fallback if all sheets were completely empty
+  if (bestGrid.length === 0) {
+    const ws = wb.Sheets[bestSheetName]!;
+    bestGrid = XLSX.utils.sheet_to_json<CellValue[]>(ws, { header: 1, raw: true, defval: null }) as Grid;
+  }
+
+  return { grid: bestGrid, sheetName: bestSheetName };
 }
 
-/** Minimal RFC-4180 CSV parser (quoted fields, embedded commas/newlines, CRLF). */
-export function parseCsvText(text: string): Grid {
+/** Decodes CSV text handling UTF-16LE, UTF-8, and Windows-1256 (standard Egyptian Excel CSV export). */
+export function decodeCsvBuffer(bytes: Uint8Array | Buffer): string {
+  const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  // 1. Check for UTF-16 LE BOM (FF FE)
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+    return new TextDecoder("utf-16le").decode(buf);
+  }
+  // 2. Try strict UTF-8
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buf);
+  } catch {
+    // 3. Fallback to Windows-1256 (standard Egyptian / Arabic Windows ANSI export)
+    try {
+      return new TextDecoder("windows-1256").decode(buf);
+    } catch {
+      return buf.toString("utf8");
+    }
+  }
+}
+
+export function detectCsvDelimiter(text: string): string {
+  const clean = text.replace(/^\uFEFF/, "");
+  const sample = clean.slice(0, 8192);
+  let commas = 0;
+  let semicolons = 0;
+  let tabs = 0;
+  let inQuotes = false;
+  for (let i = 0; i < sample.length; i++) {
+    const ch = sample[i];
+    if (ch === '"') {
+      if (sample[i + 1] === '"') i++;
+      else inQuotes = !inQuotes;
+    } else if (!inQuotes) {
+      if (ch === ",") commas++;
+      else if (ch === ";") semicolons++;
+      else if (ch === "\t") tabs++;
+    }
+  }
+  if (semicolons > commas && semicolons >= tabs) return ";";
+  if (tabs > commas && tabs > semicolons) return "\t";
+  return ",";
+}
+
+/** RFC-4180 CSV parser with auto-detected delimiter (supports comma, semicolon, tab, quoted fields, CRLF). */
+export function parseCsvText(text: string, customDelimiter?: string): Grid {
+  const delim = customDelimiter ?? detectCsvDelimiter(text);
   const rows: Grid = [];
   let row: string[] = [];
   let field = "";
@@ -272,7 +507,7 @@ export function parseCsvText(text: string): Grid {
         if (src[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
       } else field += ch;
     } else if (ch === '"') inQuotes = true;
-    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === delim) { row.push(field); field = ""; }
     else if (ch === "\n" || ch === "\r") {
       if (ch === "\r" && src[i + 1] === "\n") i++;
       row.push(field); field = "";

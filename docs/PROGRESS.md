@@ -543,8 +543,42 @@ Visual rebrand only (branch `rebrand/dafqly`): central `BRAND` config, navy/teal
 - `pnpm test:e2e`: **20/20 passed** (all milestone specs passing against production server).
 - `NODE_PATH=apps/web/node_modules packages/db/node_modules/.bin/tsx apps/web/e2e/comprehensive-audit.mts`: **0 issues found** across all 15 SaaS modules, dual viewports (Desktop & Mobile), dual themes (Light & Dark), and dual locales (AR & EN).
 
+### Language Switching & CSV/Excel Import Resilience (2026-11-10) — COMPLETE
+- **Smooth Language Switching & Theme Preservation (RTL <-> LTR)**:
+  - **Zero Theme Flicker on Navigation**: Added server-side cookie reading in `apps/web/app/[locale]/layout.tsx` to set `data-theme` on `<html>` at SSR time before first paint, preventing OS theme fallback flash when switching routes.
+  - **Bidirectional Cookie & LocalStorage Sync**: Updated `ThemeToggle.tsx` and `LocaleToggle.tsx` to ensure `dafqly-theme` is written to both `localStorage` and `document.cookie` (`SameSite=Lax; max-age=31536000`).
+  - **Infinite MutationObserver Loop Elimination**: Fixed race condition in `ThemeToggle.tsx` where `dataset.theme` was reassigned unconditionally inside `syncTheme`, creating an infinite microtask loop that pegged browser CPU. Added equality check and isolated observer state updates.
+  - **Layout Freeze on Direction Flip**: Added `html.switching-locale` CSS rule in `apps/web/app/globals.css` and applied it during `LocaleToggle.tsx` click to temporarily freeze CSS transitions (`transition: none !important; animation-duration: 0s !important`), eliminating visual stretching, card warping, and color lag when reversing between RTL and LTR.
+  - **Interactive Button with Spinner**: Replaced static link in `LocaleToggle.tsx` with an interactive button featuring a loading spinner (`SpinnerGap`) and smooth transition.
+- **Excel & CSV Import Header Detection & Egyptian Terminology (`packages/core/src/import.ts`)**:
+  - **Delimiter Auto-Detection (`detectCsvDelimiter`)**: Auto-detects semicolons (`;`, standard Egyptian Windows Excel default), tabs (`\t`), and commas (`,`) with full RFC-4180 quoted field support.
+  - **Robust Arabic Header Normalization (`normalizeHeader`)**: Strips Arabic diacritics/Tashkeel (`[\u064B-\u065F\u0670]`), Tatweel (`\u0640`), zero-width/non-breaking spaces, punctuation, and unifies Alif (`[إأآا]`), Yaa (`[يى]`), Ta-Marbuta (`[ةه]`), and Hamza variants.
+  - **Expanded Egyptian Merchant Aliases**: Added comprehensive vernacular terms across all fields:
+    - Name: "جهة التعامل", "الطرف", "طرف التعامل", "الزبون", "المشتري", "اسم الحساب", "صاحب الحساب", "التاجر", "بيان العميل".
+    - Phone: "رقم التواصل", "الاتصال", "رقم الاتصال", "المحمول", "رقم المحمول", "تليفون", "موبايل", "تلفون", "واتساب", "رقم الواتساب".
+    - Amount: "الرصيد", "المديونية", "صافي المبلغ", "اجمالي الفاتورة", "المطلوب", "الدين", "المتبقي", "المبلغ المطلوب", "رصيد العميل".
+  - **Field Matching Priority Fix**: Pre-sorted aliases by length descending so specific multi-word tokens ("رقم التواصل", "رقم الهاتف") match `phone` before generic short tokens ("رقم") match `reference`.
+  - **Data-Driven Column Inference (`inferFieldFromData`)**: Inspects rows below to detect numeric/currency values or phone formats when headers are non-standard.
+  - **Merged Title Row Protection**: Filtered out rows with `uniqueValues.size <= 1` and required direct header match `>= 2` to avoid falsely selecting decorative banner rows.
+  - **Egyptian Currency Cleaning**: Enhanced amount parsing to clean currency suffixes (`EGP`, `LE`, `جنيه`, `ج.م`, `جم`).
+  - **Buffer Decoding (`decodeCsvBuffer`)**: Added fallback handling for UTF-8 with BOM, UTF-16LE, and Windows-1256 (Egyptian Windows ANSI Excel CSVs) in `apps/web/src/server/imports.ts`.
+- **Verification Evidence**:
+  - `pnpm lint`: **0 errors** (ESLint, `check-no-hardcoded-brand`, `check-secrets` - 654 files scanned).
+  - `pnpm typecheck`: **0 errors** across all 9 workspace projects.
+  - `pnpm test`: **352/352 passed** (all unit and integration tests).
+  - `packages/core/src/import.test.ts`: **17/17 passed** (including new tests for semicolon CSV, tab TSV, Tashkeel normalization, Egyptian aliases, and data fallback).
+  - `packages/eval`: all synthetic fixtures passed.
+  - Live Playwright E2E verification:
+    - Login with demo user -> `/ar/dashboard`.
+    - Theme toggle -> verified `dafqly-theme=dark` in cookie & dataset.
+    - Switch to English (`/en/dashboard`) -> verified `dir="ltr"`, `lang="en"`, and `data-theme="dark"` (0 theme flicker/reset).
+    - Switch back to Arabic (`/ar/dashboard`) -> verified `dir="rtl"`, `lang="ar"`, and `data-theme="dark"`.
+    - Semicolon CSV upload (`temp-semicolon-test.csv`) -> 2 rows successfully parsed without `NO_HEADER_ROW`.
+    - Arabic Tashkeel & Aliases CSV upload -> 1 row successfully parsed with all columns correctly mapped.
+
 ### Next 3 Steps
 1. Configure production environment secrets and S3-compatible storage adapter for binary uploads.
 2. Complete merchant onboarding in Meta WhatsApp Cloud API and Paymob for live production credentials.
 3. Deploy to production cluster and perform smoke verification.
+
 

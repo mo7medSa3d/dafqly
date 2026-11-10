@@ -19,21 +19,27 @@ export function ThemeToggle({
     setMounted(true);
     const syncTheme = () => {
       try {
-        const current = document.documentElement.dataset.theme as "light" | "dark" | undefined;
-        if (current) {
-          setTheme(current);
-        } else {
-          const saved = window.localStorage.getItem("dafqly-theme") as "light" | "dark" | null;
-          const initial = saved ?? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-          setTheme(initial);
-          document.documentElement.dataset.theme = initial;
+        const saved = window.localStorage.getItem("dafqly-theme") as "light" | "dark" | null;
+        const cookieMatch = document.cookie.match(/(?:^|; )dafqly-theme=([^;]*)/);
+        const fromCookie = cookieMatch?.[1] as "light" | "dark" | undefined;
+        const fromDoc = document.documentElement.dataset.theme as "light" | "dark" | undefined;
+        const resolved = saved ?? fromCookie ?? fromDoc ?? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        setTheme(resolved);
+        if (document.documentElement.dataset.theme !== resolved) {
+          document.documentElement.dataset.theme = resolved;
         }
+        document.cookie = `dafqly-theme=${resolved}; path=/; max-age=31536000; SameSite=Lax`;
       } catch { /* ignore */ }
     };
 
     syncTheme();
 
-    const observer = new MutationObserver(() => syncTheme());
+    const observer = new MutationObserver(() => {
+      const current = document.documentElement.dataset.theme as "light" | "dark" | undefined;
+      if (current === "light" || current === "dark") {
+        setTheme(current);
+      }
+    });
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
@@ -44,6 +50,7 @@ export function ThemeToggle({
       observer.disconnect();
       window.removeEventListener("storage", syncTheme);
     };
+
   }, []);
 
   function toggle() {
@@ -52,6 +59,7 @@ export function ThemeToggle({
     document.documentElement.dataset.theme = next;
     try {
       window.localStorage.setItem("dafqly-theme", next);
+      document.cookie = `dafqly-theme=${next}; path=/; max-age=31536000; SameSite=Lax`;
     } catch { /* ignore */ }
   }
 

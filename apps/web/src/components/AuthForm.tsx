@@ -38,7 +38,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     if (mode === "signup") {
       router.push(`/${locale}/onboarding`);
     } else {
-      router.push(`/${locale}`);
+      router.push(`/${locale}/dashboard`);
     }
     router.refresh();
   }

@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { cookies } from "next/headers";
 import { NextIntlClientProvider } from "next-intl";
 import { getMessages, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
@@ -70,12 +71,22 @@ export default async function LocaleLayout({
   if (!routing.locales.includes(locale as "ar" | "en")) notFound();
   setRequestLocale(locale);
   const messages = await getMessages();
+  const cookieStore = await cookies();
+  const themeCookie = cookieStore.get("dafqly-theme")?.value;
+  const initialTheme = themeCookie === "dark" || themeCookie === "light" ? themeCookie : undefined;
+
   return (
-    <html lang={locale} dir={localeDir(locale)} data-brand-font={brandFontEnabled ? "on" : "off"} suppressHydrationWarning>
+    <html
+      lang={locale}
+      dir={localeDir(locale)}
+      data-theme={initialTheme}
+      data-brand-font={brandFontEnabled ? "on" : "off"}
+      suppressHydrationWarning
+    >
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: 'try{var t=localStorage.getItem("dafqly-theme")||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=t}catch(e){}',
+            __html: `(function(){try{var m=document.cookie.match(/(?:^|; )dafqly-theme=([^;]*)/);var c=m?m[1]:null;var t=c||localStorage.getItem("dafqly-theme")||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=t;if(!c||c!==t){document.cookie="dafqly-theme="+t+";path=/;max-age=31536000;SameSite=Lax";}}catch(e){}})();`,
           }}
         />
       </head>

@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import {
-  AppError, dedupeImportRows, detectHeaderRow, parseCsvText, parseImportGrid,
+  AppError, decodeCsvBuffer, dedupeImportRows, detectHeaderRow, parseCsvText, parseImportGrid,
   readWorkbookGrid, resolveDueOn, type ColumnMapping, type Grid, type ParsedImportRow,
 } from "@tahseel/core";
 import { auditLog, debtors, importJobs, importRows, invoices, paymentAllocations, reminders, tenants } from "@tahseel/db/schema";
@@ -44,7 +44,7 @@ function gridFromUpload(fileName: string, contentBase64: string): Grid {
   const bytes = Buffer.from(contentBase64, "base64");
   if (bytes.length === 0) throw new AppError("EMPTY_FILE", "The uploaded file is empty", 400);
   if (bytes.length > MAX_IMPORT_BYTES) throw new AppError("FILE_TOO_LARGE", "Import file exceeds 8 MB", 400);
-  if (/\.csv$/i.test(fileName)) return parseCsvText(bytes.toString("utf8"));
+  if (/\.csv$/i.test(fileName)) return parseCsvText(decodeCsvBuffer(bytes));
   if (/\.xlsx?$/i.test(fileName)) return readWorkbookGrid(new Uint8Array(bytes)).grid;
   throw new AppError("UNSUPPORTED_FILE", "Only .xlsx, .xls or .csv files can be imported", 400);
 }
