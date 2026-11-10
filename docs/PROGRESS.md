@@ -8,6 +8,14 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
 ### Strategic Value & Trust Enhancements (2026-11-10) — **COMPLETE**
+- **Complete English (en) i18n Parity Across All Helper Panels & Cards**:
+  - Localized the "Preparing Your Invoice File" panel and format guide on `/import` (`ImportClient.tsx`).
+  - Localized the "How Smart Scan Works" 3-step extraction guide and low-confidence warning on `/ledger-photo` (`LedgerPhotoClient.tsx`).
+  - Localized receipt upload helper text and human verification rules on `/ai-inbox` (`AiInboxClient.tsx`).
+  - Localized reconciliation security notices, risk badges, and custom refund buttons on `/debtors/[id]` (`DebtorDetailClient.tsx`).
+  - Localized invoice creation security callouts on `/invoices` (`InvoicesClient.tsx`) and subscription details on `/billing` (`BillingClient.tsx`).
+  - Localized chart toggles and table headers in `charts.tsx`.
+  - Rebuilt production bundle (`pnpm build`) and verified live output with Playwright screenshots in `/en/import` and `/en/ledger-photo`.
 - **Direct WhatsApp Sharing (`wa.me/?text=...`)**:
   - Implemented reusable `WhatsAppShareButton` in `apps/web/src/components/WhatsAppShare.tsx` with one-click direct chat opening and polite customized Arabic/English templates.
   - Added per-invoice WhatsApp share buttons in `InvoicesClient.tsx` (next to status pill and edit button).
