@@ -41,6 +41,8 @@ const CLASSIFICATION: Record<string, RouteClass> = {
   "[locale]/ledger-photo/page.tsx": "session",
   "[locale]/cheques/page.tsx": "session",
   "[locale]/ai-inbox/page.tsx": "session",
+  "[locale]/billing/page.tsx": "session",
+  "[locale]/settings/page.tsx": "session",
 };
 
 function walk(dir: string, base: string): string[] {

@@ -72,6 +72,13 @@ export default async function LocaleLayout({
   const messages = await getMessages();
   return (
     <html lang={locale} dir={localeDir(locale)} data-brand-font={brandFontEnabled ? "on" : "off"} suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: 'try{var t=localStorage.getItem("dafqly-theme")||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=t}catch(e){}',
+          }}
+        />
+      </head>
       <body>
         <NextIntlClientProvider messages={messages}>{children}</NextIntlClientProvider>
       </body>

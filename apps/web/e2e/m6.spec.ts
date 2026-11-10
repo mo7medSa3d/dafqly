@@ -69,7 +69,7 @@ test("M6 danger zone: export works, wrong delete confirmation is refused", async
     businessNameAr: "نشاط منطقة الخطر", timezone: "Africa/Cairo", quietStart: "21:00", quietEnd: "09:00",
     fridayMorningSkip: false, defaultTermsDays: 14, tone: "polite", consent: true,
   });
-  await page.goto("/ar/dashboard");
+  await page.goto("/ar/settings");
   await expect(page.getByTestId("danger-zone")).toBeVisible();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("export-all").click();
@@ -78,7 +78,7 @@ test("M6 danger zone: export works, wrong delete confirmation is refused", async
   await page.getByTestId("delete-confirmation").fill("اسم غلط");
   await page.getByTestId("delete-all").click();
   await expect(page.getByTestId("deleted-note")).toHaveCount(0);
-  await expect(page.getByTestId("dashboard")).toBeVisible();
+  await expect(page.getByTestId("settings")).toBeVisible();
   const mine = await trpcQuery<{ tenantId: string }[]>(page, "tenant.mine", undefined);
   expect(mine.length).toBeGreaterThan(0);
 });

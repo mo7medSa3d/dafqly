@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { ArrowLeft, CheckCircle } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
-import { BrandMark } from "./BrandMark";
+import { BrandLockup } from "./BrandMark";
+import { ThemeToggle } from "./ThemeToggle";
+import { LocaleToggle } from "./LocaleToggle";
 import { OnboardingIllustration } from "./illustrations";
 import { btnGhost, btnPrimary, inputCls, labelCls } from "./ui";
 
@@ -51,12 +53,14 @@ export function OnboardingWizard() {
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col gap-7 p-6 sm:p-8">
-      <div className="flex items-center gap-3">
-        <span className="flex size-11 items-center justify-center rounded-xl bg-navy-700">
-          <BrandMark variant="white" size={26} />
-        </span>
-        <h1 className="text-xl font-extrabold">{t("title")}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <BrandLockup size="md" locale={locale} />
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <LocaleToggle currentLocale={locale} />
+        </div>
       </div>
+      <h1 className="text-xl font-extrabold">{t("title")}</h1>
 
       {/* Stepper: numbered/filled nodes joined by a progress track */}
       <ol className="flex items-center gap-2" aria-label="steps">

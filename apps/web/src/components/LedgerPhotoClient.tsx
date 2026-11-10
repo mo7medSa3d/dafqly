@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useTranslations, useLocale } from "next-intl";
 import { Camera, Notebook, WarningCircle } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
 import { Panel, btnGhost, btnPrimary } from "./ui";
@@ -37,6 +37,7 @@ function fileToBase64(file: File): Promise<string> {
 
 export function LedgerPhotoClient() {
   const t = useTranslations("ledgerPhoto");
+  const locale = useLocale();
   const [job, setJob] = useState<Job | null>(null);
   const [jobs, setJobs] = useState<JobLite[]>([]);
   const [edits, setEdits] = useState<Record<string, Partial<RowData>>>({});
@@ -45,14 +46,22 @@ export function LedgerPhotoClient() {
   const [progress, setProgress] = useState<string | null>(null);
 
   const loadJobs = useCallback(async () => {
-    setJobs((await trpc.ledgerAi.listJobs.query()) as JobLite[]);
+    try {
+      setJobs((await trpc.ledgerAi.listJobs.query()) as JobLite[]);
+    } catch {
+      /* ignore */
+    }
   }, []);
   useEffect(() => { void loadJobs(); }, [loadJobs]);
 
   const loadJob = useCallback(async (id: string) => {
-    const j = (await trpc.ledgerAi.job.query({ jobId: id })) as Job;
-    setJob(j);
-    setEdits({});
+    try {
+      const j = (await trpc.ledgerAi.job.query({ jobId: id })) as Job;
+      setJob(j);
+      setEdits({});
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   async function onFiles(files: FileList) {
@@ -115,20 +124,79 @@ export function LedgerPhotoClient() {
   const cellInput = "w-full rounded-md bg-transparent p-1.5 focus:bg-surface";
 
   return (
-    <section className="flex flex-col gap-5">
-      <label className="brand-pattern-light panel-shadow flex cursor-pointer flex-col items-center gap-2 rounded-2xl border border-dashed border-border-strong bg-surface px-6 py-8 text-center transition-colors hover:bg-surface-muted/40">
-        <Camera size={28} weight="fill" aria-hidden className="text-teal-600 dark:text-teal-300" />
-        <span className="text-lg font-extrabold">{t("pick")}</span>
-        <input data-testid="ledger-file" type="file" accept="image/*" multiple disabled={busy} className="sr-only"
-          onChange={(e) => { if (e.target.files?.length) void onFiles(e.target.files); }} />
-      </label>
-      {progress && <p data-testid="ledger-progress" className="font-semibold text-text-muted">{progress}</p>}
+    <section className="flex flex-col gap-6">
+      <div className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-12">
+        {/* Dropzone Column (7 cols) */}
+        <label className="brand-pattern-light panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border-strong bg-surface p-8 text-center transition-all hover:border-primary hover:bg-surface-muted/40 lg:col-span-7">
+          <div className="flex size-14 items-center justify-center rounded-2xl bg-callout text-primary">
+            <Camera size={32} weight="fill" aria-hidden />
+          </div>
+          <div className="flex flex-col items-center gap-1">
+            <span className="text-lg font-extrabold text-text">{t("pick")}</span>
+            <p className="text-xs text-text-muted">
+              يدعم تصوير الدفاتر الورقية أو رفع صور متعددة (حتى 10 صفحات)
+            </p>
+          </div>
+          <input
+            data-testid="ledger-file"
+            type="file"
+            accept="image/*"
+            multiple
+            disabled={busy}
+            className="sr-only"
+            onChange={(e) => { if (e.target.files?.length) void onFiles(e.target.files); }}
+          />
+        </label>
+
+        {/* Smart Scan Guide Column (5 cols) */}
+        <div className="panel-shadow flex flex-col justify-between rounded-2xl border border-border bg-surface p-6 lg:col-span-5">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <Notebook size={20} weight="fill" className="text-primary" />
+              <h2 className="text-base font-bold text-text">كيف يعمل المسح الذكي؟</h2>
+            </div>
+            <ul className="flex flex-col gap-2 pt-1 text-xs text-text-muted">
+              <li className="flex items-start gap-2">
+                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">1</span>
+                <span>تصوير صفحات الدفتر الورقي بإضاءة واضحة وتجنب الظلال.</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">2</span>
+                <span>استخراج القيود، أسماء العملاء، الهواتف، والمبالغ بالذكاء الاصطناعي.</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">3</span>
+                <span>مراجعة المعاملات وتأكيد تحويلها لفواتير بنقرة واحدة مع ربط العملاء.</span>
+              </li>
+            </ul>
+          </div>
+          <div className="mt-4 rounded-xl bg-surface-muted/60 p-3 text-[11px] text-text-muted">
+            💡 يتم تمييز الحقول ذات الدقة المنخفضة باللون الأصفر لتراجعها بدقة قبل التأكيد.
+          </div>
+        </div>
+      </div>
+
+      {progress && <p data-testid="ledger-progress" className="font-semibold text-primary">{progress}</p>}
       {job?.stats && (
         <p className="text-text-muted">
           {t("progress", { done: job.stats.pagesDone ?? 0, total: job.stats.pagesTotal ?? 0, rows: job.stats.rowsFound ?? 0 })}
         </p>
       )}
       {msg && <p role="status" className="rounded-xl border border-border bg-surface px-4 py-3 font-bold">{msg}</p>}
+
+      {job && job.rows.length === 0 && (
+        <div data-testid="ledger-empty" className="panel-shadow flex flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-surface p-8 text-center">
+          <WarningCircle size={32} weight="fill" className="text-status-due-fg" />
+          <p className="font-bold text-text">
+            {locale === "en" ? "No transactions were detected on this page" : "لم يتم التعرف على أي معاملات في الصفحة"}
+          </p>
+          <p className="max-w-md text-xs leading-relaxed text-text-muted">
+            {locale === "en"
+              ? "Ensure the photo is clear, well-lit, and legible without heavy shadows or reflections, then try again."
+              : "تأكد من وضوح الصورة والإضاءة وتجنب الظلال أو الانعكاسات القوية، ثم أعد المحاولة."}
+          </p>
+        </div>
+      )}
 
       {job && job.rows.length > 0 && (
         <Panel padded={false} className="overflow-hidden">

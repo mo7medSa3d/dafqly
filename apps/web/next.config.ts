@@ -3,6 +3,8 @@ import createNextIntlPlugin from "next-intl/plugin";
 
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
+const isProd = process.env.NODE_ENV === "production";
+
 /**
  * Secure headers (BUILD_PLAN §8, M6, ADR-024) on EVERY response, including
  * API routes and the public statement page (no framing anywhere).
@@ -23,7 +25,9 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
+      isProd
+        ? "script-src 'self' 'unsafe-inline'"
+        : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
@@ -34,7 +38,7 @@ const securityHeaders = [
       "frame-ancestors 'none'",
     ].join("; "),
   },
-  ...(process.env.NODE_ENV === "production"
+  ...(isProd
     ? [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" }]
     : []),
 ];
@@ -42,6 +46,9 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   transpilePackages: ["@tahseel/core", "@tahseel/db", "@tahseel/brand"],
   serverExternalPackages: ["argon2", "postgres"],
+  experimental: {
+    optimizePackageImports: ["@phosphor-icons/react"],
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

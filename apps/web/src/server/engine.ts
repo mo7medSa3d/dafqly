@@ -57,9 +57,11 @@ export function aiDeps(): AiDeps {
   if (aiSingleton) return aiSingleton;
   const e = env();
   const storage = new FakeStorageProvider();
-  aiSingleton = e.ANTHROPIC_API_KEY
+  const apiKey = e.AI_API_KEY || e.ANTHROPIC_API_KEY;
+  const unifiedModel = e.AI_MODEL || e.LLM_MODEL_VISION || "claude-sonnet-5-5";
+  aiSingleton = apiKey
     ? {
-        llm: new AnthropicLlmProvider({ apiKey: e.ANTHROPIC_API_KEY, modelFast: e.LLM_MODEL_FAST, modelVision: e.LLM_MODEL_VISION }),
+        llm: new AnthropicLlmProvider({ apiKey, model: unifiedModel, modelFast: unifiedModel, modelVision: unifiedModel }),
         storage, usingFakeLlm: false,
       }
     : { llm: new FakeLlmProvider(), storage, usingFakeLlm: true };

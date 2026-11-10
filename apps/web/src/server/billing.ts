@@ -115,6 +115,15 @@ export async function changePlan(
     const [row] = await tx.insert(subscriptionInvoices).values({
       id, tenantId, planKey: plan.key, periodStart, periodEnd,
       amountMinor: BigInt(plan.priceMinor), status: "issued",
+    }).onConflictDoUpdate({
+      target: [subscriptionInvoices.tenantId, subscriptionInvoices.periodStart],
+      set: {
+        planKey: plan.key,
+        amountMinor: BigInt(plan.priceMinor),
+        periodEnd,
+        status: "issued",
+        updatedAt: new Date(),
+      },
     }).returning();
     await audit(tx, tenantId, actor, "subscription.invoice_generated", "subscription_invoice", id, {
       planKey: plan.key, amountMinor: plan.priceMinor, priceIsPlaceholder: true,

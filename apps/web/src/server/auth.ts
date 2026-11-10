@@ -12,7 +12,7 @@ import * as schema from "@tahseel/db/schema";
  * lookup by email is inherently cross-tenant; tenant data never flows
  * through this connection.
  */
-export const auth = betterAuth({
+const authConfig = betterAuth({
   appName: "DAFQLY",
   secret: process.env.BETTER_AUTH_SECRET ?? env().SESSION_SECRET,
   baseURL: process.env.BETTER_AUTH_URL ?? env().APP_URL,
@@ -35,4 +35,10 @@ export const auth = betterAuth({
   // route) governs auth POSTs with the uniform API error shape (ADR-011).
   rateLimit: { enabled: false },
 });
+
+const globalForAuth = globalThis as unknown as {
+  auth?: typeof authConfig;
+};
+
+export const auth = (globalForAuth.auth ??= authConfig);
 export type Session = typeof auth.$Infer.Session;

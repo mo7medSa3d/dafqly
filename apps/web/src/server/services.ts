@@ -115,7 +115,7 @@ export async function listDebtorsPage(app: Db, tenantId: string, opts: { cursor?
     const hasMore = rows.length > limit;
     const items = hasMore ? rows.slice(0, limit) : rows;
     return {
-      items: items.map((r) => ({ id: r.id, displayName: r.displayName, phoneE164: r.phoneE164, whatsappStatus: r.whatsappStatus, optedOut: r.optedOutAt !== null })),
+      items: items.map((r) => ({ id: r.id, displayName: r.displayName, phoneE164: r.phoneE164, phoneValid: r.phoneValid, whatsappStatus: r.whatsappStatus, optedOut: r.optedOutAt !== null, notes: r.notes, riskFlag: r.riskFlag })),
       nextCursor: hasMore ? { id: items[items.length - 1]!.id } : null,
     };
   });
@@ -127,4 +127,84 @@ export function todayInTimezone(timezone: string, now = new Date()): string {
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
+
+export const updateTenantSettingsInput = z.object({
+  businessNameAr: z.string().trim().min(1).max(160).optional(),
+  businessNameEn: z.string().trim().max(160).optional(),
+  taxId: z.string().trim().max(80).optional(),
+  currency: z.enum(["EGP", "SAR", "USD", "AED", "EUR", "KWD"]).optional(),
+  exportLanguage: z.enum(["ar", "en"]).optional(),
+  timezone: z.string().optional(),
+  gatewayEnabled: z.boolean().optional(),
+  statementLinksEnabled: z.boolean().optional(),
+  includePayLinkInReminders: z.boolean().optional(),
+  autoCloseEnabled: z.boolean().optional(),
+  fridayMorningSkip: z.boolean().optional(),
+  tone: z.enum(["polite", "firm"]).optional(),
+  defaultTermsDays: z.number().int().min(0).max(120).optional(),
+  quietStart: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  quietEnd: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+});
+export type UpdateTenantSettingsInput = z.infer<typeof updateTenantSettingsInput>;
+
+export async function getTenantSettingsAndIntegrations(app: Db, tenantId: string) {
+  const e = env();
+  return withTenant(app, tenantId, async (tx) => {
+    const [t] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
+    if (!t) throw new AppError("NOT_FOUND", "Tenant not found", 404);
+    return {
+      businessNameAr: t.businessNameAr,
+      timezone: t.timezone,
+      settings: t.settings,
+      integrations: {
+        aiConfigured: Boolean(e.ANTHROPIC_API_KEY && e.ANTHROPIC_API_KEY.trim().length > 0),
+        llmModelFast: e.LLM_MODEL_FAST,
+        llmModelVision: e.LLM_MODEL_VISION,
+        paymobConfigured: Boolean(e.PAYMOB_SECRET_KEY && e.PAYMOB_PUBLIC_KEY && e.PAYMOB_INTEGRATION_ID && e.PAYMOB_HMAC_SECRET),
+        whatsappConfigured: Boolean(e.WHATSAPP_PHONE_NUMBER_ID && e.WHATSAPP_ACCESS_TOKEN),
+        smsConfigured: Boolean(e.SMS_API_KEY && e.SMS_PROVIDER),
+        dryRunMessaging: e.DRY_RUN_MESSAGING,
+        webhooks: {
+          paymob: `${e.APP_URL}/api/webhooks/paymob`,
+          whatsapp: `${e.APP_URL}/api/webhooks/whatsapp`,
+        },
+      },
+    };
+  });
+}
+
+export async function updateTenantSettings(app: Db, tenantId: string, actorUserId: string, patch: UpdateTenantSettingsInput) {
+  return withTenant(app, tenantId, async (tx) => {
+    const [t] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
+    if (!t) throw new AppError("NOT_FOUND", "Tenant not found", 404);
+    const nextSettings: TenantSettings = {
+      ...t.settings,
+      ...(patch.businessNameEn !== undefined ? { businessNameEn: patch.businessNameEn } : {}),
+      ...(patch.taxId !== undefined ? { taxId: patch.taxId } : {}),
+      ...(patch.currency !== undefined ? { currency: patch.currency } : {}),
+      ...(patch.exportLanguage !== undefined ? { exportLanguage: patch.exportLanguage } : {}),
+      ...(patch.gatewayEnabled !== undefined ? { gatewayEnabled: patch.gatewayEnabled } : {}),
+      ...(patch.statementLinksEnabled !== undefined ? { statementLinksEnabled: patch.statementLinksEnabled } : {}),
+      ...(patch.includePayLinkInReminders !== undefined ? { includePayLinkInReminders: patch.includePayLinkInReminders } : {}),
+      ...(patch.autoCloseEnabled !== undefined ? { autoCloseEnabled: patch.autoCloseEnabled } : {}),
+      ...(patch.fridayMorningSkip !== undefined ? { fridayMorningSkip: patch.fridayMorningSkip } : {}),
+      ...(patch.tone !== undefined ? { tone: patch.tone } : {}),
+      ...(patch.defaultTermsDays !== undefined ? { defaultTermsDays: patch.defaultTermsDays } : {}),
+      ...(patch.quietStart !== undefined ? { quietStart: patch.quietStart } : {}),
+      ...(patch.quietEnd !== undefined ? { quietEnd: patch.quietEnd } : {}),
+    };
+    await tx.update(tenants).set({
+      settings: nextSettings,
+      ...(patch.businessNameAr ? { businessNameAr: patch.businessNameAr } : {}),
+      ...(patch.timezone ? { timezone: patch.timezone } : {}),
+      updatedAt: new Date(),
+    }).where(eq(tenants.id, tenantId));
+    await tx.insert(auditLog).values({
+      tenantId, actorUserId, action: "tenant.settings_updated", entity: "tenant", entityId: tenantId,
+      before: t.settings as never, after: nextSettings as never,
+    });
+    return { settings: nextSettings };
+  });
+}
+
 export { lt, AppError };

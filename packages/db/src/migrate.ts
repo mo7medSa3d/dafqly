@@ -1,4 +1,5 @@
 // Applies drizzle migrations as the owner role. Run via `pnpm db:migrate`.
+import "./load-env";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createDb } from "./client";
 

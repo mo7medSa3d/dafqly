@@ -326,7 +326,7 @@ export async function commitLedgerJob(
       if (data.phoneE164) debtorByPhone.set(data.phoneE164, debtorId);
       const issuedOn = data.date ?? today;
       const [invoice] = await tx.insert(invoices).values({
-        tenantId, debtorId, reference: null, description: data.note,
+        tenantId, debtorId, reference: `INV-${issuedOn.slice(0, 4)}-${1001 + createdInvoices}`, description: data.note,
         amountMinor: BigInt(data.amountMinor), currency: "EGP", issuedOn,
         dueOn: resolveDueOn(issuedOn, null, terms),
         status: "open", source: "ledger_photo", importJobId: jobId,

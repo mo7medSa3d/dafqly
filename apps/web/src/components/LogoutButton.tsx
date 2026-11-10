@@ -4,17 +4,37 @@ import { useLocale, useTranslations } from "next-intl";
 import { SignOut } from "@phosphor-icons/react";
 import { signOut } from "@/lib/auth-client";
 
-export function LogoutButton({ wide = false }: { wide?: boolean }) {
+export function LogoutButton({
+  wide = false,
+  compact = false,
+}: {
+  wide?: boolean;
+  compact?: boolean;
+}) {
   const t = useTranslations("auth");
   const locale = useLocale();
   const router = useRouter();
   return (
     <button
-      className={`inline-flex min-h-touch items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 font-bold text-text transition-colors hover:border-border-strong ${wide ? "w-full" : ""}`}
-      onClick={async () => { await signOut(); router.push(`/${locale}/login`); router.refresh(); }}
+      type="button"
+      title={t("logout")}
+      aria-label={t("logout")}
+      data-testid="logout-btn"
+      className={
+        compact
+          ? "inline-flex size-9 items-center justify-center rounded-full border border-border-strong/60 bg-surface text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary"
+          : `inline-flex min-h-[36px] items-center justify-center gap-2 rounded-full border border-border-strong/60 bg-surface px-4 text-xs font-bold text-text transition-colors hover:border-primary hover:bg-callout ${
+              wide ? "w-full min-h-[44px] text-sm" : ""
+            }`
+      }
+      onClick={async () => {
+        await signOut();
+        router.push(`/${locale}/login`);
+        router.refresh();
+      }}
     >
-      <SignOut size={18} weight="fill" aria-hidden />
-      {t("logout")}
+      <SignOut size={17} weight="fill" aria-hidden />
+      {!compact && <span>{t("logout")}</span>}
     </button>
   );
 }

@@ -1,6 +1,7 @@
 // Seed: SYNTHETIC demo data only (no real people, phones or amounts owed by
 // anyone real). Demo login: demo@tahseel.test / demo-password-123 — dev only,
 // documented in RUNBOOK.md. Idempotent: safe to run repeatedly.
+import "./load-env";
 import { createHmac, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 // Password hashing MUST match the web auth config (argon2id, BUILD_PLAN §3):
@@ -23,6 +24,17 @@ export const DEMO_PASSWORD = "demo-password-123";
 
 const { db, client } = createDb(url);
 try {
+  if (process.env.RESET_SEED === "1" || process.argv.includes("--reset")) {
+    const existingUsers = await db.select().from(user).where(eq(user.email, DEMO_EMAIL));
+    for (const u of existingUsers) {
+      const ms = await db.select().from(memberships).where(eq(memberships.userId, u.id));
+      for (const m of ms) {
+        await db.delete(tenants).where(eq(tenants.id, m.tenantId));
+      }
+      await db.delete(user).where(eq(user.id, u.id));
+    }
+  }
+
   const existing = await db.select().from(user).where(eq(user.email, DEMO_EMAIL));
   if (existing.length > 0) {
     console.log("seed: demo user already exists, nothing to do");

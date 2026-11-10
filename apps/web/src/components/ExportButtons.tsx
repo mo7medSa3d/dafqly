@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { DownloadSimple } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
-import { Panel } from "./ui";
+import { Panel, btnGhost } from "./ui";
 
 /** F11 CSV exports: fetched through the tenant-scoped tRPC procedures and saved as a file download. */
 export function ExportButtons() {
@@ -31,8 +31,8 @@ export function ExportButtons() {
       <div className="flex flex-col gap-2">
         {kinds.map((k) => (
           <button key={k.kind} data-testid={k.testid} disabled={busy} onClick={() => void download(k.kind)}
-            className="inline-flex min-h-touch items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 font-bold transition-colors hover:border-border-strong disabled:opacity-60">
-            <DownloadSimple size={17} weight="fill" aria-hidden className="text-text-muted" />
+            className={`${btnGhost} w-full justify-start px-4`}>
+            <DownloadSimple size={18} weight="fill" aria-hidden className="text-primary" />
             {k.label}
           </button>
         ))}

@@ -1,12 +1,25 @@
 export const BRAND = {
   name: "DAFQLY",
-  nameAr: "DAFQLY",
+  displayNameEn: "Dafqly",
+  nameAr: "دفقلي",
   tagline: "Track. Follow. Get Paid.",
   supportingLine: "Smarter Receivables. Better Cash Flow.",
   taglineAr: "تتبّع. تابع. وحصّل.",
-  descriptionAr: "منصة إدارة المستحقات والتحصيل",
-  descriptionEn: "Smarter Receivables. Better Cash Flow.",
-  colors: { navy: "#14243A", teal: "#27C7A5", canvas: "#F6F8F7", slate: "#697989" },
+  descriptionAr: "دفقلي — منصة إدارة المستحقات والتحصيل الذكي",
+  descriptionEn: "Dafqly — Smarter Receivables. Better Cash Flow.",
+  designSystem: "Yaseir Design Guide v2.1",
+  colors: {
+    navy: "#101219",
+    primaryBlue: "#0953DE",
+    teal: "#00C7FC",
+    reserveTeal: "#12716B",
+    yellow: "#FFE451",
+    pink: "#F48CC0",
+    violet: "#6852AE",
+    coral: "#B84C3D",
+    canvas: "#F6F7F9",
+    slate: "#5A606C",
+  },
   logo: {
     symbol: "/brand/logo/symbol.svg",
     markColor: "/brand/logo/mark-color.svg",
@@ -16,7 +29,6 @@ export const BRAND = {
     lockupStacked: "/brand/logo/lockup-stacked.svg",
     appIcon: "/brand/logo/app-icon.svg",
   },
-  /** v0.9.0 completed asset set (paths are repo-relative unless they start with /). */
   assets: {
     wordmarkHorizontalOutlined: "packages/brand/logo/wordmark-horizontal-outlined.svg",
     wordmarkHorizontalReversedOutlined: "packages/brand/logo/wordmark-horizontal-reversed-outlined.svg",

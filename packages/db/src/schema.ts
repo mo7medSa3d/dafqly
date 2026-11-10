@@ -27,6 +27,11 @@ export interface TenantSettings {
   tone: "polite" | "firm";
   defaultTermsDays: number;
   easternDigits: boolean;
+  /** Merchant Profile & Localization */
+  businessNameEn?: string;
+  taxId?: string;
+  currency?: "EGP" | "SAR" | "USD" | "AED" | "EUR" | "KWD";
+  exportLanguage?: "ar" | "en";
   /** F4: kill switch (manual, or quality-guard auto-pause with qualityPausedReason). */
   sendingPaused?: boolean;
   qualityPausedReason?: string;

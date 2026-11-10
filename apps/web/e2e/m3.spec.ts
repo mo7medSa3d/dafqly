@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { createHmac } from "node:crypto";
+import { clickNav } from "./helpers";
 
 /**
  * M3 (F5 + F10) over real HTTP against the production build:
@@ -41,7 +42,7 @@ async function login(page: Page) {
 }
 
 async function openDebtor(page: Page, index: number): Promise<string> {
-  await page.getByTestId("nav-debtors").click();
+  await clickNav(page, "nav-debtors");
   await expect(page.getByTestId("debtor-row")).toHaveCount(3);
   await page.getByTestId("debtor-view").nth(index).click();
   await expect(page.getByTestId("debtor-outstanding")).toBeVisible();

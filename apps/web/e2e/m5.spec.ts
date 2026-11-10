@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { clickNav } from "./helpers";
 
 /**
  * M5 (F9/F11/F12/F13) over real HTTP against the production build:
@@ -43,8 +44,8 @@ test("M5 cheque lifecycle in the UI: register -> deposit -> clear pays the invoi
     debtorId: debtor.id, amount: "300.00", issuedOn: "2026-11-09", dueOn: "2026-11-25",
   });
 
-  await page.goto("/ar/cheques");
-  await expect(page.getByTestId("nav-cheques")).toBeVisible();
+  await page.goto("/ar/dashboard");
+  await clickNav(page, "nav-cheques");
   await page.getByTestId("cheque-debtor").selectOption(debtor.id);
   await page.getByTestId("cheque-direction").selectOption("receivable");
   await page.getByTestId("cheque-number").fill(`E2E-${stamp}`);

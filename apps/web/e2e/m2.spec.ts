@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { createHmac } from "node:crypto";
+import { clickNav } from "./helpers";
 
 /**
  * M2 F3 over real HTTP: the webhook route's GET handshake, signature gate
@@ -61,7 +62,7 @@ test("M2 webhook: handshake, signature gate, signed opt-out lands in the UI", as
   await page.getByTestId("auth-password").fill("demo-password-123");
   await page.getByTestId("auth-submit").click();
   await expect(page).toHaveURL(/\/ar\/dashboard/);
-  await page.getByTestId("nav-debtors").click();
+  await clickNav(page, "nav-debtors");
   await expect(page.getByTestId("debtor-row")).toHaveCount(3);
   await page.getByTestId("debtor-view").first().click();
   await expect(page.getByTestId("debtor-opted-out")).toBeVisible();

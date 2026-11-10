@@ -8,14 +8,16 @@ import { appDatabaseUrl, env } from "./env";
  * - appDb: the RLS-bound tahseel_app role; every tenant query goes through
  *   withTenant() on this connection.
  */
-let owner: { db: Db } | undefined;
-let app: { db: Db } | undefined;
+const globalForDb = globalThis as unknown as {
+  owner?: { db: Db };
+  app?: { db: Db };
+};
 
 export function ownerDb(): Db {
-  owner ??= createDb(env().DATABASE_URL);
-  return owner.db;
+  globalForDb.owner ??= createDb(env().DATABASE_URL);
+  return globalForDb.owner.db;
 }
 export function appDb(): Db {
-  app ??= createAppDb(appDatabaseUrl());
-  return app.db;
+  globalForDb.app ??= createAppDb(appDatabaseUrl());
+  return globalForDb.app.db;
 }

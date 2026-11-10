@@ -9,12 +9,13 @@
   },
   "scripts": {
     "dev": "pnpm --filter @tahseel/web dev",
+    "start": "pnpm --filter @tahseel/web start",
     "worker": "pnpm --filter @tahseel/worker dev",
     "build": "pnpm -r --if-present build",
     "lint": "eslint . && node scripts/check-no-hardcoded-brand.mjs && node scripts/check-secrets.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
-    "test:e2e": "pnpm db:migrate && pnpm db:seed && pnpm --filter @tahseel/web test:e2e",
+    "test:e2e": "pnpm db:migrate && RESET_SEED=1 pnpm db:seed && pnpm --filter @tahseel/web test:e2e",
     "eval": "pnpm --filter @tahseel/eval eval",
     "db:migrate": "pnpm --filter @tahseel/db migrate",
     "db:seed": "pnpm --filter @tahseel/db seed"

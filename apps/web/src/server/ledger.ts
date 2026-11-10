@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, ilike, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, ilike, inArray, isNull, or } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import {
@@ -137,7 +137,7 @@ export interface InvoiceView {
 export function toInvoiceView(r: typeof invoices.$inferSelect, today: string): InvoiceView {
   const outstanding = r.amountMinor - r.paidMinor;
   return {
-    id: r.id, debtorId: r.debtorId, reference: r.reference, description: r.description,
+    id: r.id, debtorId: r.debtorId, reference: r.reference ?? `INV-${r.issuedOn.slice(0, 4)}-${r.id.slice(-4).toUpperCase()}`, description: r.description,
     amountMinor: r.amountMinor.toString(), paidMinor: r.paidMinor.toString(),
     outstandingMinor: (outstanding > 0n ? outstanding : 0n).toString(),
     currency: r.currency, currencyWarning: r.currency !== "EGP",
@@ -159,8 +159,15 @@ export async function createInvoice(app: Db, tenantId: string, actor: string, in
     await findDebtorOr404(tx, input.debtorId);
     const settings = await tenantSettings(tx, tenantId);
     const dueOn = resolveDueOn(input.issuedOn, input.dueOn ?? null, settings.defaultTermsDays);
+    let reference = input.reference?.trim() || null;
+    if (!reference) {
+      const [cnt] = await tx.select({ c: count() }).from(invoices);
+      const seq = Number(cnt?.c ?? 0) + 1001;
+      const year = input.issuedOn.slice(0, 4) || new Date().getFullYear().toString();
+      reference = `INV-${year}-${seq}`;
+    }
     const [row] = await tx.insert(invoices).values({
-      tenantId, debtorId: input.debtorId, reference: input.reference ?? null,
+      tenantId, debtorId: input.debtorId, reference,
       description: input.description ?? null, amountMinor,
       currency: (input.currency ?? "EGP").toUpperCase(), issuedOn: input.issuedOn, dueOn,
       status: "open", source: input.source,

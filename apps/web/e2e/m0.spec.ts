@@ -46,12 +46,12 @@ test("brand wiring: manifest is RTL Arabic, theme color is navy-700, font flag o
   const manifest = (await manifestRes.json()) as { lang: string; dir: string; theme_color: string };
   expect(manifest.lang).toBe("ar");
   expect(manifest.dir).toBe("rtl");
-  expect(manifest.theme_color).toBe("#14243A");
+  expect(manifest.theme_color).toBe("#101219");
   expect((manifest as { name?: string }).name).toBe("DAFQLY");
 
   await page.goto("/ar/login");
   const themeColor = await page.locator('meta[name="theme-color"][media*="light"]').getAttribute("content");
-  expect(themeColor).toBe("#14243A");
+  expect(themeColor).toBe("#101219");
   await expect(page.locator("html")).toHaveAttribute("data-brand-font", "on");
 });
 

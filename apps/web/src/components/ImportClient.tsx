@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useTranslations, useLocale } from "next-intl";
 import { formatEgp } from "@tahseel/core";
-import { FileCsv, UploadSimple } from "@phosphor-icons/react";
+import { CheckCircle, FileCsv, FileText, UploadSimple, WarningCircle } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
 import { ImportIllustration } from "./illustrations";
 import { Panel, StatusPill, btnGhost, btnPrimary, inputCls } from "./ui";
@@ -25,6 +25,8 @@ function fileToBase64(file: File): Promise<string> {
 
 export function ImportClient() {
   const t = useTranslations("import");
+  const locale = useLocale();
+  const isAr = locale === "ar";
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [jobs, setJobs] = useState<JobLite[]>([]);
@@ -57,7 +59,11 @@ export function ImportClient() {
       setJobId(preview.jobId);
       await loadJob(preview.jobId);
       await loadJobs();
-    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+    } catch (err: unknown) {
+      setMsg((err instanceof Error ? err.message : null) || t("failed"));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function onRemap() {
@@ -67,7 +73,11 @@ export function ImportClient() {
       const clean = Object.fromEntries(Object.entries(mapping).filter(([, v]) => v !== undefined && v >= 0));
       await trpc.imports.remap.mutate({ jobId, mapping: clean as never });
       await loadJob(jobId);
-    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+    } catch (err: unknown) {
+      setMsg((err instanceof Error ? err.message : null) || t("failed"));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function onCommit() {
@@ -91,18 +101,96 @@ export function ImportClient() {
     } catch { setMsg(t("failed")); } finally { setBusy(false); }
   }
 
+  const isErrorMsg = msg ? (msg.includes("تعذّر") || msg.toLowerCase().includes("failed")) : false;
+
   return (
     <section className="flex flex-col gap-6">
-      <label className="brand-pattern-light panel-shadow flex cursor-pointer flex-col items-center gap-2 rounded-2xl border border-dashed border-border-strong bg-surface px-6 py-8 text-center transition-colors hover:bg-surface-muted/40">
-        <ImportIllustration size={76} />
-        <span className="flex items-center gap-2 text-lg font-extrabold">
-          <UploadSimple size={20} weight="fill" aria-hidden className="text-teal-600 dark:text-teal-300" />
-          {t("pick")}
-        </span>
-        <input data-testid="import-file" type="file" accept=".xlsx,.xls,.csv" disabled={busy} className="sr-only"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) void onFile(f); }} />
-      </label>
-      {msg && <p role="status" data-testid="import-msg" className="rounded-xl border border-border bg-surface px-4 py-3 text-sm font-bold">{msg}</p>}
+      <div className="grid gap-6 lg:grid-cols-12">
+        {/* Upload Dropzone */}
+        <label className="brand-pattern-light panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border-strong bg-surface p-8 text-center transition-all hover:border-primary hover:bg-surface-muted/40 lg:col-span-7">
+          <ImportIllustration size={80} />
+          <div className="flex flex-col items-center gap-1">
+            <span className="flex items-center gap-2 text-lg font-extrabold text-text">
+              <UploadSimple size={22} weight="bold" aria-hidden className="text-primary" />
+              {t("pick")}
+            </span>
+            <p className="text-xs text-text-muted">
+              يدعم ملفات إكسل وجداول البيانات الشائعة حتى 10 ميجابايت
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 pt-2">
+            <span className="rounded-md border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-bold text-text-muted">XLSX</span>
+            <span className="rounded-md border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-bold text-text-muted">XLS</span>
+            <span className="rounded-md border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-bold text-text-muted">CSV</span>
+          </div>
+
+          <input
+            data-testid="import-file"
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            disabled={busy}
+            className="sr-only"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void onFile(f);
+            }}
+          />
+        </label>
+
+        {/* Guidelines / Helper Column */}
+        <div className="panel-shadow flex flex-col justify-between rounded-2xl border border-border bg-surface p-6 lg:col-span-5">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <FileText size={20} weight="fill" className="text-primary" />
+              <h2 className="text-base font-bold text-text">تجهيز ملف الفواتير</h2>
+            </div>
+            <p className="text-xs leading-relaxed text-text-muted">
+              يمكنك رفع أي ملف إكسل أو CSV يحتوي على أسماء العملاء وأرقامهم والمبالغ المستحقة. سيتعرف النظام تلقائياً على الأعمدة ويمنحك فرصة مراجعتها قبل التأكيد.
+            </p>
+            <ul className="flex flex-col gap-1.5 pt-1 text-xs text-text-muted">
+              <li className="flex items-center gap-2">
+                <span className="size-1.5 rounded-full bg-teal-500" />
+                <span>الاسم (العميل أو الشركة المدين)</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="size-1.5 rounded-full bg-teal-500" />
+                <span>الهاتف (محلي أو بصيغة دولية)</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="size-1.5 rounded-full bg-teal-500" />
+                <span>المبلغ بالجنيه المصري</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="size-1.5 rounded-full bg-teal-500" />
+                <span>تاريخ الاستحقاق (اختياري)</span>
+              </li>
+            </ul>
+          </div>
+          <div className="mt-4 rounded-xl bg-surface-muted/60 p-3 text-[11px] text-text-muted">
+            🛡️ يتم فحص الملف تلقائياً لمنع أي تكرار وتنبيهك قبل حفظ البيانات.
+          </div>
+        </div>
+      </div>
+
+      {msg && (
+        <div
+          role="status"
+          data-testid="import-msg"
+          className={`flex items-center gap-2.5 rounded-xl border px-4 py-3 text-sm font-bold ${
+            isErrorMsg
+              ? "border-danger/30 bg-danger-bg text-danger"
+              : "border-status-paid-fg/30 bg-status-paid-bg text-status-paid-fg"
+          }`}
+        >
+          {isErrorMsg ? (
+            <WarningCircle size={18} weight="fill" aria-hidden />
+          ) : (
+            <CheckCircle size={18} weight="fill" aria-hidden />
+          )}
+          <span>{msg}</span>
+        </div>
+      )}
 
       {job && (
         <Panel title={`${t("preview")} — ${job.fileName}`} icon={FileCsv}>
@@ -174,9 +262,17 @@ export function ImportClient() {
 
       <div className="flex flex-col gap-3">
         <h2 className="text-lg font-extrabold">{t("jobs")}</h2>
-        {jobs.length === 0
-          ? <p className="rounded-xl border border-dashed border-border-strong bg-surface px-5 py-6 text-center text-text-muted">—</p>
-          : (
+        {jobs.length === 0 ? (
+          <div className="panel-shadow flex flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-surface p-8 text-center">
+            <FileText size={32} weight="fill" className="text-text-subtle" />
+            <p className="font-bold text-text">{isAr ? "لا توجد عمليات استيراد سابقة" : "No previous import jobs"}</p>
+            <p className="max-w-md text-xs leading-relaxed text-text-muted">
+              {isAr
+                ? "عند رفع أي ملف إكسل أو CSV، ستظهر هنا سجلات المعالجة وحالة الفواتير المستوردة وإمكانية التراجع عنها."
+                : "When you upload an Excel or CSV file, processing history and rollback options will appear here."}
+            </p>
+          </div>
+        ) : (
             <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
               <ul className="flex flex-col divide-y divide-border">
                 {jobs.map((j) => (

@@ -54,8 +54,10 @@ type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
 
 export interface AnthropicOptions {
   apiKey: string;
-  modelFast: string;
-  modelVision: string;
+  /** Unified multimodal model handling both text/replies and images/files (OCR). */
+  model?: string;
+  modelFast?: string;
+  modelVision?: string;
   fetchFn?: FetchFn;
   baseUrl?: string;
   timeoutMs?: number;
@@ -128,7 +130,7 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
 
   async extractLedgerPage(image: Uint8Array, mime: string): Promise<LlmCallResult<LedgerExtraction>> {
     return this.callTool({
-      model: this.opts.modelVision, promptVersion: LEDGER_PROMPT_VERSION, system: LEDGER_SYSTEM,
+      model: this.opts.model ?? this.opts.modelVision ?? this.opts.modelFast ?? "claude-sonnet-5-5", promptVersion: LEDGER_PROMPT_VERSION, system: LEDGER_SYSTEM,
       content: [this.imageBlock(image, mime), { type: "text", text: LEDGER_USER }],
       toolName: LEDGER_TOOL_NAME, toolDescription: "Return the ledger rows transcribed from the page image.",
       toolSchema: LEDGER_TOOL_SCHEMA, parse: parseLedgerExtraction,
@@ -137,7 +139,7 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
 
   async extractReceipt(image: Uint8Array, mime: string): Promise<LlmCallResult<ReceiptExtraction>> {
     return this.callTool({
-      model: this.opts.modelVision, promptVersion: RECEIPT_PROMPT_VERSION, system: RECEIPT_SYSTEM,
+      model: this.opts.model ?? this.opts.modelVision ?? this.opts.modelFast ?? "claude-sonnet-5-5", promptVersion: RECEIPT_PROMPT_VERSION, system: RECEIPT_SYSTEM,
       content: [this.imageBlock(image, mime), { type: "text", text: RECEIPT_USER }],
       toolName: RECEIPT_TOOL_NAME, toolDescription: "Return the transfer receipt fields transcribed from the image.",
       toolSchema: RECEIPT_TOOL_SCHEMA, parse: parseReceiptExtraction,
@@ -146,7 +148,7 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
 
   async classifyReply(text: string, context: ReplyContext): Promise<LlmCallResult<ReplyClassification>> {
     return this.callTool({
-      model: this.opts.modelFast, promptVersion: REPLY_PROMPT_VERSION, system: REPLY_SYSTEM,
+      model: this.opts.model ?? this.opts.modelFast ?? this.opts.modelVision ?? "claude-sonnet-5-5", promptVersion: REPLY_PROMPT_VERSION, system: REPLY_SYSTEM,
       content: [{ type: "text", text: replyUserText(text, context) }],
       toolName: REPLY_TOOL_NAME, toolDescription: "Classify the customer reply into the closed intent set.",
       toolSchema: REPLY_TOOL_SCHEMA, parse: parseReplyClassification,
@@ -155,7 +157,7 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
 
   async extractCheque(image: Uint8Array, mime: string): Promise<LlmCallResult<ChequeExtraction>> {
     return this.callTool({
-      model: this.opts.modelVision, promptVersion: CHEQUE_PROMPT_VERSION, system: CHEQUE_SYSTEM,
+      model: this.opts.model ?? this.opts.modelVision ?? this.opts.modelFast ?? "claude-sonnet-5-5", promptVersion: CHEQUE_PROMPT_VERSION, system: CHEQUE_SYSTEM,
       content: [this.imageBlock(image, mime), { type: "text", text: CHEQUE_USER }],
       toolName: CHEQUE_TOOL_NAME, toolDescription: "Return the cheque fields transcribed from the image.",
       toolSchema: CHEQUE_TOOL_SCHEMA, parse: parseChequeExtraction,

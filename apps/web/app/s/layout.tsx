@@ -12,7 +12,7 @@ import "@fontsource/ibm-plex-sans-arabic/700.css";
  * root layout lives under [locale] and statement URLs carry no locale.
  */
 export const metadata: Metadata = {
-  title: "كشف حساب — DAFQLY",
+  title: "كشف حساب — دفقلي",
   robots: { index: false, follow: false },
 };
 

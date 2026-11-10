@@ -2,13 +2,12 @@
 @import "../../../packages/brand/tokens/tokens.css";
 @import "tailwindcss";
 
-/* Tailwind v4 mapping of the brand tokens (BRAND §0: the same variables via
-   @theme). `inline` keeps utilities referencing the CSS variables, so the
-   dark-mode values in tokens.css apply automatically. */
+/* Tailwind v4 mapping of the Yaseir v2.1 & DAFQLY brand tokens via @theme. */
 @theme inline {
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-muted: var(--surface-muted);
+  --color-callout: var(--callout);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-text: var(--text);
@@ -61,6 +60,11 @@
   --color-slate-300: var(--slate-300);
   --color-slate-400: var(--slate-400);
   --color-slate-500: var(--slate-500);
+  --color-yaseir-yellow: var(--yaseir-yellow);
+  --color-yaseir-pink: var(--yaseir-pink);
+  --color-yaseir-violet: var(--yaseir-violet);
+  --color-yaseir-teal: var(--yaseir-teal);
+  --color-yaseir-coral: var(--yaseir-coral);
   --font-brand: var(--font-brand);
   --radius-sm: var(--radius-sm);
   --radius-md: var(--radius-md);
@@ -69,43 +73,47 @@
 }
 
 @layer base {
+  html, body {
+    overflow-x: clip;
+    max-width: 100%;
+  }
   body {
     background: var(--bg);
     color: var(--text);
     font-family: var(--font-brand);
     line-height: var(--lh-body);
-    letter-spacing: 0; /* BRAND §2.3: never apply letter-spacing to Arabic */
+    letter-spacing: 0;
   }
   .tnum { font-variant-numeric: tabular-nums; }
 }
 
 @layer utilities {
-  /* Soft, token-tinted elevation for panels (no raw color values). */
+  /* Yaseir v2.1 soft multi-layer card shadow: 0 4px 12px rgba(16, 18, 25, 0.06) */
   .panel-shadow {
     box-shadow:
-      0 1px 2px color-mix(in srgb, var(--navy-950) 5%, transparent),
-      0 12px 32px -16px color-mix(in srgb, var(--navy-950) 14%, transparent);
+      0 1px 2px color-mix(in srgb, var(--navy-700) 4%, transparent),
+      0 4px 12px color-mix(in srgb, var(--navy-700) 6%, transparent);
   }
-  /* Dot pattern in brand teal at very low opacity, for hero/header zones. */
+  /* Dot pattern in Yaseir cyan at low opacity, for hero/header zones. */
   .brand-pattern {
-    background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--teal-300) 26%, transparent) 1.4px, transparent 0);
-    background-size: 22px 22px;
+    background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--teal-400) 24%, transparent) 1.5px, transparent 0);
+    background-size: 24px 24px;
   }
   .brand-pattern-light {
-    background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--navy-700) 9%, transparent) 1.4px, transparent 0);
-    background-size: 22px 22px;
+    background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--navy-500) 10%, transparent) 1.5px, transparent 0);
+    background-size: 24px 24px;
   }
-  /* Navy gradient band (dashboard header, statement header, auth side). */
+  /* Yaseir Ink & UI Blue gradient band */
   .hero-band {
-    background: linear-gradient(140deg, var(--navy-800) 0%, var(--navy-700) 52%, var(--navy-600) 100%);
+    background: linear-gradient(135deg, var(--navy-700) 0%, var(--navy-600) 48%, var(--navy-500) 100%);
+  }
+  .yaseir-stage {
+    background: linear-gradient(135deg, var(--navy-100) 0%, var(--navy-50) 100%);
   }
   .no-scrollbar { scrollbar-width: none; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
 }
 
-/* Section reveal: pure CSS so first paint never depends on JS hydration.
-   Reduced motion collapses the duration via tokens.css (media query there),
-   leaving content visible immediately. */
 @keyframes reveal-in {
   from {
     opacity: 0;

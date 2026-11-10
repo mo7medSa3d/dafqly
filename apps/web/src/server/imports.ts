@@ -199,7 +199,7 @@ export async function commitImport(app: Db, tenantId: string, actor: string, job
       debtorByPhone.set(data.phoneE164, debtorId);
       const issuedOn = data.issuedOn ?? today;
       const [invoice] = await tx.insert(invoices).values({
-        tenantId, debtorId, reference: data.reference, description: data.description,
+        tenantId, debtorId, reference: data.reference?.trim() || `INV-${issuedOn.slice(0, 4)}-${1001 + createdInvoices}`, description: data.description,
         amountMinor: BigInt(data.amountMinor), currency: "EGP", issuedOn,
         dueOn: resolveDueOn(issuedOn, data.dueOn, terms),
         status: "open", source: "import", importJobId: jobId,

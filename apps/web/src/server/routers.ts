@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { decodeCursor, encodeCursor, type InvoiceStatus } from "@tahseel/core";
 import { router, publicProcedure, protectedProcedure, tenantProcedure } from "./trpc";
-import { createTenantInput, createTenantForUser, listTenantsForUser, getDashboardSummary, listDebtorsPage, todayInTimezone } from "./services";
+import { createTenantInput, createTenantForUser, listTenantsForUser, getDashboardSummary, listDebtorsPage, todayInTimezone, getTenantSettingsAndIntegrations, updateTenantSettings, updateTenantSettingsInput } from "./services";
 import {
   createDebtor, createDebtorInput, updateDebtor, softDeleteDebtor, listDebtorsPage2,
   createInvoice, createInvoiceInput, listInvoicesPage, updateInvoice, transitionInvoice,
@@ -52,6 +52,10 @@ export const appRouter = router({
     create: protectedProcedure
       .input(createTenantInput)
       .mutation(async ({ ctx, input }) => createTenantForUser(ctx.appDb, ctx.user.id, input)),
+    integrations: tenantProcedure.query(async ({ ctx }) => getTenantSettingsAndIntegrations(ctx.appDb, ctx.tenantId)),
+    updateSettings: tenantProcedure
+      .input(updateTenantSettingsInput)
+      .mutation(async ({ ctx, input }) => updateTenantSettings(ctx.appDb, ctx.tenantId, ctx.user.id, input)),
   },
   dashboard: {
     summary: tenantProcedure.query(async ({ ctx }) => {

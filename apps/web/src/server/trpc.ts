@@ -21,17 +21,21 @@ export async function createTrpcContext(headers: Headers): Promise<TrpcContext> 
 }
 
 const t = initTRPC.context<TrpcContext>().create({
-  // Uniform API error shape on the wire: { error: { code, message, details } }
-  // (tRPC's default shape.code is a JSON-RPC number; the plan's shape needs
-  // the stable string code, e.g. "UNAUTHORIZED" / "BAD_REQUEST".)
+  // Uniform API error shape on the wire: preserve shape.code as numeric JSON-RPC code
+  // for @trpc/client deserialization, and provide semantic app error codes in data.
   errorFormatter({ shape, error }) {
     const appErr = error.cause instanceof AppError ? error.cause : undefined;
     const zodIssues = error.cause instanceof z.ZodError ? error.cause.issues : undefined;
     return {
-      code: appErr?.code ?? error.code,
+      ...shape,
       message: appErr?.message ?? error.message,
-      details: appErr?.details ?? zodIssues ?? { httpStatus: shape.data.httpStatus, path: shape.data.path },
-    } as unknown as typeof shape;
+      data: {
+        ...shape.data,
+        code: appErr?.code ?? shape.data?.code,
+        appCode: appErr?.code,
+        details: appErr?.details ?? zodIssues ?? { httpStatus: shape.data?.httpStatus, path: shape.data?.path },
+      },
+    };
   },
 });
 

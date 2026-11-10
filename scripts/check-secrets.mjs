@@ -1,9 +1,27 @@
-// Lightweight secrets scan over tracked files (BUILD_PLAN §9). Fails if a
-// committed file looks like it contains a real credential. Placeholder values
-// from .env.example ("change-me", "dev-only", example.invalid) are allowed.
+// Lightweight secrets scan over tracked or workspace files (BUILD_PLAN §9).
 import { execSync } from "node:child_process";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 
-const files = execSync("git ls-files", { encoding: "utf8" }).split("\n").filter(Boolean);
+function walkFiles(dir, out = []) {
+  for (const name of readdirSync(dir)) {
+    if (name === ".git" || name === "node_modules" || name === ".next" || name === "dist") continue;
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) walkFiles(p, out);
+    else out.push(p);
+  }
+  return out;
+}
+
+let files = [];
+let useGit = false;
+try {
+  files = execSync("git ls-files", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n").filter(Boolean);
+  useGit = files.length > 0;
+} catch {
+  files = walkFiles(".");
+}
+
 const patterns = [
   { name: "private key block", re: /-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----/ },
   { name: "AWS access key", re: /\bAKIA[0-9A-Z]{16}\b/ },
@@ -15,13 +33,17 @@ const patterns = [
 const allow = /change-me|dev-only|example\.invalid|example\.test|your-|placeholder/i;
 let failed = false;
 for (const file of files) {
-  if (/\.(png|jpg|jpeg|gif|ico|otf|woff2?)$/i.test(file)) continue;
+  if (/\.(png|jpg|jpeg|gif|ico|otf|woff2?|zip)$/i.test(file)) continue;
   let text;
-  try { text = execSync(`git show :${JSON.stringify(file)}`, { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }); } catch { continue; }
+  try {
+    text = useGit
+      ? execSync(`git show :${JSON.stringify(file)}`, { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 })
+      : readFileSync(file, "utf8");
+  } catch { continue; }
   for (const { name, re } of patterns) {
     const m = text.match(re);
     if (m && !allow.test(m[0])) { console.error(`${file}: possible ${name}`); failed = true; }
   }
 }
 if (failed) { console.error("check-secrets: FAILED"); process.exit(1); }
-console.log(`check-secrets: OK (${files.length} tracked files scanned)`);
+console.log(`check-secrets: OK (${files.length} files scanned)`);

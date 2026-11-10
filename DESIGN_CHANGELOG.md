@@ -144,3 +144,57 @@ Sections use the shared `Reveal` wrapper, reimplemented during this redesign as 
 - AFTER: `apps/web/e2e/redesign.spec.ts` (new) re-captures the paired set (`after-*.png`) inside the normal e2e run and asserts: exactly one instance of every `nav-*` testid, and no horizontal overflow (scrollWidth − clientWidth ≤ 1) on dashboard/invoices/debtors/import/ledger-photo/ai-inbox/cheques/debtor-detail/statement at 390px.
 - AFTER dashboard/inspection note: with the demo seed the forecast is honestly in its not-enough-data state (< 10 paid invoices) — the chart itself renders from the same component whenever `enoughData` is true; no data was fabricated for screenshots.
 - Gate: lint green (brand + secrets scans), typecheck green (all projects), REQUIRE_DB_TESTS=1 unit tests 352/352 (identical total; NO test changed in this redesign — the only e2e changes are the additive redesign.spec.ts), eval green, build green, migration drift "No schema changes", e2e — see PROGRESS.md for the final count.
+
+
+---
+
+# Yaseir Design Guide v2.1 Integration & System Completion — v1.0.0 (2026-11-09)
+
+Complete visual and functional integration of **Yaseir Design Guide v2.1** (`https://ui.yaseir.site/`) across the entire system, plus fixes for all identified UI/UX and service flaws:
+
+1. **Yaseir v2.1 Color Palette & Contrast (`packages/brand/tokens/tokens.json` & `tokens.css`):**
+   - Primary UI Blue `#0953DE` (hover `#0742B2`), Ink `#101219`, Surface `#F6F7F9`, White `#FFFFFF`, Callout `#F4F8FF`, Muted Text `#5A606C`, Control Border `#7A8190`.
+   - Secondary & Reserve Accents: Cyan `#00C7FC`, Yellow `#FFE451`, Pink `#F48CC0`, Violet `#6852AE`, Teal `#12716B`, Coral `#B84C3D`.
+   - All 40 WCAG AA contrast pairs in `packages/brand/contrast.test.ts` verified passing (`>= 4.5:1` text, `>= 3.0:1` focus).
+2. **Yaseir Typography, Sizes, Spacing & Capsule Components (`apps/web/src/components/ui.tsx`):**
+   - Font stack led by `Thmanyah Sans` with `Plus Jakarta Sans` and `IBM Plex Sans Arabic`.
+   - Page titles `32px–40px`, section titles `24px`, card titles `18px`, body `16px` (`line-height: 1.7`), controls & tables `14px`, footnotes `12px`.
+   - Capsule/Pill buttons (`border-radius: 9999px`, `44px` standard height, `48px` hero height, `24px` horizontal padding).
+3. **Purposeful Illustrations & Security Badges (`apps/web/src/components/illustrations.tsx`):**
+   - Integrated Yaseir's `workspace-art.svg` (`HeroDashboardIllustration`), `finance-art.svg` (`ReceivablesIllustration`), `signin-art.svg` (`SecuritySignInIllustration`), and `SecurityLockBadge` using CSS token variables (zero hardcoded hexes).
+   - Fixed standalone `mark-*.svg` viewBox (`540x512`) so the symbol's right stroke is never clipped.
+4. **Bugs Fixed & Missing Features Completed:**
+   - Fixed `listDebtorsPage` in `apps/web/src/server/services.ts` omitting `notes`, `phoneValid`, and `riskFlag` on initial load.
+   - Fixed `scripts/check-secrets.mjs` crashing when run outside a git repository (`git ls-files` fallback to directory walk).
+   - Replaced `window.prompt()` in `DebtorDetailClient.tsx` gateway refund flow with an inline custom-amount refund bar.
+   - Added safe clipboard copy with fallback and visual confirmation in `DebtorDetailClient.tsx`.
+   - Added inline **Edit Customer** (`trpc.debtors.update` for name, notes, riskFlag) in `DebtorDetailClient.tsx`.
+   - Added `description` input and inline **Edit Invoice** (`trpc.invoices.update`) in `InvoicesClient.tsx`.
+   - Added Subscription Invoices list (`trpc.billing.invoices`) in `BillingClient.tsx`.
+   - Upgraded `AppShell.tsx` with Yaseir's collapsible sidebar (`272px` expanded / `80px` compact icon-only), top header breadcrumbs, security badge, and capsule language switcher (`العربية` / `English`).
+   - Upgraded `AuthForm.tsx` with capsule tab switcher, password visibility eye toggle, `SecuritySignInIllustration`, and `SecurityNotice`.
+
+---
+
+# World-Class Mobile Navigation & Dedicated Settings/Billing Architecture (2026-11-10)
+
+1. **Restored Signature Blue Hero Band (`apps/web/app/[locale]/dashboard/page.tsx`):**
+   - Re-instated `.hero-band` with `brand-pattern`, `SecurityLockBadge`, and `HeroBandArt` vector illustration.
+   - Live date badge, business name header, and direct actionable CTAs.
+2. **Mobile Navigation Overhaul (`apps/web/src/components/AppShell.tsx`):**
+   - Eliminated the cluttered 7-icon bottom bar on mobile screens.
+   - Built a sleek vertical side rail navigation (`fixed inset-y-0 start-0 z-40 w-[64px]` on mobile, `w-[272px]` on desktop) with `ps-[64px]` main content offset, keeping the bottom of the screen completely clear.
+   - Added direct navigation items for Billing and Settings.
+3. **Dedicated Merchant Settings Suite (`apps/web/app/[locale]/settings/page.tsx` & `SettingsClient.tsx`):**
+   - Company Profile (Arabic/English names, CR/Tax ID, timezone).
+   - Invoicing & Currency (multi-currency selector: EGP, SAR, USD, AED, EUR, KWD; payment terms; export language).
+   - WhatsApp & Automation (tone: polite vs. formal/firm, quiet hours window, Friday morning pause, auto-close on verified receipt).
+   - Backups & Danger Zone (JSON backup, CSV downloads, safe account deletion).
+4. **Dedicated Billing Dashboard (`apps/web/app/[locale]/billing/page.tsx`):**
+   - Focused subscription and message quota management.
+5. **Full-Width Edge-to-Edge Landing Page (`apps/web/app/[locale]/page.tsx`):**
+   - Expanded to `max-w-[1600px] w-full px-4 sm:px-6 lg:px-10` matching modern international SaaS platforms.
+6. **Robust Error Handling & Invoices Action Polish:**
+   - Fixed tRPC error serialization (`apps/web/src/server/trpc.ts`) preserving numeric JSON-RPC error codes.
+   - Filtered invoice transition buttons via `canTransition(status, target)` from `@tahseel/core`.
+   - Replaced unstyled checkbox blocks with custom styled rounded checkboxes.

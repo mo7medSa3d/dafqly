@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useTranslations, useLocale } from "next-intl";
 import { formatEgp } from "@tahseel/core";
-import { CheckCircle, Robot, UploadSimple, XCircle } from "@phosphor-icons/react";
+import { CheckCircle, Clock, Robot, ShieldCheck, UploadSimple, XCircle } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
 import { InitialAvatar, Panel, btnPrimary, inputCls, labelCls } from "./ui";
 
@@ -32,6 +32,8 @@ function fileToBase64(file: File): Promise<string> {
 
 export function AiInboxClient() {
   const t = useTranslations("aiInbox");
+  const locale = useLocale();
+  const isAr = locale === "ar";
   const [intents, setIntents] = useState<IntentRow[]>([]);
   const [claims, setClaims] = useState<ClaimRow[]>([]);
   const [debtors, setDebtors] = useState<DebtorLite[]>([]);
@@ -74,87 +76,153 @@ export function AiInboxClient() {
   }
 
   return (
-    <section className="flex flex-col gap-6">
-      {msg && <p role="status" className="rounded-xl border border-border bg-surface px-4 py-3 font-bold">{msg}</p>}
+    <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
+      {/* Main Review Column (8 cols) */}
+      <section className="flex flex-col gap-6 lg:col-span-8">
+        {msg && <p role="status" className="rounded-xl border border-border bg-surface px-4 py-3 font-bold text-primary">{msg}</p>}
 
-      <Panel title={t("receiptUploadTitle")} icon={UploadSimple}>
-        <div className="flex flex-col gap-4">
-          <label className={labelCls}>
-            <span>{t("debtor")}</span>
-            <select data-testid="receipt-debtor" className={inputCls}
-              value={debtorId} onChange={(e) => setDebtorId(e.target.value)}>
-              <option value="">{t("pickDebtor")}</option>
-              {debtors.map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}
-            </select>
-          </label>
-          <label className="brand-pattern-light flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-dashed border-border-strong bg-surface-muted/40 px-4 py-6 text-center transition-colors hover:bg-surface-muted/70">
-            <UploadSimple size={26} weight="fill" aria-hidden className="text-teal-600 dark:text-teal-300" />
-            <span className="font-bold">{t("receiptUploadTitle")}</span>
-            <input data-testid="receipt-file" type="file" accept="image/*" disabled={busy} className="sr-only"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) void onReceiptFile(f); }} />
-          </label>
-        </div>
-      </Panel>
+        {/* Claims Section */}
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-extrabold text-text">{t("claimsTitle")}</h2>
+            <span className="rounded-full bg-callout px-3 py-1 text-xs font-bold text-primary">
+              {claims.length} {isAr ? "مطالبات" : "Claims"}
+            </span>
+          </div>
 
-      <div className="flex flex-col gap-3">
-        <h2 className="text-lg font-extrabold">{t("claimsTitle")}</h2>
-        {claims.length === 0
-          ? <p className="rounded-xl border border-dashed border-border-strong bg-surface px-5 py-6 text-center text-text-muted">{t("claimsEmpty")}</p>
-          : (
-            <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
+          {claims.length === 0 ? (
+            <div className="panel-shadow flex items-center gap-3 rounded-2xl border border-border bg-surface p-6 text-sm text-text-muted">
+              <Clock size={22} weight="fill" className="shrink-0 text-text-subtle" />
+              <span>{t("claimsEmpty")}</span>
+            </div>
+          ) : (
+            <div className="panel-shadow overflow-hidden rounded-2xl border border-border bg-surface">
               <ul className="flex flex-col divide-y divide-border">
                 {claims.map((c) => (
-                  <li key={c.id} data-testid={`claim-${c.id}`} className="flex flex-wrap items-center gap-3 p-4 sm:p-5">
-                    <InitialAvatar name={c.debtorName} size={40} />
-                    <div className="min-w-0 flex-1">
-                      <p className="font-bold">{c.debtorName}</p>
-                      <p className="text-sm text-text-muted">{c.method} · <span dir="ltr">{c.receivedOn}</span>{c.referenceNo ? ` · ${c.referenceNo}` : ""}</p>
+                  <li key={c.id} data-testid={`claim-${c.id}`} className="flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <InitialAvatar name={c.debtorName} size={40} />
+                      <div className="min-w-0">
+                        <p className="font-bold text-text">{c.debtorName}</p>
+                        <p className="text-xs text-text-muted">{c.method} · <span dir="ltr">{c.receivedOn}</span>{c.referenceNo ? ` · ${c.referenceNo}` : ""}</p>
+                      </div>
                     </div>
-                    <span className="tnum text-lg font-extrabold" dir="ltr">{formatEgp(BigInt(c.amountMinor))}</span>
-                    <span className="flex gap-2">
-                      <button type="button" disabled={busy} className={`${btnPrimary} px-3 py-1.5 text-sm`}
-                        onClick={() => void actOnClaim(c.id, "confirm")}>
-                        <CheckCircle size={16} weight="fill" aria-hidden />
-                        {t("confirm")}
-                      </button>
-                      <button type="button" disabled={busy} className="inline-flex min-h-[40px] items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-bold transition-colors hover:border-border-strong disabled:opacity-60"
-                        onClick={() => void actOnClaim(c.id, "reject")}>
-                        <XCircle size={16} weight="fill" aria-hidden />
-                        {t("reject")}
-                      </button>
-                    </span>
+                    <div className="flex items-center gap-4">
+                      <span className="tnum text-lg font-extrabold text-primary" dir="ltr">{formatEgp(BigInt(c.amountMinor))}</span>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className={`${btnPrimary} px-3 py-1.5 text-xs font-bold`}
+                          onClick={() => void actOnClaim(c.id, "confirm")}
+                        >
+                          <CheckCircle size={15} weight="fill" aria-hidden />
+                          {t("confirm")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className="inline-flex min-h-[38px] items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger disabled:opacity-60"
+                          onClick={() => void actOnClaim(c.id, "reject")}
+                        >
+                          <XCircle size={15} weight="fill" aria-hidden />
+                          {t("reject")}
+                        </button>
+                      </div>
+                    </div>
                   </li>
                 ))}
               </ul>
             </div>
           )}
-      </div>
+        </div>
 
-      <div className="flex flex-col gap-3">
-        <h2 className="flex items-center gap-2 text-lg font-extrabold">
-          <Robot size={22} weight="fill" aria-hidden className="text-teal-600 dark:text-teal-300" />
-          {t("intentsTitle")}
-        </h2>
-        {intents.length === 0
-          ? <p className="rounded-xl border border-dashed border-border-strong bg-surface px-5 py-6 text-center text-text-muted">{t("intentsEmpty")}</p>
-          : (
-            <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
+        {/* Customer Replies / Intents Section */}
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-2 text-lg font-extrabold text-text">
+              <Robot size={22} weight="fill" aria-hidden className="text-primary" />
+              <span>{t("intentsTitle")}</span>
+            </h2>
+            <span className="rounded-full bg-callout px-3 py-1 text-xs font-bold text-primary">
+              {intents.length} {isAr ? "رسائل" : "Messages"}
+            </span>
+          </div>
+
+          {intents.length === 0 ? (
+            <div className="panel-shadow flex items-center gap-3 rounded-2xl border border-border bg-surface p-6 text-sm text-text-muted">
+              <CheckCircle size={22} weight="fill" className="shrink-0 text-status-paid-fg" />
+              <span>{t("intentsEmpty")}</span>
+            </div>
+          ) : (
+            <div className="panel-shadow overflow-hidden rounded-2xl border border-border bg-surface">
               <ul className="flex flex-col divide-y divide-border">
                 {intents.map((i) => (
-                  <li key={i.id} data-testid={`intent-${i.id}`} className="flex flex-col gap-1.5 p-4 sm:p-5">
-                    <p className="flex flex-wrap items-center gap-2 font-bold">
-                      {i.debtorName ?? ""}
-                      <span className="rounded-full bg-teal-50 px-2.5 py-0.5 text-xs font-bold text-teal-700 dark:bg-surface-muted dark:text-teal-300">{i.intent}</span>
-                      <span className="tnum text-sm text-text-muted" dir="ltr">{Math.round(i.confidence * 100)}%</span>
-                    </p>
-                    {i.text && <p className="text-text">{i.text}</p>}
-                    <p className="text-xs text-text-muted">{i.actionTaken ?? ""} · <span dir="ltr">{i.createdAt.slice(0, 10)}</span></p>
+                  <li key={i.id} data-testid={`intent-${i.id}`} className="flex flex-col gap-2 p-4 transition-colors hover:bg-callout/40 sm:p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 font-bold text-text">
+                        <span>{i.debtorName ?? (isAr ? "عميل غير محدد" : "Unassigned")}</span>
+                        <span className="rounded-full bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{i.intent}</span>
+                      </div>
+                      <span className="tnum rounded-full border border-border bg-surface-muted px-2.5 py-0.5 text-xs font-semibold text-text-muted" dir="ltr">
+                        {Math.round(i.confidence * 100)}% {isAr ? "ثقة" : "confidence"}
+                      </span>
+                    </div>
+                    {i.text && <p className="rounded-xl bg-surface-muted/60 p-3 text-sm text-text">{i.text}</p>}
+                    <p className="text-xs text-text-muted">{i.actionTaken ?? (isAr ? "بانتظار قرارك" : "Awaiting action")} · <span dir="ltr">{i.createdAt.slice(0, 10)}</span></p>
                   </li>
                 ))}
               </ul>
             </div>
           )}
-      </div>
-    </section>
+        </div>
+      </section>
+
+      {/* Side Column: Upload Receipt & Guide (4 cols) */}
+      <aside className="flex flex-col gap-6 lg:col-span-4">
+        <Panel title={t("receiptUploadTitle")} icon={UploadSimple}>
+          <div className="flex flex-col gap-4">
+            <label className={labelCls}>
+              <span>{t("debtor")}</span>
+              <select
+                data-testid="receipt-debtor"
+                className={inputCls}
+                value={debtorId}
+                onChange={(e) => setDebtorId(e.target.value)}
+              >
+                <option value="">{t("pickDebtor")}</option>
+                {debtors.map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}
+              </select>
+            </label>
+
+            <label className="brand-pattern-light flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border-strong bg-surface-muted/40 p-6 text-center transition-colors hover:bg-surface-muted/70">
+              <UploadSimple size={28} weight="fill" aria-hidden className="text-primary" />
+              <span className="font-bold text-sm text-text">{t("receiptUploadTitle")}</span>
+              <span className="text-xs text-text-muted">يدعم صور التحويلات البنكية ومحافظ الهاتف (PNG, JPG)</span>
+              <input
+                data-testid="receipt-file"
+                type="file"
+                accept="image/*"
+                disabled={busy}
+                className="sr-only"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) void onReceiptFile(f); }}
+              />
+            </label>
+          </div>
+        </Panel>
+
+        <div className="panel-shadow flex flex-col gap-3 rounded-2xl border border-border bg-surface p-5 text-xs text-text-muted">
+          <div className="flex items-center gap-2 text-sm font-bold text-text">
+            <ShieldCheck size={18} weight="fill" className="text-primary" />
+            <span>{isAr ? "معايير المراجعة البشرية" : "Human Verification Rules"}</span>
+          </div>
+          <p className="leading-relaxed">
+            {isAr
+              ? "لحماية أموالك، لا يغلق النظام أي فاتورة تلقائياً بناءً على صورة إيصال فقط. إيصال التحويل يُعتبر ادعاءً بالسداد حتى تؤكده بنفسك أو تفعّل التحصيل الآلي التام."
+              : "To protect your business, receipts are claims until confirmed by you."}
+          </p>
+        </div>
+      </aside>
+    </div>
   );
 }

@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "DAFQLY"
+    "name": "Dafqly"
   },
   "auth": {
     "email": "Email",
@@ -33,7 +33,7 @@
     "emptyTitle": "No invoices yet",
     "openInvoices": "Open invoices",
     "overdue": "Overdue",
-    "title": "Dashboard",
+    "title": "Overview",
     "totalOutstanding": "Total outstanding"
   },
   "onboarding": {
@@ -57,17 +57,19 @@
     "tonePolite": "Polite"
   },
   "nav": {
-    "dashboard": "Dashboard",
+    "dashboard": "Overview",
     "debtors": "Customers",
     "invoices": "Invoices",
     "import": "Import",
-    "ledgerPhoto": "Ledger photo",
-    "aiInbox": "AI inbox",
-    "cheques": "Cheques"
+    "ledgerPhoto": "Smart Scan",
+    "aiInbox": "Inbox",
+    "cheques": "Cheques",
+    "billing": "Billing",
+    "settings": "Settings"
   },
   "debtors": {
     "title": "Customers",
-    "add": "Add customer",
+    "add": "New customer",
     "name": "Name",
     "phone": "Phone number",
     "notes": "Notes",
@@ -84,12 +86,12 @@
   },
   "invoices": {
     "title": "Invoices",
-    "add": "Add invoice",
+    "add": "New invoice",
     "debtor": "Customer",
     "amount": "Amount",
     "issuedOn": "Issued on",
     "dueOn": "Due on",
-    "reference": "Reference",
+    "reference": "Invoice ID (Auto)",
     "description": "Description",
     "status": "Status",
     "search": "Search by reference or description",
@@ -136,7 +138,7 @@
     "failed": "Could not record the payment"
   },
   "gateway": {
-    "title": "Online payments",
+    "title": "Payment links",
     "createTotalLink": "Create a payment link for the total due",
     "createInvoiceLink": "Payment link",
     "linkCreated": "Payment link created",
@@ -160,7 +162,7 @@
     "history": "Payment history"
   },
   "statements": {
-    "title": "Statement link",
+    "title": "Customer statement",
     "create": "Create a new link",
     "created": "Link created. Copy it now — it will not be shown again.",
     "copy": "Copy link",
@@ -283,11 +285,12 @@
     "due_in_3_days": "Due in 3 days",
     "due_today": "Due today",
     "saved": "Saved",
+    "registered": "Cheque registered successfully",
     "failed": "Something went wrong, please retry",
     "prefilled": "Form pre-filled from the photo — review it, then register"
   },
   "reports": {
-    "title": "Reports & forecast",
+    "title": "Financial performance & forecast",
     "collectionRate": "Collection rate",
     "dso": "DSO (days)",
     "agingTitle": "Aging",
@@ -317,7 +320,7 @@
     "perMonth": "messages/month"
   },
   "tenantData": {
-    "title": "Danger zone — your data",
+    "title": "Data & backups",
     "exportAll": "Export all data (JSON)",
     "exportHint": "One file with all your business data: debtors, invoices, payments, cheques and every table.",
     "deleteAll": "Delete all data permanently",

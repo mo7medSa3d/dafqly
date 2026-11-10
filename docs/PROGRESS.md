@@ -7,6 +7,59 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### Final World-Class Polish & Overhaul (2026-11-10) — **COMPLETE**
+- **Restoration of Signature Blue Hero Banner (`/dashboard`)**:
+  - Restored `.hero-band` with `brand-pattern`, `SecurityLockBadge`, `HeroBandArt`, dynamic date indicator, and rapid CTAs (`+ فاتورة جديدة` and `استيراد البيانات`).
+  - Balanced 12-column operational layout: 8 cols financial analytics (Cash Flow Forecast + Aging Bar & Top Debtors) and 4 cols operational rail (Reminder Performance & Plan Quota).
+  - Maintained `DangerZone` and security guarantee badge at the bottom of the dashboard.
+- **Mobile Navigation Overhaul (`AppShell.tsx`)**:
+  - Completely removed the crowded 7-icon bottom bar on mobile viewports.
+  - Implemented an elegant vertical side rail navigation (`fixed inset-y-0 start-0 z-40 w-[64px]` on mobile, `w-[272px]` on desktop) with `ps-[64px]` content offset. Mobile bottom screen is now 100% clean and unobstructed.
+  - Added direct navigation items for Billing (`الاشتراك والباقات`) and Settings (`الإعدادات`).
+  - Maintained all `data-testid="nav-*"` anchors in the active DOM for complete Playwright e2e compatibility.
+- **Dedicated Merchant Settings Page (`/[locale]/settings` & `SettingsClient.tsx`)**:
+  - Company Profile: Arabic & English business names, Commercial/Tax ID, and Timezone selector.
+  - Invoicing & Currency Policy: Select primary operational currency (EGP, SAR, USD, AED, EUR, KWD), default payment terms, and export report language (Arabic / English).
+  - WhatsApp & Automation Rules: Tone selector (polite, formal/firm), quiet hours window, Friday morning pause, auto-close on verified receipt, and payment link inclusion.
+  - Data Backups & Danger Zone: JSON backup export, CSV exports, and full account deletion with safety confirmation.
+- **Dedicated Billing & Quotas Page (`/[locale]/billing`)**:
+  - Clean, dedicated billing dashboard displaying plan limits, current monthly usage meter, and tier upgrades.
+- **Full-Width Edge-to-Edge Landing Page (`/[locale]/page.tsx`)**:
+  - Expanded from narrow container to modern full-width layout (`max-w-[1600px] w-full px-4 sm:px-6 lg:px-10`), matching international top SaaS aesthetics.
+- **tRPC Error Serialization & Invoice Transitions Polish**:
+  - Fixed tRPC `errorFormatter` in `apps/web/src/server/trpc.ts` to preserve numeric JSON-RPC error codes while exposing app-level error codes in `data.code` and `data.appCode`, eliminating `TransformResultError` crashes in the browser.
+  - Guarded invoice transition buttons in `InvoicesClient.tsx` using `canTransition(status, target)` from `@tahseel/core`, preventing illegal transitions and displaying friendly error banners.
+  - Styled invoice and filter checkboxes with rounded custom borders and focus rings, eliminating dark unstyled square blocks (`[■]`).
+- **Comprehensive Quality Verification**:
+  - `pnpm lint`: 0 errors (brand tokens and secrets checks passed).
+  - `pnpm typecheck`: 0 errors across all 9 packages.
+  - `pnpm test`: 352/352 unit & integration tests passed.
+  - `pnpm test:e2e`: 20/20 Playwright e2e tests passed.
+  - Screenshots verified across 1440×900 and 390×844 mobile viewports in `/home/mo7amed_saad/.gemini/antigravity/brain/63a56c42-1795-4033-b6d7-87733e39731b/fixes/`.
+
+### Widescreen UI Distribution & Controls Polish (2026-11-10) — **COMPLETE**
+- **500 Server Errors Resolved**:
+  - `billing.changePlan`: Resolved unique constraint collision on `subscription_invoices(tenant_id, period_start)` via `.onConflictDoUpdate`. Tenants can now upgrade, change tiers, or re-run subscription billing idempotently on the same day without 500 database crashes.
+  - `payments.createLink`: Wired `responseMeta` in tRPC fetch route handler (`apps/web/app/api/trpc/[trpc]/route.ts`) to return `AppError.status` (HTTP 400 Bad Request) instead of 500 when nothing is due. Disabled the total link button in `DebtorDetailClient.tsx` when outstanding balance is zero and surfaced localized error feedback.
+  - `imports.preview`: Errors on invalid, empty, or unparseable files now return HTTP 400 with human-readable error reasons surfaced in `ImportClient.tsx`.
+- **World-Class SaaS Dashboard Re-Architecture (`/dashboard`)**:
+  - Replaced the excessively tall hero banner with a sleek, compact executive welcome bar (business greeting, live data pulse badge, date indicator, and rapid action buttons).
+  - Designed a 4-card executive KPI summary row with identical vertical height, unified typography, status badges, and zero distracting empty voids.
+  - Implemented a 12-column balanced operational grid:
+    - 8 cols: 8-week cash flow forecast, debt aging distribution meter, and top overdue debtors list.
+    - 4 cols: Automated reminder delivery metrics, current plan quota with visual progress bar, and quick CSV data export tools.
+  - Relocated business configuration preferences and Danger Zone into a dedicated bottom controls zone, keeping financial reports authoritative and uncluttered.
+- **Password Input Icon Collision Fixed**: Wrapped input in `dir="ltr"` container block with `!pr-11 !pl-3.5 text-left` and physical right-anchored toggle button, eliminating logical RTL margin collision on Latin text.
+- **Unified Theme & Locale Controls**: Created dedicated `ThemeToggle` (with `MutationObserver` on `data-theme`) and `LocaleToggle` components across Login, Signup, Landing, and Dashboard views. Removed duplicate buttons from the login card.
+- **Header & Shell Alignment (`AppShell.tsx`)**: Replaced asymmetric header margins with unified desktop container (`max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8`) shared by both header and main content, aligning edge controls with content cards.
+- **Debtors Screen Re-architecture (`DebtorsClient.tsx`)**: Converted from 1500px stretched list to 12-column responsive layout (8 cols search & rich debtor cards + 4 cols vertical Add Debtor form & live CRM summary widget).
+- **Invoices Screen Polish (`InvoicesClient.tsx`)**: Integrated search, status filter, aging bucket, and overdue checkbox into a single toolbar. Restructured invoice list items into a 4-zone responsive card layout.
+- **Cheques Screen Layout (`ChequesClient.tsx`)**: Restructured into 12-column layout (8 cols alerts, cheques list, and calendar + 4 cols photo scan dropzone and registration form). Replaced empty dashed boxes with polite semantic empty states.
+- **Import & Ledger Photo Screens**: Replaced lone `—` empty boxes with polite informative illustrations. Transformed `LedgerPhotoClient` into a 2-column guided scanner with a 3-step extraction tutorial.
+- **AI Inbox (`AiInboxClient.tsx`)**: Transformed into 2-column layout pairing human-review queues with a receipt dropzone and security verification guidelines.
+- **Aging Bar Legend (`charts.tsx`)**: Refactored legend into a 2-column grid with tabular numbers and dots, preventing text overflow and awkward line wraps in dark/light modes.
+- **Verification**: `pnpm lint` (0 errors), `pnpm typecheck` (0 errors), `pnpm test` (352/352 green), `pnpm test:e2e` (20/20 Playwright tests green in 1.1m with `--reset` seed). All views visually verified on 1920×1080 and 390×844 viewports. Dev server running healthy on `http://localhost:3000`.
+
 Delivered: (1) Icons — `@phosphor-icons/react` `weight="fill"` is the only icon set (audit: lucide-react was declared but imported nowhere; removed). (2) Shell — one morphing nav DOM instance: desktop sidebar / mobile top bar + bottom nav; every `nav-*` testid exactly once per viewport (asserted in e2e). (3) Dashboard — navy header band, ONE composed KPI panel (hero outstanding + divided stat grid), forecast SVG chart from the existing series, aging composition bar, top-debtors list, side rail (reminder performance, plan/quota with usage bar, exports, danger) — same three server calls, no invented metrics, all testids preserved. (4) Same system across invoices, debtors, debtor detail (real timeline), import, ledger-photo, ai-inbox, cheques, auth (split layout), onboarding (stepper), statement (brand band), landing (hero band + product stage), error. (5) Four new token-only illustrations (HeroBandArt, Forecast, Cheques, Import) + dot-pattern/hero-band utilities. (6) Assets completed — outlined wordmark lockups (opentype.js glyph paths, 0 `<text>`), OG image 1200×630 wired in layout metadata, six iOS splash PNGs wired via startupImage, email header PNG+HTML+README under packages/brand/email/ (asset only). BRAND.assets records all paths. Side finding: standalone mark SVGs clip the symbol's right stroke at the 512 viewBox (pre-existing; new assets embed paths unclipped). (7) Motion — Reveal reimplemented as pure CSS keyframes after the motion/react version SSR-blanked landing sections pre-hydration; `motion` dep removed; reduced-motion collapses via tokens. (8) Screenshots — 30 BEFORE + 30 AFTER in `apps/web/e2e/screenshots/redesign/` (force-added), visually inspected (dashboard/invoices/statement/landing/cheques/dark at both widths); e2e asserts zero horizontal overflow at 390px on 9 screens. Findings fixed during inspection: scroll-triggered reveals invisible in full-page captures → mount/CSS animation; fixed bottom bar compositing mid-page in full-page captures → capture-time pinning in the harness only (not an app change). Gate: lint green, typecheck green, unit 352/352 (no test changed), eval green, build green, drift "No schema changes", e2e 20/20 (18 prior + 2 new redesign specs) on a freshly reset+migrated+seeded DB. Detail: DESIGN_CHANGELOG.md (Premium redesign section), ADR-026, BRAND_GUIDELINES.md v0.9.0. Zero backend/business/API/schema/env changes (visual + brand assets + e2e only).
 
 Acceptance criteria (owner's words, translated): complete the missing brand assets AND redesign the Dashboard completely at Premium Global SaaS level — a real re-layout, not recoloring or card-shuffling. Clear layout on desktop + mobile, real responsive design, whitespace, balanced content, no element crowding. Original calm premium illustrations; visual elements that give the UI character/depth beyond cards. Replace icons with professional FILLED solid icons (not outline/hollow). Keep DAFQLY identity/colors; soft studied animations without hurting performance. Review ALL screens, not just the dashboard. Before/After screenshots at phone + desktop widths. Backend, Business Logic and API Contracts preserved COMPLETELY (zero edits to core/db/providers/reminders/templates/worker logic, tRPC contracts, schema, env; screens consume exactly the data calls they consume today — no invented metrics).
@@ -384,3 +437,80 @@ Supporting criteria: repo layout §4 + all AGENTS.md pnpm scripts; Zod env valid
 ## Rebrand (post-M6) — DAFQLY
 
 Visual rebrand only (branch `rebrand/dafqly`): central `BRAND` config, navy/teal/slate tokens with all contrast pairs passing AA (ADR-010 closed, ADR-025), new DAFQLY symbol + full icon set, SIL OFL fonts on by default (kill switch kept), landing page for logged-out visitors, illustrations + `Reveal` motion, docs in `docs/BRAND_GUIDELINES.md`, detail in `DESIGN_CHANGELOG.md`. No backend/business/API/DB changes; internal identifiers unchanged. Gate (2026-11-09): lint green, typecheck green, tests 352/352, eval green, build green, drift clean, e2e 18/18 (16 + 2 rebrand). Version 0.8.0, tag `v0.8.0-dafqly`.
+
+---
+
+## Session 2026-11-09: End-to-End Audit, Performance & Hydration Fixes, Visual Verification
+
+### Root Cause Diagnosis
+1. **CSP Blocking Client Hydration:** Content Security Policy header lacked `'unsafe-eval'` in development mode, preventing Next.js / React 19 fast refresh and runtime evaluation. This caused interactive forms (such as login, search, filters) to fail hydration and trigger native browser GET submissions.
+2. **Database Connection Exhaustion:** Next.js dev server repeatedly created new Postgres connection pools across Hot Module Replacement (HMR) reloads, hitting `53300: sorry, too many clients already`.
+3. **Mobile Horizontal Overflow:** Bottom navigation (7 items) and unconstrained flex containers exceeded 390px viewport width (measuring 409px).
+4. **Bundle Compilation Overhead:** Large barrel imports from `@phosphor-icons/react` caused slow initial compilation in dev mode.
+
+### Changes & Fixes
+- **CSP Dev Mode:** Allowed `'unsafe-eval'` conditionally when `process.env.NODE_ENV !== "production"` in `apps/web/next.config.ts`.
+- **Package Import Optimization:** Added `optimizePackageImports: ["@phosphor-icons/react"]` in `apps/web/next.config.ts`.
+- **SSR Query Parallelization:** Wrapped dashboard KPI and invoice queries in `Promise.all` in `apps/web/app/[locale]/dashboard/page.tsx`.
+- **Connection Pool Caching:** Cached Drizzle `ownerDb`/`appDb` and Better Auth instances on `globalThis` across dev HMR reloads in `apps/web/src/server/db.ts` and `apps/web/src/server/auth.ts`.
+- **Mobile Responsive Layout:** Added `overflow-x: clip; max-width: 100%` in `globals.css` and `min-w-0` on mobile bottom nav items in `AppShell.tsx`.
+- **Full Browser Audit Suite:** Authored `apps/web/e2e/audit-deep.mts` covering the full user flow (login, dashboard, debtors, invoice creation, cheque registration, CSV import and deduplication) and captured 20 full-page screenshots in `apps/web/e2e/screenshots/audit/`.
+- **E2E Configuration:** Ensured `playwright.config.ts` passes `DATABASE_URL`, `APP_DATABASE_URL`, and `NEXT_PUBLIC_BRAND_FONT: "on"`.
+
+### Verification Evidence
+- `pnpm test`: **352/352 passed** (all unit and integration tests across 9 packages/apps).
+- `pnpm test:e2e`: **20/20 passed** in 56.7s (`m0`, `m1`, `m2`, `m3`, `m4`, `m5`, `m6`, `rebrand`, `redesign`).
+- `pnpm lint`: **0 errors** (ESLint, `check-no-hardcoded-brand`, `check-secrets`).
+- `pnpm typecheck`: **0 errors** across all packages.
+- Dev Server & Worker: Both `pnpm dev` (port 3000) and `pnpm worker` running healthy.
+
+### Visual & Control Enhancements (2026-11-09)
+- **Password Eye Icon Overlap:** Fixed direction conflict where `end-2.5` resolved to left in RTL while input text had `dir="ltr"`. Enforced `dir="ltr"` container with explicit `!pr-11 !pl-3.5 text-left` and `right-2.5 top-1/2` button anchoring.
+- **Unified Controls:** Created standalone `ThemeToggle.tsx` (with multi-instance DOM mutation sync) and `LocaleToggle.tsx` (with mobile compact mode).
+- **Universal Availability:** Deployed theme and locale controls across Landing Page, Login, Signup, Onboarding Wizard, and Dashboard (Desktop & Mobile Header).
+- **Mobile Header Optimization:** Updated mobile dashboard header with compact icons, eliminating horizontal overflow on 390px viewports (`docWidth: 390, winWidth: 390, hasOverflow: false`).
+- **Head Theme Pre-hydration:** Added inline script in root layout to prevent theme flicker on direct navigation.
+- **Screen Space & Layout Distribution Overhaul:**
+  - Expanded content container from `max-w-6xl` (1152px) to `max-w-[1536px]` (`2xl`), fully utilizing wide desktop screens (1080p, 1440p) without dead margins.
+  - Removed header vs. sidebar brand duplication: header now displays clean contextual page breadcrumb (`activeItem.Icon` + title + tenant badge) without repeating "Dafqly /" or redundant sidebar toggle buttons.
+  - Eliminated auth button duplication: consolidated `ThemeToggle` and `LocaleToggle` into a single floating top-end header control on login/signup, removing duplicate button sets.
+  - Re-architected Dashboard grid: converted asymmetric 3-column stack into a full-width 4-column KPI strip, followed by balanced 8-col & 4-col analytics and settings rows, eliminating 1000px vertical empty voids on desktop.
+  - Enhanced Import page: replaced stretched empty dropzone with a balanced 2-column layout pairing a file dropzone with a clear file preparation guide and semantic status badges.
+
+### Production Readiness & Deep Audit Session (2026-11-10)
+- **Debtor Detail Infinite Loading Bug:** Navigating to an invalid or deleted debtor ID triggered an unhandled promise rejection in `useEffect` and left the screen stuck in `<p>…</p>`. Added `loadError` state and graceful fallback UI with accessible "Return to Debtors" navigation.
+- **Smart Scan Zero-Rows Blank State:** When an unreadable or blank image was uploaded to `/ar/ledger-photo`, `LedgerPhotoClient` rendered neither a table nor an explanation. Added `data-testid="ledger-empty"` with guidance on photo lighting and contrast.
+- **Settings Clear Value Bug:** Clearing English business name or tax ID in `SettingsClient` passed `undefined` instead of `""`, preventing the backend from clearing the fields. Updated to send trimmed strings directly.
+- **Client Query Error Safeguards:** Added `try/catch` and `.catch()` handlers across `InvoicesClient`, `ChequesClient`, `DebtorsClient`, and `BillingClient` to prevent uncaught rejections during network drops or background refetches.
+- **Deep Audit Suite:** Upgraded `apps/web/e2e/comprehensive-audit.mts` to deeply exercise all interactive controls: invoice bulk cancellation and individual transitions, cheque photo scan and lifecycle transitions (held -> deposited -> cleared), CSV import with rollback (undo), ledger photo OCR review with cell confidence and commit, AI inbox receipt claims confirmation, settings CSV/JSON exports, billing plan upgrades, public statement dispute and payment, across Desktop (1440x900) and Mobile (390x844) in Arabic (RTL) and English (LTR).
+
+### Verification Evidence
+- `pnpm lint`: **0 errors** (ESLint, `check-no-hardcoded-brand`, `check-secrets` - 633 files scanned).
+- `pnpm typecheck`: **0 errors** across all workspace packages.
+- `pnpm test`: **352/352 passed** (all unit and integration tests across 9 packages/apps).
+- `pnpm test:e2e`: **20/20 passed** (33.6s, all milestone specs passing against production server).
+- `NODE_PATH=apps/web/node_modules packages/db/node_modules/.bin/tsx apps/web/e2e/comprehensive-audit.mts`: **0 issues found** across all 15 SaaS modules, dual viewports (Desktop & Mobile), dual themes (Light & Dark), and dual locales (AR & EN).
+
+### Visual & Functional Bug Resolution (2026-11-10 User Images Audit)
+- **Password Input Eye Icon Overlap:** Fixed text collision where eye button overlapped password characters in RTL contexts. Enforced explicit `style={{ right: "10px", left: "auto" }}` on button and `style={{ paddingRight: "48px", paddingLeft: "14px" }}` on input, guaranteeing clear spacing in both languages.
+- **Header Duplicate Dafqly Lockup:** Cleaned header breadcrumb to display only page icon, translated page title, and business name pill, eliminating duplicate brand headers and stray sidebar controls.
+- **Dashboard Overview Layout:** Resolved the central empty void by restructuring the page into a balanced 12-column grid: 4 executive KPI cards, 8-column Analytics (Cash Flow Forecast + Aging & Top Debtors), and 4-column Operational rail (Reminder Performance + Plan Upgrade).
+- **Danger Zone Removal from Overview:** Completely excised `<DangerZone />` from Overview; it is safely isolated in the dedicated Settings page (`/[locale]/settings`).
+- **tRPC 500 / TransformResultError Resolution:** Fixed wire format serialization in `apps/web/src/server/trpc.ts` so error `code` is a standard numeric JSON-RPC code instead of a string, allowing `@trpc/client` to deserialize errors cleanly without throwing `TransformResultError`.
+- **Auth Page Floating Controls:** Unified `ThemeToggle` and `LocaleToggle` into a single floating top-end header control, eliminating duplicated buttons inside the auth card.
+- **Invoice Checkbox Modernization:** Added `accent-[var(--primary)]` and custom styles to replace browser default black boxes with branded checkboxes.
+- **Invoice Status Action Cleanup:** Restricted transition buttons using `canTransition()` to display only legal target states with clean button group styling.
+- **Mobile Drawer Modernization:** Drawer slides smoothly off-canvas on mobile with backdrop blur and auto-close on link navigation.
+
+### Verification Evidence
+- `pnpm lint`: **0 errors** (ESLint, `check-no-hardcoded-brand`, `check-secrets` - 633 files scanned).
+- `pnpm typecheck`: **0 errors** across all workspace packages.
+- `pnpm test`: **352/352 passed** (all unit and integration tests across 9 packages/apps).
+- `pnpm test:e2e`: **20/20 passed** (all milestone specs passing against production server).
+- `NODE_PATH=apps/web/node_modules packages/db/node_modules/.bin/tsx apps/web/e2e/comprehensive-audit.mts`: **0 issues found** across all 15 SaaS modules, dual viewports (Desktop & Mobile), dual themes (Light & Dark), and dual locales (AR & EN).
+
+### Next 3 Steps
+1. Configure production environment secrets and S3-compatible storage adapter for binary uploads.
+2. Complete merchant onboarding in Meta WhatsApp Cloud API and Paymob for live production credentials.
+3. Deploy to production cluster and perform smoke verification.
+
