@@ -483,20 +483,33 @@ export function BillingClient({
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40">
-                {subInvoices.map((inv) => (
-                  <tr key={inv.id} className="transition-colors hover:bg-callout/40">
-                    <td className="px-4 py-3 font-bold text-text capitalize">{inv.planKey}</td>
-                    <td className="px-4 py-3 text-text-muted" dir="ltr">
-                      {inv.periodStart} → {inv.periodEnd}
-                    </td>
-                    <td className="tnum px-4 py-3 font-extrabold text-text" dir="ltr">
-                      {formatEgp(BigInt(inv.amountMinor))}
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusPill status={inv.status === "paid" ? "paid" : "open"} label={inv.status} />
-                    </td>
-                  </tr>
-                ))}
+                {subInvoices.map((inv) => {
+                  const planTitle = isAr
+                    ? (inv.planKey === "trial" ? "فترة تجريبية" : inv.planKey === "starter" ? "الباقة الأساسية" : inv.planKey === "growth" ? "باقة النمو" : inv.planKey === "pro" ? "الباقة الاحترافية" : inv.planKey)
+                    : (inv.planKey === "trial" ? "Trial Period" : inv.planKey === "starter" ? "Starter Plan" : inv.planKey === "growth" ? "Growth Plan" : inv.planKey === "pro" ? "Pro Plan" : inv.planKey);
+                  const isFree = BigInt(inv.amountMinor) === 0n;
+                  const formattedAmt = isFree
+                    ? (isAr ? "0.00 ج.م (مجاناً)" : "0.00 EGP (Free)")
+                    : `${formatEgp(BigInt(inv.amountMinor))} ${isAr ? "ج.م" : "EGP"}`;
+                  const statusLabel = isAr
+                    ? (inv.status === "paid" ? "تم السداد" : inv.status === "open" ? "معلقة" : inv.status)
+                    : (inv.status === "paid" ? "Paid" : inv.status === "open" ? "Open" : inv.status);
+
+                  return (
+                    <tr key={inv.id} className="transition-colors hover:bg-callout/40">
+                      <td className="px-4 py-3 font-bold text-text">{planTitle}</td>
+                      <td className="px-4 py-3 text-text-muted" dir="ltr">
+                        {inv.periodStart} → {inv.periodEnd}
+                      </td>
+                      <td className="tnum px-4 py-3 font-extrabold text-text" dir="ltr">
+                        {formattedAmt}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusPill status={inv.status === "paid" ? "paid" : "open"} label={statusLabel} />
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

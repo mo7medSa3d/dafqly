@@ -82,16 +82,16 @@ export function BrandLockup({
     : "bg-[var(--brand-tile-bg)] border border-[var(--brand-tile-border)]";
 
   return (
-    <div className="inline-flex items-center gap-3">
+    <div className="inline-flex min-w-0 items-center gap-3">
       <span className={`flex shrink-0 items-center justify-center shadow-sm transition-colors ${tileSize} ${tileStyle}`}>
         <BrandMark variant="white" size={markPx} />
       </span>
-      <div className="flex flex-col leading-none">
+      <div className="flex min-w-0 flex-col leading-none">
         <span className={`font-extrabold tracking-tight ${textCls} ${onDark ? "text-white" : "text-text"}`}>
           {isEn ? "Dafqly" : "دفقلي"}
         </span>
         {showTagline && (
-          <span className={`mt-1 whitespace-nowrap text-[10.5px] font-medium tracking-tight ${onDark ? "text-navy-100" : "text-text-muted"}`}>
+          <span className={`mt-1 whitespace-nowrap text-[10px] font-medium tracking-tight ${onDark ? "text-navy-100" : "text-text-muted"}`}>
             {isEn ? "Track. Follow. Get Paid." : "تتبّع. تابع. وحصّل."}
           </span>
         )}

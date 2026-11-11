@@ -7,6 +7,34 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### Import Commit Database Conflict Fix, Read-Only Mapping Protection & UI Refinements (2026-11-11) — **COMPLETE**
+- **Root Cause & Fix for `imports.commit` 500 (Internal Server Error)**:
+  - *Root Cause*: `commitImport` in `apps/web/src/server/imports.ts` maintained an in-memory `debtorByPhone` map without pre-populating existing debtors from the database. When a file was committed after a debtor with that phone number already existed (e.g. from an earlier import or manual creation), `commitImport` attempted `tx.insert(debtors)` and violated the unique index `debtors_tenant_phone_unique`, causing an unhandled Postgres 23505 exception and a 500 error.
+  - *Fix*: Pre-loaded all active tenant debtors (`where(and(eq(debtors.tenantId, tenantId), isNull(debtors.deletedAt)))`) at the start of `commitImport` into `debtorByPhone`, plus an additional database check fallback prior to insertion. Invoices attach seamlessly to existing debtors without duplicate key conflicts.
+  - *Test Coverage*: Added `it("attaches to a debtor created between preview and commit without unique constraint error")` in `imports.integration.test.ts`.
+- **Root Cause & Fix for `imports.remap` 409 (Conflict)**:
+  - *Root Cause*: When a user viewed an already-committed import job in `apps/web/src/components/ImportClient.tsx`, the column mapping `<fieldset>` and "مطابقة الأعمدة" (`onRemap`) button remained active. Clicking it triggered `trpc.imports.remap.mutate` on a non-pending job, which correctly raised an `AppError("ALREADY_COMMITTED", ..., 409)`.
+  - *Fix*:
+    - Disabled `<fieldset disabled={busy || job.status !== "pending_review"}>` on committed/undone jobs.
+    - Hidden the "مطابقة الأعمدة" button when `job.status !== "pending_review"`.
+    - Added a clear badge: `🔒 العرض للقراءة فقط (تم الاعتماد)`.
+    - Added front-end early return guard in `onRemap` and `onCommit` if `job?.status !== "pending_review"`.
+- **Command Palette Focus Outline Polish**:
+  - `apps/web/src/components/CommandPalette.tsx`: Removed the browser default blue focus rectangle around the search input using explicit `style={{ outline: "none", boxShadow: "none" }}` and `border-none focus:outline-none focus:ring-0`.
+- **Billing History Localization**:
+  - `apps/web/src/components/BillingClient.tsx`: Fully localized subscription invoices table: translated plan keys (`فترة تجريبية`, `الباقة الأساسية`, `باقة النمو`), amounts (`0.00 ج.م (مجاناً)`), and status pill labels (`تم السداد`, `معلقة`).
+- **Sidebar Brand Tagline Single-Line Assurance**:
+  - `apps/web/src/components/BrandMark.tsx` & `AppShell.tsx`: Configured `text-[10px] whitespace-nowrap font-medium tracking-tight` with `min-w-0 flex-1` container, guaranteeing `تتبّع. تابع. وحصّل.` renders on a single crisp line without truncation.
+- **Verification Evidence**:
+  - `pnpm lint`: 0 errors.
+  - `pnpm typecheck`: 0 errors across 9 packages.
+  - `pnpm test`: 362/362 tests passed.
+  - Playwright visual tests:
+    - `sidebar_header_fixed.png`: Tagline confirmed on a single line.
+    - `command_palette_no_outline.png`: Input verified borderless and clean without blue focus outline.
+    - `billing_invoices_table_zoom.png`: Confirmed Arabic translations for subscription history.
+    - Executed live pending commit and view on committed import job with 0 HTTP 500 or 409 errors.
+
 ### Sidebar Typography Polish, Active Navigation Pill, Server N+1 Query Optimization & Dead Code Removal (2026-11-11) — **COMPLETE**
 - **Sidebar Typography & Tagline Wrapping Fix**:
   - `apps/web/src/components/BrandMark.tsx`: Applied `whitespace-nowrap text-[10.5px] font-medium tracking-tight` to the Arabic brand tagline `تتبّع. تابع. وحصّل.`. Completely resolved the line-wrapping break that caused `"وحصّـ.."` to overflow awkwardly onto a second line.

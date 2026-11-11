@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import {
   AppError, decodeCsvBuffer, dedupeImportRows, detectHeaderRow, parseCsvText, parseImportGrid,
@@ -67,7 +67,9 @@ async function persistRows(tx: Db, tenantId: string, jobId: string, rows: readon
 }
 
 async function parseAndStore(tx: Db, tenantId: string, jobId: string, grid: Grid, mapping: ColumnMapping, headerRow: number) {
-  const existing = await tx.select({ id: debtors.id, phoneE164: debtors.phoneE164 }).from(debtors);
+  const existing = await tx.select({ id: debtors.id, phoneE164: debtors.phoneE164 })
+    .from(debtors)
+    .where(and(eq(debtors.tenantId, tenantId), isNull(debtors.deletedAt)));
   const byPhone = new Map(existing.map((d) => [d.phoneE164, d.id]));
   let rows: ParsedImportRow[];
   try {
@@ -183,6 +185,14 @@ export async function commitImport(app: Db, tenantId: string, actor: string, job
     const debtorByRow = new Map<number, string>();
     const debtorByPhone = new Map<string, string>();
 
+    // Pre-populate with all active debtors for this tenant so re-imported phone numbers attach seamlessly
+    const existingDebtors = await tx.select({ id: debtors.id, phoneE164: debtors.phoneE164 })
+      .from(debtors)
+      .where(and(eq(debtors.tenantId, tenantId), isNull(debtors.deletedAt)));
+    for (const d of existingDebtors) {
+      debtorByPhone.set(d.phoneE164, d.id);
+    }
+
     for (const row of rows) {
       const stored = (row.parsed ?? {}) as StoredRow;
       if (!stored.data || (stored.status !== "valid" && stored.status !== "duplicate")) continue;
@@ -192,13 +202,21 @@ export async function commitImport(app: Db, tenantId: string, actor: string, job
       if (!debtorId && stored.status === "duplicate" && stored.duplicateOfRow !== undefined) debtorId = debtorByRow.get(stored.duplicateOfRow);
       if (!debtorId) debtorId = debtorByPhone.get(data.phoneE164);
       if (!debtorId) {
-        const [created] = await tx.insert(debtors).values({
-          tenantId, displayName: data.name, phoneE164: data.phoneE164,
-          phoneValid: true, whatsappStatus: data.whatsappCapable ? "unknown" : "unreachable",
-          notes: data.notes, phoneHash: hashPhone(data.phoneE164), importJobId: jobId,
-        }).returning();
-        debtorId = created!.id;
-        createdDebtors += 1;
+        // Fallback check against db before insert to guard against concurrent writes
+        const [existing] = await tx.select({ id: debtors.id })
+          .from(debtors)
+          .where(and(eq(debtors.tenantId, tenantId), eq(debtors.phoneE164, data.phoneE164), isNull(debtors.deletedAt)));
+        if (existing) {
+          debtorId = existing.id;
+        } else {
+          const [created] = await tx.insert(debtors).values({
+            tenantId, displayName: data.name, phoneE164: data.phoneE164,
+            phoneValid: true, whatsappStatus: data.whatsappCapable ? "unknown" : "unreachable",
+            notes: data.notes, phoneHash: hashPhone(data.phoneE164), importJobId: jobId,
+          }).returning();
+          debtorId = created!.id;
+          createdDebtors += 1;
+        }
       }
       debtorByRow.set(row.rowNumber, debtorId);
       debtorByPhone.set(data.phoneE164, debtorId);

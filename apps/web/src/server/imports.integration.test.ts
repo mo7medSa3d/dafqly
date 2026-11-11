@@ -145,4 +145,25 @@ d("F2 import service (preview -> commit -> undo)", () => {
       contentBase64: Buffer.from("a,b,c\n1,2,3\n", "utf8").toString("base64"),
     })).rejects.toMatchObject({ code: "NO_HEADER_ROW" });
   });
+
+  it("attaches to a debtor created between preview and commit without unique constraint error", async () => {
+    const csv = ["Name,Phone,Amount", "عميل لاحق,01009998877,500"].join("\n");
+    const preview = await createImportPreview(app(), tenantId, user.id, {
+      fileName: "concurrent.csv",
+      contentBase64: Buffer.from(csv, "utf8").toString("base64"),
+    });
+    expect(preview.stats.valid).toBe(1);
+
+    // Debtor is created in the DB AFTER the import preview was saved:
+    const debtor = await createDebtor(app(), tenantId, user.id, { displayName: "عميل لاحق", phone: "01009998877" });
+
+    // Commit must not fail with 500 / duplicate key violation:
+    const committed = await commitImport(app(), tenantId, user.id, preview.jobId, today);
+    expect(committed.createdDebtors).toBe(0);
+    expect(committed.createdInvoices).toBe(1);
+
+    const job = await getImportJob(app(), tenantId, preview.jobId);
+    expect(job.rows[0]?.debtorId).toBe(debtor.id);
+    await settlePlanner(tenantId);
+  });
 });

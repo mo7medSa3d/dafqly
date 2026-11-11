@@ -96,7 +96,7 @@ export function ImportClient() {
   }
 
   async function onRemap() {
-    if (!jobId) return;
+    if (!jobId || job?.status !== "pending_review") return;
     setBusy(true);
     try {
       const clean = Object.fromEntries(Object.entries(mapping).filter(([, v]) => v !== undefined && v >= 0));
@@ -110,14 +110,18 @@ export function ImportClient() {
   }
 
   async function onCommit() {
-    if (!jobId) return;
+    if (!jobId || job?.status !== "pending_review") return;
     setBusy(true); setMsg(null);
     try {
       await trpc.imports.commit.mutate({ jobId });
       setMsg(t("committed"));
       await loadJob(jobId);
       await loadJobs();
-    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+    } catch (err: unknown) {
+      setMsg((err instanceof Error ? err.message : null) || t("failed"));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function onDelete(id: string) {
@@ -288,9 +292,16 @@ export function ImportClient() {
                 <span>{t("emptyRows")}: <b className="tnum" dir="ltr">{job.stats.empty}</b></span>
               </p>
             )}
-            <fieldset className="flex flex-col gap-3">
-              <legend className="mb-1 font-bold">{t("mapping")}</legend>
-              {((mapping.name === undefined || mapping.name < 0) ||
+            <fieldset disabled={busy || job.status !== "pending_review"} className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <legend className="mb-1 font-bold">{t("mapping")}</legend>
+                {job.status !== "pending_review" && (
+                  <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-semibold text-text-muted">
+                    {isAr ? "🔒 العرض للقراءة فقط (تم الاعتماد)" : "🔒 Read-only view (already committed)"}
+                  </span>
+                )}
+              </div>
+              {job.status === "pending_review" && ((mapping.name === undefined || mapping.name < 0) ||
                 (mapping.phone === undefined || mapping.phone < 0) ||
                 (mapping.amount === undefined || mapping.amount < 0)) && (
                 <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs font-bold text-amber-700 dark:text-amber-300">
@@ -303,6 +314,7 @@ export function ImportClient() {
                 {FIELDS.map((f) => (
                   <label key={f} className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t(`fields.${f}`)}</span>
                     <select data-testid={`import-map-${f}`} className={inputCls} value={mapping[f] ?? -1}
+                      disabled={busy || job.status !== "pending_review"}
                       onChange={(e) => setMapping((m) => ({ ...m, [f]: Number(e.target.value) }))}>
                       <option value={-1}>{t("fields.none")}</option>
                       {Array.from({ length: columns }, (_, i) => {
@@ -313,9 +325,11 @@ export function ImportClient() {
                     </select></label>
                 ))}
               </div>
-              <div>
-                <button data-testid="import-remap" onClick={() => void onRemap()} disabled={busy} className={btnGhost}>{t("mapping")}</button>
-              </div>
+              {job.status === "pending_review" && (
+                <div>
+                  <button data-testid="import-remap" onClick={() => void onRemap()} disabled={busy} className={btnGhost}>{t("mapping")}</button>
+                </div>
+              )}
             </fieldset>
 
             <div className="overflow-x-auto rounded-lg border border-border">

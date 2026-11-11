@@ -91,7 +91,7 @@ export function AppShell({
       >
         {/* Drawer / Sidebar Top Header */}
         <div className="flex h-16 shrink-0 items-center justify-between px-4">
-          <div className="flex items-center gap-3 overflow-hidden">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             {!collapsed ? (
               <BrandLockup size="md" showTagline locale={locale} />
             ) : (
@@ -234,6 +234,7 @@ export function AppShell({
             <div className="flex items-center gap-1.5 sm:gap-2">
               <button
                 type="button"
+                data-testid="global-search-btn"
                 onClick={() => setSearchOpen(true)}
                 className="flex items-center gap-1.5 sm:gap-2 rounded-full bg-surface-muted/60 hover:bg-surface-muted px-3 py-1.5 text-xs font-medium text-text-muted transition-all hover:text-text sm:px-3.5 shadow-2xs hover:shadow-xs"
                 title={isEn ? "Quick search (Ctrl+K)" : "بحث سريع (Ctrl+K)"}
