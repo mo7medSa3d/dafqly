@@ -9,7 +9,7 @@ if (!existsSync(shotsDir)) {
 
 async function verifyUI() {
   console.log("Starting UI/UX and Flow Verification...");
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, channel: "chrome" });
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     locale: "ar-EG",

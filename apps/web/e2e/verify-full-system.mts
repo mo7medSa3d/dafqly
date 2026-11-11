@@ -9,7 +9,7 @@ if (!existsSync(shotsDir)) {
 
 async function run() {
   console.log("Launching Chromium for comprehensive verification...");
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, channel: "chrome" });
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     locale: "ar-EG",
