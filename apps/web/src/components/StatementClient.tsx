@@ -79,7 +79,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
           { id: "pending", invoiceId, reason: disputeReason, createdAt: new Date().toISOString() },
         ],
       }));
-      setMsg("تم تسجيل اعتراضك. سنتواصل معك لمراجعة الفاتورة، وتم إيقاف التذكيرات الخاصة بها مؤقتًا.");
+      setMsg("تم تسجيل اعتراضك ومراجعة الفاتورة جارية.");
       await refresh();
     } catch {
       setMsg("تعذّر تسجيل الاعتراض. حاول مرة أخرى.");
@@ -96,7 +96,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
         <div className="relative flex flex-col gap-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex flex-col gap-1">
-              <p className="text-xs font-bold text-teal-200">كشف حساب رسمي ومؤمّن من</p>
+              <p className="text-xs font-bold text-teal-200">كشف حساب مؤمّن من</p>
               <h1 data-testid="statement-business" className="text-2xl font-extrabold leading-snug">{data.businessName}</h1>
               <p className="text-navy-100">{data.debtorName}</p>
             </div>

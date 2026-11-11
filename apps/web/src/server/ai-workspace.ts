@@ -75,7 +75,7 @@ export const analyzeReceiptInput = z.object({
   contentBase64: z.string().min(4),
   mime: z.string().default("image/jpeg"),
   fileName: z.string().optional(),
-  extractedData: z.record(z.unknown()).optional(),
+  extractedData: z.record(z.string(), z.unknown()).optional(),
   autoCloseOptIn: z.boolean().default(false),
 });
 export type AnalyzeReceiptInput = z.input<typeof analyzeReceiptInput>;

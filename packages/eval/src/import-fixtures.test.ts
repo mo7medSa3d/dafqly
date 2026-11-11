@@ -33,14 +33,14 @@ describe("F2 golden import fixtures", () => {
   });
 
   for (const file of fixtureFiles) {
-    it(`${file} imports with the expected results`, () => {
+    it(`${file} imports with the expected results`, async () => {
       const expected = JSON.parse(readFileSync(resolve(dir, `${file}.expected.json`), "utf8")) as Expected;
       const path = resolve(dir, file);
       let grid: Grid;
       if (file.endsWith(".csv")) {
         grid = parseCsvText(readFileSync(path, "utf8"));
       } else {
-        grid = readWorkbookGrid(new Uint8Array(readFileSync(path))).grid;
+        grid = (await readWorkbookGrid(new Uint8Array(readFileSync(path)))).grid;
       }
       const detected = detectHeaderRow(grid);
       expect(detected, "header row must be detected").not.toBeNull();

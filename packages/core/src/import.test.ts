@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import {
   detectHeaderRow, suggestMapping, parseImportGrid, dedupeImportRows,
   excelSerialToIso, parseImportDate, readWorkbookGrid, parseCsvText, decodeCsvBuffer, type Grid,
@@ -152,17 +152,17 @@ describe("dedupe (F2: against existing debtors by normalized phone, and within t
 });
 
 describe("workbook reading (F2 edge: merged cells)", () => {
-  it("reads an xlsx buffer and forward-fills merged cells", () => {
-    const ws = XLSX.utils.aoa_to_sheet([
+  it("reads an xlsx buffer and forward-fills merged cells", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Sheet1");
+    ws.addRows([
       ["Name", "Phone", "Amount"],
       ["Merged Name", "01001234567", "100"],
       [null, "01009998888", "200"],
     ]);
-    ws["!merges"] = [{ s: { r: 1, c: 0 }, e: { r: 2, c: 0 } }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
-    const { grid } = readWorkbookGrid(new Uint8Array(buf));
+    ws.mergeCells("A2:A3");
+    const buf = await wb.xlsx.writeBuffer();
+    const { grid } = await readWorkbookGrid(new Uint8Array(buf));
     expect(grid[2]?.[0]).toBe("Merged Name");
     expect(grid[1]?.[1]).toBe("01001234567");
   });
@@ -222,19 +222,19 @@ describe("workbook reading (F2 edge: merged cells)", () => {
     expect(grid[0]).toEqual(["Name", "Phone", "Amount"]);
     expect(grid[1]).toEqual(["Omar", "01111223344", "1200"]);
   });
-  it("reads multi-sheet Excel workbooks and selects the data sheet over a blank cover sheet", () => {
-    const wb = XLSX.utils.book_new();
-    const coverSheet = XLSX.utils.aoa_to_sheet([["Company Name: Al-Amal"], ["Notes: Important data"]]);
-    const dataSheet = XLSX.utils.aoa_to_sheet([
+  it("reads multi-sheet Excel workbooks and selects the data sheet over a blank cover sheet", async () => {
+    const wb = new ExcelJS.Workbook();
+    const coverSheet = wb.addWorksheet("Cover");
+    coverSheet.addRows([["Company Name: Al-Amal"], ["Notes: Important data"]]);
+    const dataSheet = wb.addWorksheet("Invoices");
+    dataSheet.addRows([
       ["الطرف المدين", "رقم التواصل", "المبلغ المطلوب سداده"],
       ["محمود سامي", "01223344556", "3500"],
       ["نادية حسن", "01556677889", "4200"],
     ]);
-    XLSX.utils.book_append_sheet(wb, coverSheet, "Cover");
-    XLSX.utils.book_append_sheet(wb, dataSheet, "Invoices");
-    const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as Uint8Array;
+    const buf = await wb.xlsx.writeBuffer();
 
-    const result = readWorkbookGrid(buf);
+    const result = await readWorkbookGrid(new Uint8Array(buf));
     expect(result.sheetName).toBe("Invoices");
     expect(result.grid[0]).toEqual(["الطرف المدين", "رقم التواصل", "المبلغ المطلوب سداده"]);
     const detected = detectHeaderRow(result.grid);

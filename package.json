@@ -32,6 +32,13 @@
     "onlyBuiltDependencies": [
       "argon2",
       "esbuild"
-    ]
+    ],
+    "overrides": {
+      "drizzle-orm": "^0.45.4",
+      "postcss": "^8.5.32",
+      "tinypool": "^2.2.0",
+      "tmp": "^0.2.6",
+      "zod": "4.6.7"
+    }
   }
 }

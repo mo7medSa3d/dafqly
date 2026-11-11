@@ -7,6 +7,29 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### GitHub Actions CI & Security Audit Remediation (2026-11-11) — **COMPLETE**
+- **1. Fixed `pnpm/action-setup@v4` Failure in `.github/workflows/ci.yml`**:
+  - *Root Cause*: `ci.yml` specified `with: version: 10` on `pnpm/action-setup@v4` while root `package.json` already specifies `"packageManager": "pnpm@10.34.9"`, causing `ERR_PNPM_BAD_PM_VERSION` in both `build-test` and `e2e` jobs.
+  - *Fix*: Removed `with: version: 10` from both jobs so `pnpm/action-setup@v4` reads `packageManager` directly from `package.json`.
+- **2. Fixed Playwright CI Browser Channel (`apps/web/playwright.config.ts`)**:
+  - *Fix*: Scoped `channel: "chrome"` to local dev only (`...(process.env.CI ? {} : { channel: "chrome" })`) and `reuseExistingServer: !process.env.CI`, so CI uses Playwright's installed `chromium` binary cleanly.
+- **3. Resolved All High/Critical Production Vulnerabilities (`pnpm audit --prod --audit-level=high`)**:
+  - Migrated `@tahseel/core` (`packages/core/src/import.ts`, `import.test.ts`), `@tahseel/eval` (`import-fixtures.test.ts`, `scripts/generate-import-fixtures.mjs`), and `apps/web/src/server/imports.ts` from unpatched `xlsx@0.18.5` (Prototype Pollution CVE-2023-30533 & ReDoS CVE-2024-22363) to `exceljs@^4.4.0` (ADR-027).
+  - Upgraded `drizzle-orm` to `^0.45.4` (fixes CVE-2026-39356 SQL identifier escaping), `postcss` to `^8.5.32`, `tinypool` to `^2.2.0`, `tmp` to `^0.2.6`, and `zod` to `4.6.7` (fixes GHSA-mrhx-c7xc-m3w5; updated Zod v4 calls in `apps/web/src/server/services.ts` and `ai-workspace.ts`).
+  - `pnpm audit --prod --audit-level=high` now passes with **0 high / 0 critical** advisories.
+- **4. Fixed E2E Strict-Mode Locator & Seed/Microcopy Refinements**:
+  - Updated `apps/web/e2e/m4.spec.ts` (`getByRole("status").filter({ hasText: /تم الاستيراد/ })`) and `verify-ui-ux.mts` tier selector.
+  - Updated `ChequesClient.tsx`, `InvoicesClient.tsx`, `StatementClient.tsx`, and `packages/db/src/seed.ts` (added `NODE_ENV === "production"` guard unless `ALLOW_PROD_SEED=1`).
+- **5. Full CI Gate Verification Evidence**:
+  - `pnpm install --frozen-lockfile`: OK
+  - `pnpm lint`: OK (0 errors, 660 files scanned)
+  - `pnpm typecheck`: OK across all 9 workspace packages
+  - `pnpm --filter @tahseel/db generate`: OK (`No schema changes`)
+  - `REQUIRE_DB_TESTS=1 pnpm test`: All suites (unit + 22 RLS + integration) passed
+  - `NODE_ENV=production pnpm build` & `pnpm eval`: Passed (`EVAL OK`)
+  - `pnpm audit --prod --audit-level=high`: Exit 0 (0 high, 0 critical)
+  - `pnpm test:e2e`: **24/24 passed (1.6m)**
+
 ### Visual & Microcopy Polish Across 6 User-Reported Areas (2026-11-11) — **COMPLETE**
 - **1. Test Import Jobs Purge (Image 1 Resolved)**:
   - Ensured database `import_jobs` has 0 transient `temp-*` files. The import page now renders the clean production empty state ("لا توجد عمليات استيراد سابقة").

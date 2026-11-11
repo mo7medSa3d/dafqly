@@ -26,11 +26,12 @@ function addDaysIso(baseIso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-export function InvoicesClient({ businessName = "شركة النيل للتجارة" }: { businessName?: string }) {
+export function InvoicesClient({ businessName }: { businessName?: string }) {
   const t = useTranslations("invoices");
   const tc = useTranslations("common");
   const locale = useLocale();
   const isAr = locale === "ar";
+  const effectiveBusinessName = businessName || (isAr ? "منشأتك" : "Your Business");
   const [items, setItems] = useState<Invoice[]>([]);
   const [debtors, setDebtors] = useState<DebtorLite[]>([]);
   const [search, setSearch] = useState("");
@@ -338,7 +339,7 @@ export function InvoicesClient({ businessName = "شركة النيل للتجا�
                     <WhatsAppShareButton
                       phone={debtorPhone(i.debtorId)}
                       message={invoiceShareMessage({
-                        businessName,
+                        businessName: effectiveBusinessName,
                         amount: fmt(i.outstandingMinor),
                         dueDate: i.dueOn,
                         locale,

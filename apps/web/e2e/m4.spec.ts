@@ -100,7 +100,7 @@ test("M4 ledger photo -> receipt claim -> confirm pays (UI + API)", async ({ pag
   await page.getByTestId("ledger-file").setInputFiles({ name: "ledger.svg", mimeType: "image/png", buffer: ledgerSvg });
   await expect(page.getByTestId("ledger-row-1")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("ledger-commit").click();
-  await expect(page.getByText(/تم الاستيراد/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("status").filter({ hasText: /تم الاستيراد/ })).toBeVisible({ timeout: 30_000 });
 
   const found = await trpcQuery<{ items: { id: string }[] }>(page, "debtors.list", { search: "عميل دفتر جديد" });
   expect(found.items.length).toBeGreaterThanOrEqual(1);

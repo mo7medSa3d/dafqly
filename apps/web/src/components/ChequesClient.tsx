@@ -315,8 +315,8 @@ export function ChequesClient() {
           <ShieldCheck size={20} weight="fill" className="shrink-0 text-teal-600 dark:text-teal-300" />
           <p className="leading-relaxed">
             {isAr
-              ? "متابعة الشيكات تمنع تضارب التذكيرات التلقائية وتتيح تصنيف العملاء وتنبيهك قبل موعد الإيداع أو الاستحقاق بـ 3 أيام."
-              : "Cheque tracking prevents reminder conflicts and notifies you 3 days prior to due dates."}
+              ? "تُعلّق التذكيرات تلقائياً للشيكات المسجلة، مع إرسال تنبيهات قبل الاستحقاق بـ ٣ أيام."
+              : "Reminders pause automatically for registered cheques, with alerts sent 3 days prior."}
           </p>
         </div>
       </aside>

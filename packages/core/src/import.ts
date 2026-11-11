@@ -1,4 +1,4 @@
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { normalizeDigits } from "./digits";
 import { parseEgp } from "./money";
 import { normalizeEgPhone } from "./phone";
@@ -412,42 +412,66 @@ export function dedupeImportRows(rows: readonly ParsedImportRow[], existingByPho
 // ------------------------------------------------------------------ workbook
 export interface WorkbookGrid { grid: Grid; sheetName: string }
 
-/** Reads the best sheet of an .xlsx/.xls buffer to a grid, forward-filling merged-cell values (F2 edge case). */
-export function readWorkbookGrid(data: Uint8Array): WorkbookGrid {
-  const wb = XLSX.read(data, { type: "array", cellDates: false });
-  if (!wb.SheetNames || wb.SheetNames.length === 0) throw new Error("workbook has no sheets");
+function normalizeExcelJsCell(raw: unknown): CellValue {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean") return raw;
+  if (raw instanceof Date) return Number.isNaN(raw.getTime()) ? null : raw.toISOString().slice(0, 10);
+  if (typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if ("error" in obj) return null;
+    if ("result" in obj) return normalizeExcelJsCell(obj.result);
+    if ("richText" in obj && Array.isArray(obj.richText)) {
+      return obj.richText.map((part) => String((part as { text?: unknown }).text ?? "")).join("");
+    }
+    if ("text" in obj) return String(obj.text ?? "");
+  }
+  return String(raw);
+}
 
-  let bestSheetName = wb.SheetNames[0]!;
+function worksheetToGrid(ws: ExcelJS.Worksheet): Grid {
+  const rowCount = ws.rowCount;
+  if (rowCount === 0) return [];
+  const grid: Grid = [];
+  for (let r = 1; r <= rowCount; r++) {
+    const row = ws.getRow(r);
+    const colCount = Math.max(row.cellCount, ws.columnCount);
+    const arr: CellValue[] = [];
+    let hasValue = false;
+    for (let c = 1; c <= colCount; c++) {
+      const cell = row.getCell(c);
+      const val = normalizeExcelJsCell(cell.isMerged && cell.master ? cell.master.value : cell.value);
+      if (val !== null && val !== "") hasValue = true;
+      arr.push(val);
+    }
+    // Preserve blank intermediate rows cleanly once sheet content exists, matching AoA layout
+    grid.push(hasValue || grid.length > 0 ? arr : []);
+  }
+  return grid;
+}
+
+/** Reads the best sheet of an .xlsx buffer to a grid, forward-filling merged-cell values (F2 edge case). */
+export async function readWorkbookGrid(data: Uint8Array): Promise<WorkbookGrid> {
+  const wb = new ExcelJS.Workbook();
+  // ExcelJS expects a Buffer or ArrayBuffer slice matching the Uint8Array view
+  const buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  await wb.xlsx.load(buf as unknown as ArrayBuffer);
+  if (!wb.worksheets || wb.worksheets.length === 0) throw new Error("workbook has no sheets");
+
+  let bestSheetName = wb.worksheets[0]!.name;
   let bestGrid: Grid = [];
   let bestScore = -1;
 
-  for (const sheetName of wb.SheetNames) {
-    const ws = wb.Sheets[sheetName];
-    if (!ws) continue;
-    const candidateGrid = XLSX.utils.sheet_to_json<CellValue[]>(ws, { header: 1, raw: true, defval: null }) as Grid;
+  for (const ws of wb.worksheets) {
+    const candidateGrid = worksheetToGrid(ws);
     if (candidateGrid.length === 0) continue;
-
-    for (const merge of ws["!merges"] ?? []) {
-      const value = candidateGrid[merge.s.r]?.[merge.s.c] ?? null;
-      for (let r = merge.s.r; r <= merge.e.r; r++) {
-        while ((candidateGrid[r]?.length ?? 0) <= merge.e.c) (candidateGrid[r] ??= []).push(null);
-        for (let c = merge.s.c; c <= merge.e.c; c++) candidateGrid[r]![c] = value;
-      }
-    }
 
     const detected = detectHeaderRow(candidateGrid);
     const score = (detected ? 10000 : 0) + candidateGrid.length;
     if (score > bestScore) {
       bestScore = score;
-      bestSheetName = sheetName;
+      bestSheetName = ws.name;
       bestGrid = candidateGrid;
     }
-  }
-
-  // Fallback if all sheets were completely empty
-  if (bestGrid.length === 0) {
-    const ws = wb.Sheets[bestSheetName]!;
-    bestGrid = XLSX.utils.sheet_to_json<CellValue[]>(ws, { header: 1, raw: true, defval: null }) as Grid;
   }
 
   return { grid: bestGrid, sheetName: bestSheetName };

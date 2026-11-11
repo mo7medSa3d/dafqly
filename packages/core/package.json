@@ -14,8 +14,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "libphonenumber-js": "^1.12.24",
-    "xlsx": "0.18.5",
     "zod": "^3.25.76"
   },
   "devDependencies": {

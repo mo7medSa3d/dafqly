@@ -40,13 +40,16 @@ function statsOf(rows: readonly ParsedImportRow[]) {
   return stats;
 }
 
-function gridFromUpload(fileName: string, contentBase64: string): Grid {
+async function gridFromUpload(fileName: string, contentBase64: string): Promise<Grid> {
   const bytes = Buffer.from(contentBase64, "base64");
   if (bytes.length === 0) throw new AppError("EMPTY_FILE", "The uploaded file is empty", 400);
   if (bytes.length > MAX_IMPORT_BYTES) throw new AppError("FILE_TOO_LARGE", "Import file exceeds 8 MB", 400);
   if (/\.csv$/i.test(fileName)) return parseCsvText(decodeCsvBuffer(bytes));
-  if (/\.xlsx?$/i.test(fileName)) return readWorkbookGrid(new Uint8Array(bytes)).grid;
-  throw new AppError("UNSUPPORTED_FILE", "Only .xlsx, .xls or .csv files can be imported", 400);
+  if (/\.xlsx$/i.test(fileName)) return (await readWorkbookGrid(new Uint8Array(bytes))).grid;
+  if (/\.xls$/i.test(fileName)) {
+    throw new AppError("UNSUPPORTED_FILE", "Legacy .xls files are not supported — please save as .xlsx or .csv", 400);
+  }
+  throw new AppError("UNSUPPORTED_FILE", "Only .xlsx or .csv files can be imported", 400);
 }
 
 async function persistRows(tx: Db, tenantId: string, jobId: string, rows: readonly ParsedImportRow[]) {
@@ -88,7 +91,7 @@ export const createImportPreviewInput = z.object({
 
 export async function createImportPreview(app: Db, tenantId: string, actor: string,
   input: z.infer<typeof createImportPreviewInput>): Promise<ImportPreview> {
-  const grid = gridFromUpload(input.fileName, input.contentBase64);
+  const grid = await gridFromUpload(input.fileName, input.contentBase64);
   const detected = detectHeaderRow(grid);
   if (!detected) {
     throw new AppError("NO_HEADER_ROW", "No header row with name, phone and amount columns was found in the first 10 rows", 400);

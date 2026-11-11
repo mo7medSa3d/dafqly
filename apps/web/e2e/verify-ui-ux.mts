@@ -47,7 +47,7 @@ async function verifyUI() {
   await page.waitForTimeout(500);
 
   // Check 3 tier cards are present
-  const starterCard = page.locator("text=البداية التجريبية").or(page.locator("text=Starter Trial"));
+  const starterCard = page.locator("text=الباقة الأساسية").or(page.locator("text=Starter"));
   const growthCard = page.locator("text=النمو الذكي").or(page.locator("text=Growth Pro"));
   const enterpriseCard = page.locator("text=المؤسسات الكبرى").or(page.locator("text=Enterprise"));
   console.log("Starter card visible:", await starterCard.first().isVisible());

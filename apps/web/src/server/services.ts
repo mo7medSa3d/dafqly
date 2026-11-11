@@ -23,7 +23,7 @@ export const createTenantInput = z.object({
   tone: z.enum(["polite", "firm"]).default("polite"),
   // BUILD_PLAN §8: onboarding requires confirming a legitimate relationship
   // with the debtors who will be contacted.
-  consent: z.literal(true, { errorMap: () => ({ message: "CONSENT_REQUIRED" }) }),
+  consent: z.literal(true, { error: "CONSENT_REQUIRED" }),
 });
 export type CreateTenantInput = z.infer<typeof createTenantInput>;
 

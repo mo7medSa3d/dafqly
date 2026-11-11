@@ -13,13 +13,13 @@ export default defineConfig({
     baseURL: "http://localhost:3000",
     viewport: { width: 390, height: 844 }, // mobile-first (BRAND §8)
     locale: "ar-EG",
-    channel: "chrome",
+    ...(process.env.CI ? {} : { channel: "chrome" }),
   },
   webServer: {
     command: "pnpm build && pnpm start",
     url: "http://localhost:3000/healthz",
     timeout: 300_000,
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
     env: {
       NODE_ENV: "production",
       DATABASE_URL: process.env.DATABASE_URL ?? "",
