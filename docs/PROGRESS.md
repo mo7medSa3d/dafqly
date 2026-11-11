@@ -7,6 +7,33 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### Review Hardening, Security Sanitization & Scalability Polish (2026-11-11) — **COMPLETE**
+- **Vulnerability Fixes & Robustness Hardening**:
+  - `packages/core/src/ai.ts`:
+    - Hardened `sanitizePromptData` to strip Arabic Tashkeel (diacritics), Tatweel (kashida), and zero-width spaces, and normalize Alef forms before matching injection keywords. Closes bypass vector where diacritics allowed prompt injection payloads to pass unredacted.
+    - Updated `evaluateReceiptChecks` and `parseReceiptScreenshotAnalysis` to compare normalized payment references (digits normalized via `normalizeDigits`, trimmed, dashes/spaces removed), closing a bypass where Eastern Arabic digits (`١٢٣٤٥` vs `12345`) prevented duplicate reference detection.
+    - Fixed Arabic grammar in `generateSmartNotification` by removing the orphan dangling `"رقم"` word when no reference was passed, and provided graceful fallbacks (`عزيزي العميل` / `دافقلي`) if names are empty or sanitized.
+  - `apps/web/src/server/ai-workspace.ts`:
+    - Replaced O(N) full-table scans (`select from files` / `select from payments`) with O(1) indexed single-row queries using `eq` and `limit(1)`.
+    - Added invoice reference support to `generateNotificationInput` and `AI_WORKSPACE_TOOLS`.
+  - `apps/web/src/components/AppShell.tsx`:
+    - Added `max-lg:pointer-events-none` to closed mobile drawer so it cannot intercept user touches or clicks on mobile viewports.
+  - `apps/web/playwright.config.ts`, `verify-ui-ux.mts`, `verify-full-system.mts`:
+    - Configured `channel: "chrome"` so Playwright tests leverage the host's installed Google Chrome binary without missing executable errors.
+  - `apps/web/e2e/redesign.spec.ts`:
+    - Increased timeout on onboarding URL assertion to 15,000ms to eliminate flakiness during parallel load.
+- **Verification Evidence**:
+  - `pnpm lint`: 0 errors (brand tokens and secrets checks passed).
+  - `pnpm typecheck`: 0 errors across all 9 workspace packages.
+  - `pnpm test`: 361/361 tests passed (180/180 core tests, 64/64 web tests).
+  - Playwright E2E:
+    - `e2e/redesign.spec.ts`: 2/2 passed (55.6s).
+    - `e2e/new-features.spec.ts`: 3/3 passed (39.5s).
+    - `e2e/m5.spec.ts`: 2/2 passed (44.5s).
+    - `node --experimental-strip-types apps/web/e2e/verify-ui-ux.mts`: 100% passed.
+    - `node --experimental-strip-types apps/web/e2e/verify-full-system.mts`: 100% passed.
+  - `pnpm --filter @tahseel/web build`: Succeeded completely with 37/37 static routes generated.
+
 ### Review Hardening & Quality Verification (2026-11-11) — **COMPLETE**
 - **Critical Fixes & Edge Case Hardening**:
   - `packages/brand/tokens/tokens.css`: Fixed PostCSS syntax error (missing closing `}` in `@media (prefers-color-scheme: dark)`), restoring clean Next.js production builds.
