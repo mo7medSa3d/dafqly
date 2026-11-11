@@ -1,8 +1,19 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useTranslations, useLocale } from "next-intl";
 import { formatEgp } from "@tahseel/core";
-import { CheckCircle, Clock, Robot, ShieldCheck, UploadSimple, XCircle } from "@phosphor-icons/react";
+import {
+  ChatCircleDots,
+  Check,
+  CheckCircle,
+  Clock,
+  Robot,
+  ShieldCheck,
+  UploadSimple,
+  User,
+  XCircle,
+} from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
 import { InitialAvatar, Panel, btnPrimary, inputCls, labelCls } from "./ui";
 
@@ -13,7 +24,7 @@ import { InitialAvatar, Panel, btnPrimary, inputCls, labelCls } from "./ui";
  */
 interface IntentRow {
   id: string; intent: string; confidence: number; resolvedBy: string; actionTaken: string | null;
-  text: string | null; debtorName: string | null; debtorId: string | null; createdAt: string;
+  text: string | null; debtorName: string | null; debtorId: string | null; debtorPhone: string | null; createdAt: string;
 }
 interface ClaimRow {
   id: string; debtorId: string; debtorName: string; amountMinor: string;
@@ -71,6 +82,15 @@ export function AiInboxClient() {
     try {
       if (action === "confirm") await trpc.payments.confirm.mutate({ paymentId });
       else await trpc.payments.reject.mutate({ paymentId });
+      await load();
+    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+  }
+
+  async function onResolveIntent(id: string, decision: string) {
+    setBusy(true); setMsg(null);
+    try {
+      await trpc.replies.resolveIntent.mutate({ intentId: id, decision });
+      setMsg(t("resolved"));
       await load();
     } catch { setMsg(t("failed")); } finally { setBusy(false); }
   }
@@ -169,7 +189,42 @@ export function AiInboxClient() {
                       </span>
                     </div>
                     {i.text && <p className="rounded-xl bg-surface-muted/60 p-3 text-sm text-text">{i.text}</p>}
-                    <p className="text-xs text-text-muted">{i.actionTaken ?? (isAr ? "بانتظار قرارك" : "Awaiting action")} · <span dir="ltr">{i.createdAt.slice(0, 10)}</span></p>
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                      <p className="text-xs text-text-muted">
+                        {i.actionTaken ?? (isAr ? "بانتظار قرارك" : "Awaiting action")} · <span dir="ltr">{i.createdAt.slice(0, 10)}</span>
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {i.debtorPhone && (
+                          <a
+                            href={`https://wa.me/${i.debtorPhone.replace(/\D/g, "")}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white transition-all hover:bg-emerald-500 active:scale-95 shadow-2xs"
+                          >
+                            <ChatCircleDots size={14} weight="fill" />
+                            <span>{t("chatWhatsapp")}</span>
+                          </a>
+                        )}
+                        {i.debtorId && (
+                          <Link
+                            href={`/${locale}/debtors/${i.debtorId}`}
+                            className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-bold text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95"
+                          >
+                            <User size={13} weight="bold" />
+                            <span>{t("viewDebtor")}</span>
+                          </Link>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void onResolveIntent(i.id, "reviewed_by_merchant")}
+                          disabled={busy}
+                          className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg bg-surface-muted px-2.5 py-1 text-xs font-bold text-text-muted transition-colors hover:bg-primary hover:text-primary-fg active:scale-95 disabled:opacity-50"
+                        >
+                          <Check size={13} weight="bold" />
+                          <span>{t("resolve")}</span>
+                        </button>
+                      </div>
+                    </div>
                   </li>
                 ))}
               </ul>

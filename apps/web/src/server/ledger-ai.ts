@@ -344,3 +344,17 @@ export async function commitLedgerJob(
   replanTenantLater(tenantId);
   return result;
 }
+
+export async function deleteLedgerJob(app: Db, tenantId: string, actor: string, jobId: string) {
+  return withTenant(app, tenantId, async (tx) => {
+    const [job] = await tx.select().from(importJobs).where(eq(importJobs.id, jobId));
+    if (!job) throw new AppError("NOT_FOUND", "Ledger job not found", 404);
+    if (job.status === "committed") {
+      throw new AppError("CANNOT_DELETE_COMMITTED", "Committed imports cannot be deleted", 409);
+    }
+    await tx.delete(importRows).where(eq(importRows.jobId, jobId));
+    await tx.delete(importJobs).where(eq(importJobs.id, jobId));
+    await audit(tx, tenantId, actor, "import.ledger_deleted", jobId, { fileName: job.fileName });
+    return { ok: true, jobId };
+  });
+}

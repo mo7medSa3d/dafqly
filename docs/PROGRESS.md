@@ -7,6 +7,35 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### Import Review Accessibility, Draft Lifecycle & BiDi Layout Fixes (2026-11-11) — **COMPLETE**
+- **Import Review Flow & Full Accessibility**:
+  - `apps/web/src/components/ImportClient.tsx`:
+    - Added primary "مراجعة واعتماد" (`t("review")`) action button on all `pending_review` jobs in the jobs table, opening the preview panel with one click.
+    - Added "حذف المسودة" (`t("deleteDraft")`) action button to discard unwanted draft imports.
+    - Added automatic auto-loading of the latest `pending_review` job on mount so users coming to `/import` immediately see their pending review data instead of an empty screen.
+    - In preview panel: added "إلغاء وحذف المسودة" (`t("discard")`) button alongside "تأكيد الاستيراد".
+    - Replaced English status enums with styled Arabic status badges (`بانتظار المراجعة`, `تم الاستيراد بنجاح`, `تم التراجع`).
+    - Added `currentlyReviewing` badge highlighting the active job.
+  - `apps/web/src/server/imports.ts` & `routers.ts`:
+    - Implemented `deleteImportJob(app, tenantId, actor, jobId)` to safely delete pending jobs and their associated `import_rows`.
+    - Exposed `imports.delete` on the tRPC router.
+- **NextIntl Client Synchronization**:
+  - `apps/web/app/[locale]/layout.tsx`: Passed `locale={locale}` to `<NextIntlClientProvider locale={locale} messages={messages}>`. Solved the issue where `useLocale()` inside client components fell back to `"ar"` when viewing English routes (`/en/...`), ensuring English content renders in English everywhere.
+- **BiDi Typography & Alignment**:
+  - `apps/web/src/components/ImportClient.tsx` & `LedgerPhotoClient.tsx`: Isolated English acronyms (`<bdi>CSV</bdi>`) and added `dir={isAr ? "rtl" : "ltr"}` to numbered guide lists, fixing trailing punctuation display and preventing BiDi line wrapping jumps.
+- **AI Inbox Actionability**:
+  - `apps/web/src/components/AiInboxClient.tsx`: Added actionable direct WhatsApp chat button (`https://wa.me/...`) for debtor messages, "ملف العميل" profile link (`/debtors/${debtorId}`), and "تم الإجراء" resolve button.
+  - `apps/web/src/server/replies.ts`: Implemented `resolveMessageIntent` and exposed `replies.resolveIntent` on the router. Returned `debtorPhone` in `listIntents`.
+- **Ledger Photo Review & Discard**:
+  - `apps/web/src/components/LedgerPhotoClient.tsx`: Added "حذف المسودة" button in the review panel and jobs table.
+  - `apps/web/src/server/ledger-ai.ts`: Implemented `deleteLedgerJob` and exposed `ledgerAi.delete` on the router.
+- **Verification Evidence**:
+  - `pnpm lint`: 0 errors (brand tokens and secrets checks passed).
+  - `pnpm typecheck`: 0 errors across all 9 workspace packages.
+  - `pnpm test`: 361/361 tests passed.
+  - `pnpm --filter @tahseel/web build`: Production build succeeded (37/37 static routes generated).
+  - Playwright E2E: `e2e/verify-import-review.spec.ts` passed 100% on desktop and mobile viewports (`feature_import_review_panel.png`, `feature_import_review_desktop.png`, `feature_en_import_page.png`, `feature_en_import_desktop.png`, `feature_ledger_photo_review.png`, `feature_ai_inbox_actionable.png`).
+
 ### Review Hardening, Security Sanitization & Scalability Polish (2026-11-11) — **COMPLETE**
 - **Vulnerability Fixes & Robustness Hardening**:
   - `packages/core/src/ai.ts`:

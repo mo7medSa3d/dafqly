@@ -2,7 +2,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { formatEgp } from "@tahseel/core";
-import { CheckCircle, DownloadSimple, FileCsv, FileText, UploadSimple, WarningCircle } from "@phosphor-icons/react";
+import {
+  ArrowCounterClockwise,
+  CheckCircle,
+  DownloadSimple,
+  Eye,
+  FileCsv,
+  FileText,
+  Trash,
+  UploadSimple,
+  WarningCircle,
+} from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
 import { ImportIllustration } from "./illustrations";
 import { Panel, StatusPill, btnGhost, btnPrimary, inputCls } from "./ui";
@@ -36,20 +46,39 @@ export function ImportClient() {
   const [busy, setBusy] = useState(false);
 
   const loadJobs = useCallback(async () => {
-    const list = await trpc.imports.list.query();
-    setJobs(list as JobLite[]);
-  }, []);
-  useEffect(() => { void loadJobs(); }, [loadJobs]);
-
-  const loadJob = useCallback(async (id: string) => {
-    const j = await trpc.imports.job.query({ jobId: id });
-    setJob(j as Job);
-    if (j.mapping) {
-      setMapping(j.mapping as Partial<Record<Field, number>>);
-      const maxCol = Math.max(-1, ...Object.values(j.mapping as Record<string, number>));
-      setColumns(Math.max(maxCol + 1, 4));
+    try {
+      const list = await trpc.imports.list.query();
+      setJobs(list as JobLite[]);
+      return list as JobLite[];
+    } catch {
+      return [];
     }
   }, []);
+
+  const loadJob = useCallback(async (id: string) => {
+    try {
+      const j = await trpc.imports.job.query({ jobId: id });
+      setJob(j as Job);
+      if (j.mapping) {
+        setMapping(j.mapping as Partial<Record<Field, number>>);
+        const maxCol = Math.max(-1, ...Object.values(j.mapping as Record<string, number>));
+        setColumns(Math.max(maxCol + 1, 4));
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadJobs().then((list) => {
+      // Auto-load latest pending_review job if no job is actively loaded
+      const pending = list.find((j) => j.status === "pending_review");
+      if (pending && !jobId) {
+        setJobId(pending.id);
+        void loadJob(pending.id);
+      }
+    });
+  }, [loadJobs, loadJob, jobId]);
 
   async function onFile(file: File) {
     setBusy(true); setMsg(null);
@@ -89,6 +118,23 @@ export function ImportClient() {
       await loadJob(jobId);
       await loadJobs();
     } catch { setMsg(t("failed")); } finally { setBusy(false); }
+  }
+
+  async function onDelete(id: string) {
+    setBusy(true); setMsg(null);
+    try {
+      await trpc.imports.delete.mutate({ jobId: id });
+      setMsg(t("deleted"));
+      if (jobId === id) {
+        setJobId(null);
+        setJob(null);
+      }
+      await loadJobs();
+    } catch {
+      setMsg(t("failed"));
+    } finally {
+      setBusy(false);
+    }
   }
 
   function downloadSampleCsv() {
@@ -164,10 +210,14 @@ export function ImportClient() {
                 {isAr ? "تجهيز ملف الفواتير" : "Preparing Your Invoice File"}
               </h2>
             </div>
-            <p className="text-xs leading-relaxed text-text-muted">
-              {isAr
-                ? "يمكنك رفع أي ملف إكسل أو CSV يحتوي على أسماء العملاء وأرقامهم والمبالغ المستحقة. سيتعرف النظام تلقائياً على الأعمدة ويمنحك فرصة مراجعتها قبل التأكيد."
-                : "Upload any Excel or CSV file with customer names, phones, and amounts due. The system automatically detects columns and gives you a chance to review before confirming."}
+            <p className="text-xs leading-relaxed text-text-muted" dir={isAr ? "rtl" : "ltr"}>
+              {isAr ? (
+                <>
+                  يمكنك رفع أي ملف إكسل أو ملف بيانات <bdi className="font-semibold text-text">CSV</bdi> يحتوي على أسماء العملاء وأرقام هواتفهم والمبالغ المستحقة. سيتعرف النظام تلقائياً على الأعمدة ويمنحك فرصة كاملة لمراجعتها واعتمادها قبل الحفظ.
+                </>
+              ) : (
+                "Upload any Excel or CSV file with customer names, phones, and amounts due. The system automatically detects columns and gives you a chance to review before confirming."
+              )}
             </p>
             <ul className="flex flex-col gap-1.5 pt-1 text-xs text-text-muted">
               <li className="flex items-center gap-2">
@@ -199,7 +249,7 @@ export function ImportClient() {
               </button>
             </div>
           </div>
-          <div className="mt-4 rounded-xl bg-surface-muted/60 p-3 text-[11px] text-text-muted">
+          <div className="mt-4 rounded-xl bg-surface-muted/60 p-3 text-[11px] text-text-muted" dir={isAr ? "rtl" : "ltr"}>
             {isAr
               ? "🛡️ يتم فحص الملف تلقائياً لمنع أي تكرار وتنبيهك قبل حفظ البيانات."
               : "🛡️ Files are automatically checked to prevent duplicates and warn you before saving."}
@@ -296,11 +346,44 @@ export function ImportClient() {
               </table>
             </div>
 
-            {job.status === "pending_review" && (
-              <div>
-                <button data-testid="import-commit" onClick={() => void onCommit()} disabled={busy} className={btnPrimary}>
-                  {t("commit")}
+            {job.status === "pending_review" ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                <button
+                  data-testid="import-commit"
+                  onClick={() => void onCommit()}
+                  disabled={busy}
+                  className={`${btnPrimary} flex items-center gap-2`}
+                >
+                  <CheckCircle size={18} weight="fill" />
+                  <span>{t("commit")}</span>
                 </button>
+                <button
+                  type="button"
+                  data-testid="import-discard"
+                  onClick={() => void onDelete(job.id)}
+                  disabled={busy}
+                  className="inline-flex min-h-[40px] items-center gap-2 rounded-xl border border-border bg-surface px-4 text-xs font-bold text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 disabled:opacity-50"
+                >
+                  <Trash size={16} weight="bold" />
+                  <span>{t("discard")}</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-3 pt-2">
+                <span className="text-xs font-semibold text-text-muted">
+                  {job.status === "committed" ? t("statusCommitted") : t("statusUndone")}
+                </span>
+                {job.status === "committed" && (
+                  <button
+                    data-testid="import-undo"
+                    onClick={() => void onUndo(job.id)}
+                    disabled={busy}
+                    className="inline-flex min-h-[38px] items-center gap-2 rounded-xl border border-border bg-surface px-4 text-xs font-bold text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95"
+                  >
+                    <ArrowCounterClockwise size={16} weight="bold" />
+                    <span>{t("undo")}</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -320,20 +403,136 @@ export function ImportClient() {
             </p>
           </div>
         ) : (
-            <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
-              <ul className="flex flex-col divide-y divide-border">
-                {jobs.map((j) => (
-                  <li key={j.id} data-testid="import-job" className="flex flex-wrap items-center gap-3 p-4 sm:px-5">
-                    <FileCsv size={20} weight="fill" aria-hidden className="shrink-0 text-teal-600 dark:text-teal-300" />
-                    <span className="min-w-0 flex-1 truncate text-sm font-semibold">{j.fileName} <span className="font-normal text-text-muted">— {j.status}</span></span>
-                    {j.status === "committed" && (
-                      <button data-testid="import-undo" onClick={() => void onUndo(j.id)} disabled={busy} className={btnGhost}>{t("undo")}</button>
-                    )}
+          <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
+            <ul className="flex flex-col divide-y divide-border">
+              {jobs.map((j) => {
+                const isSelected = jobId === j.id;
+                const isPendingReview = j.status === "pending_review";
+                const isCommitted = j.status === "committed";
+                const isUndone = j.status === "undone";
+
+                return (
+                  <li
+                    key={j.id}
+                    data-testid="import-job"
+                    className={`flex flex-wrap items-center justify-between gap-3 p-4 sm:px-5 transition-colors ${
+                      isSelected ? "bg-primary/5 border-s-4 border-s-primary" : "hover:bg-surface-muted/40"
+                    }`}
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400">
+                        <FileCsv size={22} weight="fill" aria-hidden />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-bold text-text">{j.fileName}</p>
+                          {isSelected && (
+                            <span className="rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
+                              {t("currentlyReviewing")}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 pt-0.5 text-xs text-text-muted">
+                          {isPendingReview && (
+                            <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-bold text-amber-700 dark:text-amber-400">
+                              {t("statusPending")}
+                            </span>
+                          )}
+                          {isCommitted && (
+                            <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                              {t("statusCommitted")}
+                            </span>
+                          )}
+                          {isUndone && (
+                            <span className="inline-flex items-center rounded-full bg-surface-muted px-2.5 py-0.5 text-xs font-bold text-text-muted">
+                              {t("statusUndone")}
+                            </span>
+                          )}
+                          {j.stats && (
+                            <span className="tnum" dir="ltr">
+                              ({j.stats.valid ?? 0}/{j.stats.total ?? 0})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 ms-auto">
+                      {isPendingReview ? (
+                        <>
+                          <button
+                            type="button"
+                            data-testid="import-review-btn"
+                            onClick={() => {
+                              setJobId(j.id);
+                              void loadJob(j.id);
+                            }}
+                            disabled={busy}
+                            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-primary px-3.5 py-1.5 text-xs font-bold text-primary-fg shadow-xs transition-all hover:brightness-110 active:scale-95 disabled:opacity-50"
+                          >
+                            <Eye size={15} weight="bold" />
+                            <span>{t("review")}</span>
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="import-delete-btn"
+                            onClick={() => void onDelete(j.id)}
+                            disabled={busy}
+                            title={t("deleteDraft")}
+                            aria-label={t("deleteDraft")}
+                            className="inline-flex size-9 items-center justify-center rounded-xl border border-border bg-surface text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 disabled:opacity-50"
+                          >
+                            <Trash size={16} weight="bold" />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            data-testid="import-view-btn"
+                            onClick={() => {
+                              setJobId(j.id);
+                              void loadJob(j.id);
+                            }}
+                            disabled={busy}
+                            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95 disabled:opacity-50"
+                          >
+                            <Eye size={15} weight="bold" />
+                            <span>{t("viewDetails")}</span>
+                          </button>
+                          {isCommitted && (
+                            <button
+                              type="button"
+                              data-testid="import-undo"
+                              onClick={() => void onUndo(j.id)}
+                              disabled={busy}
+                              className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 disabled:opacity-50"
+                            >
+                              <ArrowCounterClockwise size={15} weight="bold" />
+                              <span>{t("undo")}</span>
+                            </button>
+                          )}
+                          {isUndone && (
+                            <button
+                              type="button"
+                              onClick={() => void onDelete(j.id)}
+                              disabled={busy}
+                              title={t("deleteDraft")}
+                              aria-label={t("deleteDraft")}
+                              className="inline-flex size-9 items-center justify-center rounded-xl border border-border bg-surface text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 disabled:opacity-50"
+                            >
+                              <Trash size={16} weight="bold" />
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </li>
-                ))}
-              </ul>
-            </div>
-          )}
+                );
+              })}
+            </ul>
+          </div>
+        )}
       </div>
     </section>
   );

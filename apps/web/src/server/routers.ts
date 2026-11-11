@@ -8,15 +8,15 @@ import {
   createInvoice, createInvoiceInput, listInvoicesPage, updateInvoice, transitionInvoice,
   bulkTransitionInvoices, recordPayment, recordPaymentInput, getDebtorDetail, getDebtorTimeline,
 } from "./ledger";
-import { createImportPreview, createImportPreviewInput, updateImportMapping, getImportJob, listImportJobs, commitImport, undoImport } from "./imports";
+import { createImportPreview, createImportPreviewInput, updateImportMapping, getImportJob, listImportJobs, commitImport, undoImport, deleteImportJob } from "./imports";
 import {
   createGatewayLink, createGatewayLinkInput, listPaymentLinks, refundGatewayPayment, refundInput,
   confirmClaimedPayment, rejectClaimedPayment, getReconciliation, gatewayDeps,
 } from "./gateway";
 import { createStatementLink, listStatementLinks, revokeStatementLink, listDisputes } from "./statements";
-import { createLedgerJob, createLedgerJobInput, runLedgerExtraction, getLedgerJob, listLedgerJobs, updateLedgerRow, updateLedgerRowInput, commitLedgerJob } from "./ledger-ai";
+import { createLedgerJob, createLedgerJobInput, runLedgerExtraction, getLedgerJob, listLedgerJobs, updateLedgerRow, updateLedgerRowInput, commitLedgerJob, deleteLedgerJob } from "./ledger-ai";
 import { processReceiptImage, listReceiptClaims } from "./receipts";
-import { listIntents } from "./replies";
+import { listIntents, resolveMessageIntent } from "./replies";
 import { aiDeps, engineDeps } from "./engine";
 import {
   registerCheque, registerChequeInput, listCheques, transitionCheque, getChequeCalendar,
@@ -191,6 +191,9 @@ export const appRouter = router({
     undo: tenantProcedure
       .input(z.object({ jobId: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => undoImport(ctx.appDb, ctx.tenantId, ctx.user.id, input.jobId)),
+    delete: tenantProcedure
+      .input(z.object({ jobId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => deleteImportJob(ctx.appDb, ctx.tenantId, ctx.user.id, input.jobId)),
   },
   ledgerAi: {
     // F6: upload pages -> extraction (pending review) -> merchant edit -> explicit commit.
@@ -210,6 +213,9 @@ export const appRouter = router({
     commit: tenantProcedure
       .input(z.object({ jobId: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => commitLedgerJob(ctx.appDb, ctx.tenantId, ctx.user.id, input.jobId, await tenantToday(ctx))),
+    delete: tenantProcedure
+      .input(z.object({ jobId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => deleteLedgerJob(ctx.appDb, ctx.tenantId, ctx.user.id, input.jobId)),
   },
   receipts: {
     // F7: merchant upload -> extraction + checks -> claimed (or auto-confirmed) payment.
@@ -240,6 +246,12 @@ export const appRouter = router({
     listIntents: tenantProcedure
       .input(z.object({ onlyHuman: z.boolean().optional() }).optional())
       .query(async ({ ctx, input }) => listIntents(ctx.appDb, ctx.tenantId, { onlyHuman: input?.onlyHuman ?? true })),
+    resolveIntent: tenantProcedure
+      .input(z.object({
+        intentId: z.string().uuid(),
+        decision: z.string().min(1).max(100),
+      }))
+      .mutation(async ({ ctx, input }) => resolveMessageIntent(ctx.appDb, ctx.tenantId, ctx.user.id, input.intentId, input.decision)),
   },
   cheques: {
     // F9: register (manual, or photo pre-fill then merchant submit), lifecycle, calendar, alerts.

@@ -275,3 +275,20 @@ export async function undoImport(app: Db, tenantId: string, actor: string, jobId
     return { jobId, deletedInvoices: invoiceIds.length, deletedDebtors };
   });
 }
+
+export async function deleteImportJob(app: Db, tenantId: string, actor: string, jobId: string) {
+  return withTenant(app, tenantId, async (tx) => {
+    const [job] = await tx.select().from(importJobs).where(eq(importJobs.id, jobId));
+    if (!job) throw new AppError("NOT_FOUND", "Import job not found", 404);
+    if (job.status === "committed") {
+      throw new AppError("CANNOT_DELETE_COMMITTED", "Committed imports must be undone instead of deleted", 409);
+    }
+    await tx.delete(importRows).where(eq(importRows.jobId, jobId));
+    await tx.delete(importJobs).where(eq(importJobs.id, jobId));
+    await tx.insert(auditLog).values({
+      tenantId, actorUserId: actor, action: "import.deleted", entity: "import_job", entityId: jobId,
+      after: { fileName: job.fileName } as never,
+    });
+    return { ok: true, jobId };
+  });
+}

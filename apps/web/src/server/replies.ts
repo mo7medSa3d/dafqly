@@ -241,8 +241,25 @@ export async function listIntents(app: Db, tenantId: string, opts: { onlyHuman?:
         extracted: r.extracted, createdAt: r.createdAt.toISOString(),
         text: msg?.bodyText ?? null, debtorId: msg?.debtorId ?? null,
         debtorName: debtor?.displayName ?? null,
+        debtorPhone: debtor?.phoneE164 ?? null,
       });
     }
     return out;
+  });
+}
+
+export async function resolveMessageIntent(
+  app: Db, tenantId: string, actor: string,
+  intentId: string, decision: string,
+) {
+  return withTenant(app, tenantId, async (tx) => {
+    const [intent] = await tx.select().from(messageIntents).where(eq(messageIntents.id, intentId));
+    if (!intent) throw new AppError("NOT_FOUND", "Message intent not found", 404);
+    await tx.update(messageIntents).set({
+      actionTaken: decision,
+      resolvedBy: "human",
+    }).where(eq(messageIntents.id, intentId));
+    await audit(tx, tenantId, "message_intent.resolved", "message_intent", intentId, { decision, actor });
+    return { ok: true, intentId, decision };
   });
 }

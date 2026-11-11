@@ -1,9 +1,9 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
-import { Camera, Notebook, WarningCircle } from "@phosphor-icons/react";
+import { Camera, CheckCircle, Eye, Notebook, Trash, WarningCircle } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
-import { Panel, btnGhost, btnPrimary } from "./ui";
+import { Panel, StatusPill, btnGhost, btnPrimary } from "./ui";
 
 /**
  * F6 ledger-photo review: upload pages -> extraction progress -> editable
@@ -48,12 +48,13 @@ export function LedgerPhotoClient() {
 
   const loadJobs = useCallback(async () => {
     try {
-      setJobs((await trpc.ledgerAi.listJobs.query()) as JobLite[]);
+      const list = (await trpc.ledgerAi.listJobs.query()) as JobLite[];
+      setJobs(list);
+      return list;
     } catch {
-      /* ignore */
+      return [];
     }
   }, []);
-  useEffect(() => { void loadJobs(); }, [loadJobs]);
 
   const loadJob = useCallback(async (id: string) => {
     try {
@@ -64,6 +65,29 @@ export function LedgerPhotoClient() {
       /* ignore */
     }
   }, []);
+
+  useEffect(() => {
+    void loadJobs().then((list) => {
+      const pending = list?.find((j) => j.status === "pending_review");
+      if (pending && !job) {
+        void loadJob(pending.id);
+      }
+    });
+  }, [loadJobs, loadJob, job]);
+
+  async function onDeleteJob(id: string) {
+    setBusy(true); setMsg(null);
+    try {
+      await trpc.ledgerAi.delete.mutate({ jobId: id });
+      setMsg(t("deleted"));
+      if (job?.id === id) setJob(null);
+      await loadJobs();
+    } catch {
+      setMsg(t("failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function onFiles(files: FileList) {
     setBusy(true); setMsg(null); setProgress(t("uploading"));
@@ -160,7 +184,7 @@ export function LedgerPhotoClient() {
                 {isAr ? "كيف يعمل المسح الذكي؟" : "How Smart Scan Works"}
               </h2>
             </div>
-            <ul className="flex flex-col gap-2 pt-1 text-xs text-text-muted">
+            <ul className="flex flex-col gap-2 pt-1 text-xs text-text-muted" dir={isAr ? "rtl" : "ltr"}>
               <li className="flex items-start gap-2">
                 <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">1</span>
                 <span>
@@ -187,7 +211,7 @@ export function LedgerPhotoClient() {
               </li>
             </ul>
           </div>
-          <div className="mt-4 rounded-xl bg-surface-muted/60 p-3 text-[11px] text-text-muted">
+          <div className="mt-4 rounded-xl bg-surface-muted/60 p-3 text-[11px] text-text-muted" dir={isAr ? "rtl" : "ltr"}>
             {isAr
               ? "💡 يتم تمييز الحقول ذات الدقة المنخفضة باللون الأصفر لتراجعها بدقة قبل التأكيد."
               : "💡 Low-confidence fields are highlighted in yellow for your review before confirmation."}
@@ -275,9 +299,19 @@ export function LedgerPhotoClient() {
             </table>
           </div>
           {job.status === "pending_review" && (
-            <div className="border-t border-border p-4 sm:px-6">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border p-4 sm:px-6">
               <button data-testid="ledger-commit" type="button" disabled={busy} onClick={() => void onCommit()} className={btnPrimary}>
-                {t("commit")}
+                <CheckCircle size={17} weight="fill" />
+                <span>{t("commit")}</span>
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void onDeleteJob(job.id)}
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-border bg-surface px-3.5 py-1.5 text-xs font-bold text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 disabled:opacity-50"
+              >
+                <Trash size={15} weight="bold" />
+                <span>{t("deleteDraft")}</span>
               </button>
             </div>
           )}
@@ -286,17 +320,53 @@ export function LedgerPhotoClient() {
 
       {jobs.length > 0 && (
         <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
-          <ul className="flex flex-col divide-y divide-border">
-            {jobs.map((j) => (
-              <li key={j.id} className="flex flex-wrap items-center gap-3 p-4 sm:px-5">
-                <Notebook size={20} weight="fill" aria-hidden className="shrink-0 text-teal-600 dark:text-teal-300" />
-                <span className="font-bold">{j.fileName}</span>
-                <span className="text-text-muted">{j.status}</span>
-                <button type="button" className={`${btnGhost} ms-auto`} onClick={() => void loadJob(j.id)}>
-                  {t("open")}
-                </button>
-              </li>
-            ))}
+          <ul className="flex flex-col divide-y border-border">
+            {jobs.map((j) => {
+              const isSelected = job?.id === j.id;
+              const isPending = j.status === "pending_review";
+              return (
+                <li
+                  key={j.id}
+                  className={`flex flex-wrap items-center justify-between gap-3 p-4 sm:px-5 transition-colors ${
+                    isSelected ? "bg-primary/5 border-s-4 border-s-primary" : "hover:bg-surface-muted/40"
+                  }`}
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Notebook size={20} weight="fill" aria-hidden className="shrink-0 text-teal-600 dark:text-teal-300" />
+                    <span className="truncate text-sm font-bold text-text">{j.fileName}</span>
+                    <span className="text-xs">
+                      {isPending ? (
+                        <StatusPill status="open" label={t("statusPending")} />
+                      ) : (
+                        <StatusPill status="paid" label={t("statusCommitted")} />
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 ms-auto">
+                    <button
+                      type="button"
+                      className={isPending ? btnPrimary : btnGhost}
+                      onClick={() => void loadJob(j.id)}
+                    >
+                      <Eye size={15} weight="bold" />
+                      <span>{t("open")}</span>
+                    </button>
+                    {isPending && (
+                      <button
+                        type="button"
+                        onClick={() => void onDeleteJob(j.id)}
+                        disabled={busy}
+                        title={t("deleteDraft")}
+                        aria-label={t("deleteDraft")}
+                        className="inline-flex size-9 items-center justify-center rounded-xl border border-border bg-surface text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 disabled:opacity-50"
+                      >
+                        <Trash size={15} weight="bold" />
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
