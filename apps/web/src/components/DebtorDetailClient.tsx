@@ -45,7 +45,7 @@ function copyTextSafe(text: string) {
   } catch { /* ignore */ }
 }
 
-export function DebtorDetailClient({ debtorId, businessName = "شركة النيل للتجارة" }: { debtorId: string; businessName?: string }) {
+export function DebtorDetailClient({ debtorId, businessName }: { debtorId: string; businessName?: string }) {
   const t = useTranslations("debtors");
   const tc = useTranslations("common");
   const ti = useTranslations("invoices");
@@ -54,6 +54,7 @@ export function DebtorDetailClient({ debtorId, businessName = "شركة الني
   const ts = useTranslations("statements");
   const locale = useLocale();
   const isAr = locale === "ar";
+  const effectiveBusinessName = businessName || (isAr ? "منشأتك" : "Your Business");
   const router = useRouter();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -282,7 +283,7 @@ export function DebtorDetailClient({ debtorId, businessName = "شركة الني
             <WhatsAppShareButton
               phone={detail.phoneE164}
               message={totalShareMessage({
-                businessName,
+                businessName: effectiveBusinessName,
                 totalAmount: fmt(detail.totalOutstandingMinor),
                 locale,
               })}
@@ -501,7 +502,7 @@ export function DebtorDetailClient({ debtorId, businessName = "شركة الني
                 <WhatsAppShareButton
                   phone={detail.phoneE164}
                   message={invoiceShareMessage({
-                    businessName,
+                    businessName: effectiveBusinessName,
                     amount: fmt(i.outstandingMinor),
                     dueDate: i.dueOn,
                     locale,
