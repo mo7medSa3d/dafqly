@@ -13,6 +13,7 @@ import { renderTemplate } from "@tahseel/templates";
 import { storeUpload, getFileBytes } from "./files";
 import { recomputeInvoicePaid } from "./ledger";
 import { replanLater } from "./engine";
+import { upsertNotificationInTx } from "./notifications";
 
 /**
  * F7 transfer-receipt service. A screenshot is a CLAIM, not proof (hard
@@ -155,6 +156,25 @@ export async function processReceiptImage(
       for (const a of allocations) await recomputeInvoicePaid(tx, tenantId, a.invoiceId);
       allocatedInvoiceIds = allocations.map((a) => a.invoiceId);
     }
+
+    await upsertNotificationInTx(tx, tenantId, {
+      kind: decision === "auto_confirm" ? "payment_confirmed" : "receipt_claim",
+      severity: decision === "auto_confirm" ? "success" : "warning",
+      titleAr:
+        decision === "auto_confirm"
+          ? `تم تأكيد إيصال سداد آلياً — ${debtor.displayName}`
+          : `إيصال سداد بانتظار المراجعة — ${debtor.displayName}`,
+      titleEn:
+        decision === "auto_confirm"
+          ? `Receipt auto-confirmed — ${debtor.displayName}`
+          : `Receipt claim awaiting review — ${debtor.displayName}`,
+      bodyAr: `قيمة التحويل: ${formatEgp(BigInt(extraction.amount_minor))} ج.م.`,
+      bodyEn: `Transfer amount: ${formatEgp(BigInt(extraction.amount_minor))} EGP.`,
+      actionUrl: decision === "auto_confirm" ? `/debtors/${debtor.id}` : "/ai-inbox",
+      entityType: "payment",
+      entityId: paymentId,
+      dedupeKey: `receipt:${paymentId}`,
+    });
 
     await tx.insert(auditLog).values({
       tenantId, actorUserId: actor,

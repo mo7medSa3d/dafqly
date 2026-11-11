@@ -1,8 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
-import {
-  AppError, assertChequeTransition, canTransitionCheque, dueAlertKind, groupChequesByWeek,
+import { AppError, assertChequeTransition, canTransitionCheque, dueAlertKind, formatEgp, groupChequesByWeek,
   localDateOf, parseEgp, planReversalAllocations,
   type ChequeAlertKind, type ChequeStatus, type ChequeExtraction,
 } from "@tahseel/core";
@@ -15,6 +14,7 @@ import { confirmClaimedPayment, rejectClaimedPayment } from "./gateway";
 import { recomputeInvoicePaid } from "./ledger";
 import { replanLater } from "./engine";
 import { storeUpload, getFileBytes } from "./files";
+import { upsertNotificationInTx } from "./notifications";
 
 /**
  * F9 cheque service. State machine lives in core; payment effects:
@@ -189,6 +189,18 @@ export async function transitionCheque(
       // the merchant notification record surfaced in the UI/audit views.
       await tx.update(debtors).set({ riskFlag: true, updatedAt: new Date() }).where(eq(debtors.id, cheque.debtorId));
       await audit(tx, tenantId, actor, "cheque.bounced_notify", "cheque", chequeId, { debtorId: cheque.debtorId, riskFlag: true });
+      await upsertNotificationInTx(tx, tenantId, {
+        kind: "cheque_alert",
+        severity: "urgent",
+        titleAr: `تنبيه: ارتداد شيك #${cheque.number}`,
+        titleEn: `Alert: Cheque #${cheque.number} bounced`,
+        bodyAr: `ارتد شيك بقيمة ${formatEgp(cheque.amountMinor)} ج.م (${cheque.bank}) وتم تفعيل مؤشر المخاطر للعميل.`,
+        bodyEn: `Cheque of ${formatEgp(cheque.amountMinor)} EGP (${cheque.bank}) bounced; debtor flagged at risk.`,
+        actionUrl: `/debtors/${cheque.debtorId}`,
+        entityType: "cheque",
+        entityId: chequeId,
+        dedupeKey: `cheque_bounced:${chequeId}`,
+      });
     }
     return { view: toView(row!), action, paymentId: cheque.paymentId, affectedInvoices };
   });

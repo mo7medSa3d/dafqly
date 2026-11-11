@@ -1,14 +1,17 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { formatEgp } from "@tahseel/core";
 import {
   ArrowLeft, BellRinging, BellSlash, CheckCircle, CurrencyCircleDollar,
-  MagnifyingGlass, Phone, Plus, SortAscending, Users,
+  MagnifyingGlass, Phone, Plus, SortAscending, Sparkle, Users,
   WarningCircle, WhatsappLogo, X,
 } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
+import type { DebtorIntelligenceView } from "@/server/intelligence";
+import { openAiCopilot } from "./AiCopilotDrawer";
 import { EmptyState, InitialAvatar, Panel, btnPrimary, inputCls, labelCls } from "./ui";
 
 interface Debtor {
@@ -25,18 +28,20 @@ interface Debtor {
   totalInvoicesCount?: number;
 }
 
-type FilterType = "all" | "has_balance" | "settled" | "opted_out" | "risk";
-type SortType = "default" | "balance_desc" | "newest" | "name_asc";
+type FilterType = "all" | "ai_priority" | "has_balance" | "settled" | "opted_out" | "risk";
+type SortType = "default" | "ai_priority" | "balance_desc" | "newest" | "name_asc";
 
 const fmt = (minor: string | undefined) => formatEgp(BigInt(minor || "0"));
 
 export function DebtorsClient({ businessName }: { businessName?: string }) {
+  const router = useRouter();
   const t = useTranslations("debtors");
   const locale = useLocale();
   const isAr = locale === "ar";
   const effectiveBusinessName = businessName || (isAr ? "منشأتك" : "Your Business");
 
   const [items, setItems] = useState<Debtor[]>([]);
+  const [intelById, setIntelById] = useState<Record<string, DebtorIntelligenceView>>({});
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterType>("all");
   const [sort, setSort] = useState<SortType>("default");
@@ -50,8 +55,18 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
 
   const load = useCallback(async (q: string) => {
     try {
-      const page = await trpc.debtors.list.query({ search: q || undefined, limit: 200 });
+      const [page, intelRes] = await Promise.all([
+        trpc.debtors.list.query({ search: q || undefined, limit: 200 }),
+        trpc.intelligence.overview.query({ syncNotifications: false }).catch(() => null),
+      ]);
       setItems((page.items as unknown) as Debtor[]);
+      if (intelRes) {
+        const map: Record<string, DebtorIntelligenceView> = {};
+        for (const score of intelRes.debtorScores) {
+          map[score.debtorId] = score;
+        }
+        setIntelById(map);
+      }
     } catch {
       /* ignore */
     }
@@ -74,6 +89,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
       setPhone("");
       setNotes("");
       await load(search);
+      router.refresh();
       setFeedbackMsg(isAr ? "تمت إضافة العميل بنجاح." : "Customer added successfully.");
       setTimeout(() => setFeedbackMsg(null), 3000);
     } catch {
@@ -125,10 +141,16 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
     return items.filter((d) => d.riskFlag).length;
   }, [items]);
 
+  const aiPriorityCount = useMemo(() => {
+    return items.filter((d) => (intelById[d.id]?.priorityScore ?? 0) >= 30).length;
+  }, [items, intelById]);
+
   // Filtering & Sorting
   const filteredItems = useMemo(() => {
     let result = items;
-    if (filter === "has_balance") {
+    if (filter === "ai_priority") {
+      result = result.filter((d) => (intelById[d.id]?.priorityScore ?? 0) >= 30);
+    } else if (filter === "has_balance") {
       result = result.filter((d) => BigInt(d.totalOutstandingMinor || "0") > 0n);
     } else if (filter === "settled") {
       result = result.filter((d) => BigInt(d.totalOutstandingMinor || "0") === 0n);
@@ -139,6 +161,11 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
     }
 
     return [...result].sort((a, b) => {
+      if (sort === "ai_priority" || filter === "ai_priority") {
+        const pa = intelById[a.id]?.priorityScore ?? 0;
+        const pb = intelById[b.id]?.priorityScore ?? 0;
+        return pb - pa;
+      }
       if (sort === "balance_desc") {
         const balA = BigInt(a.totalOutstandingMinor || "0");
         const balB = BigInt(b.totalOutstandingMinor || "0");
@@ -149,7 +176,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
       }
       return 0;
     });
-  }, [items, filter, sort]);
+  }, [items, intelById, filter, sort]);
 
   function getWhatsAppMessage(d: Debtor): string {
     const balance = BigInt(d.totalOutstandingMinor || "0");
@@ -263,6 +290,25 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
 
             <button
               type="button"
+              data-testid="filter-ai-priority"
+              onClick={() => setFilter("ai_priority")}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all ${
+                filter === "ai_priority"
+                  ? "bg-primary text-primary-fg shadow-xs"
+                  : "border border-border bg-surface text-text-muted hover:bg-callout hover:text-primary"
+              }`}
+            >
+              <Sparkle size={14} weight="fill" aria-hidden />
+              <span>{isAr ? "الأولوية الذكية" : "AI Priority"}</span>
+              {aiPriorityCount > 0 && (
+                <span className="rounded-full bg-callout px-1.5 py-0.2 text-[10px] text-primary">
+                  {aiPriorityCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
               onClick={() => setFilter("has_balance")}
               className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all ${
                 filter === "has_balance"
@@ -364,6 +410,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                 className="rounded-xl border border-border bg-surface px-3 py-2 text-xs font-semibold text-text focus:border-primary focus:outline-hidden"
               >
                 <option value="default">{isAr ? "الترتيب الافتراضي" : "Default"}</option>
+                <option value="ai_priority">{isAr ? "أولوية المتابعة (AI)" : "AI Follow-up Priority"}</option>
                 <option value="balance_desc">{isAr ? "الأعلى مديونية أولاً" : "Highest Balance First"}</option>
                 <option value="name_asc">{isAr ? "أبجدي بالاسم (A-Z)" : "Alphabetical (A-Z)"}</option>
               </select>
@@ -437,7 +484,37 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                                 <span>{isAr ? "تذكيرات متوقفة" : "Reminders Paused"}</span>
                               </span>
                             )}
+
+                            {/* AI Health Score Pill */}
+                            {intelById[d.id] && (
+                              <span
+                                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                                  intelById[d.id]!.tier === "critical"
+                                    ? "bg-status-overdue-bg text-status-overdue-fg"
+                                    : intelById[d.id]!.tier === "at_risk"
+                                      ? "bg-status-due-bg text-status-due-fg"
+                                      : intelById[d.id]!.tier === "watch"
+                                        ? "bg-callout text-primary"
+                                        : "bg-status-paid-bg text-status-paid-fg"
+                                }`}
+                              >
+                                <Sparkle size={11} weight="fill" aria-hidden />
+                                <span>{intelById[d.id]!.healthScore}/100</span>
+                              </span>
+                            )}
                           </div>
+
+                          {/* AI Suggested Next Action */}
+                          {intelById[d.id] && hasDebt && (
+                            <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-primary">
+                              <Sparkle size={12} weight="fill" aria-hidden className="shrink-0" />
+                              <span>
+                                {isAr
+                                  ? intelById[d.id]!.recommendation.titleAr
+                                  : intelById[d.id]!.recommendation.titleEn}
+                              </span>
+                            </p>
+                          )}
 
                           {/* Phone & Invoices summary */}
                           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
@@ -465,8 +542,25 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                         </div>
                       </div>
 
-                      {/* Right: Direct Actions (WhatsApp, Toggle Reminders, View) */}
+                      {/* Right: Direct Actions (AI Draft, WhatsApp, Toggle Reminders, View) */}
                       <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
+                        {hasDebt && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openAiCopilot({
+                                tab: "composer",
+                                debtorId: d.id,
+                                tone: intelById[d.id]?.recommendation.suggestedTone,
+                              })
+                            }
+                            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-full bg-callout px-3 py-1.5 text-xs font-bold text-primary transition-colors hover:bg-primary hover:text-primary-fg"
+                            title={isAr ? "صياغة تنبيه بالذكاء الاصطناعي" : "Draft AI reminder"}
+                          >
+                            <Sparkle size={14} weight="fill" aria-hidden />
+                            <span className="hidden xl:inline">{isAr ? "صياغة ذكية" : "AI Draft"}</span>
+                          </button>
+                        )}
                         {/* 1. Direct WhatsApp Chat Button */}
                         <button
                           type="button"

@@ -7,6 +7,27 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### Persistent Notification System, AI Collections Intelligence & Copilot (2026-11-11) — **COMPLETE**
+- **1. Multi-Tenant Persistent Notifications (`packages/db`, `apps/web/src/server/notifications.ts`)**:
+  - Added `notifications` table (`0009_heavy_ultron.sql`) with `tenant_id`, RLS `tenant_isolation` policy, `tahseel_app` grants, `notifications_tenant_dedupe_uniq`, and `notifications_tenant_unread_idx`. Registered in `TENANT_TABLES`, `TENANT_DATA_TABLES`, and `packages/db/src/rls.test.ts` (23/23 RLS tests pass).
+  - Implemented `upsertNotificationInTx`, `emitNotification`, `syncWorkspaceNotifications` (overdue debtors, open disputes, receipt claims, human-inbox triage, due/bounced cheques, monthly quota alerts, daily AI briefing), `listNotifications`, `markNotificationRead`, `markAllNotificationsRead`, and `dismissNotification`.
+  - Wired atomic transactional hooks (`upsertNotificationInTx`) inside `statements.ts`, `receipts.ts`, and `cheques.ts`.
+- **2. Single-Tenant AI Collections Intelligence & Grounded Copilot (`packages/core/src/intelligence.ts`, `apps/web/src/server/intelligence.ts`)**:
+  - Added pure deterministic `scoreDebtorIntelligence` (0–100 health score, risk tier, priority score, next-best action & suggested tone), `buildCollectionsBriefing`, `BriefingNarrationSchema`, and `buildOperationalNotificationCandidates` strictly within single-tenant scope (respects Hard Rule #9: no cross-tenant F14).
+  - Implemented `getWorkspaceIntelligence`, `getDebtorIntelligence`, and `askWorkspaceCopilot` with `sanitizePromptData` + allowlisted intents + `audit_log` tracking (Hard Rule #4).
+  - Exposed `notifications` and `intelligence` routers in `apps/web/src/server/routers.ts` behind `tenantProcedure`.
+- **3. Interactive UI Integration (`apps/web/src/components/` & `app/[locale]/dashboard/page.tsx`)**:
+  - `NotificationBell.tsx` & `AiCopilotDrawer.tsx` integrated into `AppShell.tsx` top bar (unread/urgent counters, filter tabs, sync, read all, dismiss, executive briefing, priority suggestions, Smart WhatsApp draft composer, and grounded Copilot Q&A).
+  - `DashboardIntelligence.tsx` added to `dashboard/page.tsx` (`export const dynamic = "force-dynamic"`, plus `router.refresh()` in `DebtorsClient.tsx` / `InvoicesClient.tsx` so newly created debtors/invoices immediately reflect on overview navigation).
+  - Added AI Health Score badges, next-best-action hints, `AI Priority` filter/sort in `DebtorsClient.tsx`, and AI Health pill + Smart Draft trigger in `DebtorDetailClient.tsx`.
+- **4. Verification Evidence**:
+  - `pnpm lint`: 0 errors (`eslint .`, `check-no-hardcoded-brand`, `check-secrets` across 660 files)
+  - `pnpm typecheck`: 0 errors across all 9 workspace packages
+  - `REQUIRE_DB_TESTS=1 pnpm test`: Passed across all 9 workspace packages (including 23 RLS tests in `@tahseel/db`, 187 tests in `@tahseel/core`, and 68 integration/security tests across 12 files in `@tahseel/web` including `intelligence.integration.test.ts`)
+  - `pnpm eval`: Passed (`EVAL OK: all SYNTHETIC targets met`)
+  - `NODE_ENV=production pnpm build`: Passed (`✓ Generating static pages (37/37)`)
+  - `pnpm test:e2e`: **25/25 passed (1.7m)** (including new `apps/web/e2e/notifications-ai.spec.ts` exercising DB/RLS/UI end-to-end)
+
 ### GitHub Actions CI & Security Audit Remediation (2026-11-11) — **COMPLETE**
 - **1. Fixed `pnpm/action-setup@v4` Failure in `.github/workflows/ci.yml`**:
   - *Root Cause*: `ci.yml` specified `with: version: 10` on `pnpm/action-setup@v4` while root `package.json` already specifies `"packageManager": "pnpm@10.34.9"`, causing `ERR_PNPM_BAD_PM_VERSION` in both `build-test` and `e2e` jobs.

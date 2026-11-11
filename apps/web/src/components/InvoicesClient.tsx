@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { formatEgp, canTransition, type InvoiceStatus } from "@tahseel/core";
 import { Check, MagnifyingGlass, PencilSimple, Plus, Sparkle, WarningCircle, X } from "@phosphor-icons/react";
@@ -27,6 +28,7 @@ function addDaysIso(baseIso: string, days: number): string {
 }
 
 export function InvoicesClient({ businessName }: { businessName?: string }) {
+  const router = useRouter();
   const t = useTranslations("invoices");
   const tc = useTranslations("common");
   const locale = useLocale();
@@ -97,6 +99,7 @@ export function InvoicesClient({ businessName }: { businessName?: string }) {
       });
       setAmount(""); setReference(""); setDescription("");
       await load();
+      router.refresh();
     } catch { setError(t("title")); }
   }
 

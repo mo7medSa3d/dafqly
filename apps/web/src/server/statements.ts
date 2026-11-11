@@ -10,6 +10,7 @@ import {
 } from "@tahseel/db/schema";
 import { withTenant, type Db } from "@tahseel/db";
 import { replanLater } from "./engine";
+import { upsertNotificationInTx } from "./notifications";
 
 /**
  * F10 statement services (BUILD_PLAN §7-F10, ADR-020): merchant-side link
@@ -207,6 +208,18 @@ export async function raiseStatementDispute(
     });
     await audit(tx, link.tenantId, null, "invoice.disputed", "invoice", invoice.id, {
       status: "disputed", disputeId: row!.id,
+    });
+    await upsertNotificationInTx(tx, link.tenantId, {
+      kind: "dispute",
+      severity: "urgent",
+      titleAr: "اعتراض جديد على فاتورة",
+      titleEn: "New invoice dispute raised",
+      bodyAr: `قام العميل بالاعتراض على الفاتورة${invoice.reference ? ` (${invoice.reference})` : ""} وتوقفت تذكيراتها تلقائياً.`,
+      bodyEn: `Customer disputed invoice${invoice.reference ? ` (${invoice.reference})` : ""}; reminders paused.`,
+      actionUrl: `/debtors/${link.debtorId}`,
+      entityType: "dispute",
+      entityId: row!.id,
+      dedupeKey: `dispute:${row!.id}`,
     });
     return { disputeId: row!.id, invoiceId: invoice.id };
   });

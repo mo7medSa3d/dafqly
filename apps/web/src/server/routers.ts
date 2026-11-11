@@ -37,6 +37,13 @@ import {
   generateWorkspaceNotification, generateNotificationInput,
   AI_WORKSPACE_TOOLS,
 } from "./ai-workspace";
+import {
+  listNotifications, markNotificationRead, markAllNotificationsRead,
+  dismissNotification,
+} from "./notifications";
+import {
+  getWorkspaceIntelligence, getDebtorIntelligence, askWorkspaceCopilot, copilotQueryInput,
+} from "./intelligence";
 
 const pageArgs = (input: { cursor?: string; limit?: number } | undefined) => ({
   cursor: input?.cursor ? decodeCursor(input.cursor) : undefined,
@@ -47,10 +54,17 @@ const encodePage = <T extends { nextCursor: { id: string } | null }>(page: T) =>
   nextCursor: page.nextCursor ? encodeCursor(page.nextCursor) : null,
 });
 
-async function tenantToday(ctx: { ownerDb: Parameters<typeof listTenantsForUser>[0]; user: { id: string }; tenantId: string }): Promise<string> {
+async function tenantMeta(ctx: { ownerDb: Parameters<typeof listTenantsForUser>[0]; user: { id: string }; tenantId: string }): Promise<{ today: string; businessName: string }> {
   const mine = await listTenantsForUser(ctx.ownerDb, ctx.user.id);
-  const tz = mine.find((m) => m.tenantId === ctx.tenantId)?.timezone ?? "Africa/Cairo";
-  return todayInTimezone(tz);
+  const found = mine.find((m) => m.tenantId === ctx.tenantId);
+  return {
+    today: todayInTimezone(found?.timezone ?? "Africa/Cairo"),
+    businessName: found?.businessNameAr ?? "DAFQLY",
+  };
+}
+
+async function tenantToday(ctx: { ownerDb: Parameters<typeof listTenantsForUser>[0]; user: { id: string }; tenantId: string }): Promise<string> {
+  return (await tenantMeta(ctx)).today;
 }
 
 export const appRouter = router({
@@ -357,9 +371,46 @@ export const appRouter = router({
     generateNotification: tenantProcedure
       .input(generateNotificationInput)
       .mutation(async ({ ctx, input }) => {
-        const mine = await listTenantsForUser(ctx.ownerDb, ctx.user.id);
-        const businessName = mine.find((m) => m.tenantId === ctx.tenantId)?.businessNameAr ?? "DAFQLY";
+        const { businessName } = await tenantMeta(ctx);
         return generateWorkspaceNotification(ctx.appDb, ctx.tenantId, ctx.user.id, businessName, input);
+      }),
+  },
+  notifications: {
+    list: tenantProcedure
+      .input(z.object({ onlyUnread: z.boolean().optional(), limit: z.number().int().min(1).max(50).optional() }).optional())
+      .query(async ({ ctx, input }) => listNotifications(ctx.appDb, ctx.tenantId, input ?? {})),
+    sync: tenantProcedure
+      .mutation(async ({ ctx }) => {
+        const { today, businessName } = await tenantMeta(ctx);
+        const intel = await getWorkspaceIntelligence(ctx.appDb, ctx.tenantId, businessName, today, { syncNotifications: true });
+        return { ok: true, unreadCount: (await listNotifications(ctx.appDb, ctx.tenantId)).unreadCount, headlineAr: intel.headlineAr };
+      }),
+    markRead: tenantProcedure
+      .input(z.object({ id: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => markNotificationRead(ctx.appDb, ctx.tenantId, input.id)),
+    markAllRead: tenantProcedure
+      .mutation(async ({ ctx }) => markAllNotificationsRead(ctx.appDb, ctx.tenantId)),
+    dismiss: tenantProcedure
+      .input(z.object({ id: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => dismissNotification(ctx.appDb, ctx.tenantId, input.id)),
+  },
+  intelligence: {
+    overview: tenantProcedure
+      .input(z.object({ syncNotifications: z.boolean().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        const { today, businessName } = await tenantMeta(ctx);
+        return getWorkspaceIntelligence(ctx.appDb, ctx.tenantId, businessName, today, {
+          syncNotifications: input?.syncNotifications ?? false,
+        });
+      }),
+    forDebtor: tenantProcedure
+      .input(z.object({ debtorId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => getDebtorIntelligence(ctx.appDb, ctx.tenantId, input.debtorId, await tenantToday(ctx))),
+    askCopilot: tenantProcedure
+      .input(copilotQueryInput)
+      .mutation(async ({ ctx, input }) => {
+        const { today, businessName } = await tenantMeta(ctx);
+        return askWorkspaceCopilot(ctx.appDb, ctx.tenantId, ctx.user.id, businessName, today, input);
       }),
   },
 });

@@ -5,9 +5,11 @@ import { useTranslations, useLocale } from "next-intl";
 import { formatEgp } from "@tahseel/core";
 import {
   BellRinging, BellSlash, Check, Clock, FileText, HandCoins, LinkSimple, PaperPlaneTilt, PencilSimple,
-  Receipt, Trash, Wallet, WarningCircle,
+  Receipt, Sparkle, Trash, Wallet, WarningCircle,
 } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
+import type { DebtorIntelligenceView } from "@/server/intelligence";
+import { openAiCopilot } from "./AiCopilotDrawer";
 import { Panel, SecurityNotice, StatusPill, btnGhost, btnPrimary, btnSmall, inputCls, labelCls, linkAction } from "./ui";
 import { WhatsAppShareButton, invoiceShareMessage, totalShareMessage } from "./WhatsAppShare";
 
@@ -64,6 +66,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   const [paymentLinks, setPaymentLinks] = useState<PaymentLink[]>([]);
   const [disputes, setDisputes] = useState<Dispute[]>([]);
   const [recon, setRecon] = useState<Recon | null>(null);
+  const [debtorIntel, setDebtorIntel] = useState<DebtorIntelligenceView | null>(null);
   const [gwMsg, setGwMsg] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<"cash" | "instapay" | "bank" | "wallet" | "cheque" | "gateway" | "other">("cash");
@@ -86,13 +89,14 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   const load = useCallback(async () => {
     try {
       setLoadError(null);
-      const [d, tl, sl, pl, dp, rc] = await Promise.all([
+      const [d, tl, sl, pl, dp, rc, intelRes] = await Promise.all([
         trpc.debtors.get.query({ id: debtorId }),
         trpc.debtors.timeline.query({ id: debtorId }),
         trpc.statements.list.query({ debtorId }),
         trpc.payments.links.query({ debtorId }),
         trpc.statements.disputes.query({ debtorId }),
         trpc.payments.reconciliation.query(),
+        trpc.intelligence.forDebtor.query({ debtorId }).catch(() => null),
       ]);
       const det = d as Detail;
       setDetail(det);
@@ -104,6 +108,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
       setPaymentLinks(pl as PaymentLink[]);
       setDisputes(dp as Dispute[]);
       setRecon(rc as Recon);
+      setDebtorIntel(intelRes as DebtorIntelligenceView | null);
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : (locale === "en" ? "Debtor not found" : "تعذّر تحميل بيانات العميل"));
     }
@@ -236,6 +241,23 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
           <div className="flex flex-col gap-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-extrabold">{detail.displayName}</h2>
+              {debtorIntel && (
+                <span
+                  data-testid="debtor-health-pill"
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                    debtorIntel.tier === "critical"
+                      ? "bg-status-overdue-bg text-status-overdue-fg"
+                      : debtorIntel.tier === "at_risk"
+                        ? "bg-status-due-bg text-status-due-fg"
+                        : debtorIntel.tier === "watch"
+                          ? "bg-callout text-primary"
+                          : "bg-status-paid-bg text-status-paid-fg"
+                  }`}
+                >
+                  <Sparkle size={12} weight="fill" aria-hidden />
+                  {isAr ? `الصحة الائتمانية ${debtorIntel.healthScore}/100` : `Health ${debtorIntel.healthScore}/100`}
+                </span>
+              )}
               {detail.riskFlag && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-status-overdue-bg px-2.5 py-0.5 text-xs font-bold text-status-overdue-fg">
                   <WarningCircle size={13} weight="fill" aria-hidden />
@@ -278,8 +300,36 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               </div>
             )}
             {detail.notes && <p className="text-sm text-text-muted">{detail.notes}</p>}
+            {debtorIntel && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-callout/45 px-3 py-2 text-xs">
+                <Sparkle size={14} weight="fill" className="shrink-0 text-primary" aria-hidden />
+                <span className="font-bold text-primary">
+                  {isAr ? debtorIntel.recommendation.titleAr : debtorIntel.recommendation.titleEn}:
+                </span>
+                <span className="text-text-muted">
+                  {isAr ? debtorIntel.recommendation.reasonAr : debtorIntel.recommendation.reasonEn}
+                </span>
+              </div>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {debtorIntel && (
+              <button
+                type="button"
+                data-testid="debtor-ai-draft-btn"
+                onClick={() =>
+                  openAiCopilot({
+                    tab: "composer",
+                    debtorId,
+                    tone: debtorIntel.recommendation.suggestedTone,
+                  })
+                }
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-callout px-5 text-sm font-bold text-primary transition-colors hover:bg-primary hover:text-primary-fg"
+              >
+                <Sparkle size={16} weight="fill" aria-hidden />
+                <span>{isAr ? "صياغة تذكير ذكي" : "Draft AI Reminder"}</span>
+              </button>
+            )}
             <WhatsAppShareButton
               phone={detail.phoneE164}
               message={totalShareMessage({

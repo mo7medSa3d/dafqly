@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { AppError } from "@tahseel/core";
 import {
   auditLog, chequeAlerts, cheques, debtors, disputes, files, importJobs, importRows,
-  invoices, memberships, messageIntents, messages, optOuts, paymentAllocations,
+  invoices, memberships, messageIntents, messages, notifications, optOuts, paymentAllocations,
   paymentLinks, payments, reminders, statementLinks, subscriptionInvoices,
   tenantDeletions, tenants, usageLedger, withTenant, type Db,
 } from "@tahseel/db";
@@ -49,6 +49,7 @@ export const TENANT_DATA_TABLES: TenantTableSpec[] = [
   { name: "usage_ledger", read: (tx, id) => tx.select().from(usageLedger).where(eq(usageLedger.tenantId, id)), remove: async (tx, id) => { await tx.delete(usageLedger).where(eq(usageLedger.tenantId, id)); } },
   { name: "audit_log", read: (tx, id) => tx.select().from(auditLog).where(eq(auditLog.tenantId, id)), remove: async (tx, id) => { await tx.delete(auditLog).where(eq(auditLog.tenantId, id)); } },
   { name: "subscription_invoices", read: (tx, id) => tx.select().from(subscriptionInvoices).where(eq(subscriptionInvoices.tenantId, id)), remove: async (tx, id) => { await tx.delete(subscriptionInvoices).where(eq(subscriptionInvoices.tenantId, id)); } },
+  { name: "notifications", read: (tx, id) => tx.select().from(notifications).where(eq(notifications.tenantId, id)), remove: async (tx, id) => { await tx.delete(notifications).where(eq(notifications.tenantId, id)); } },
   { name: "memberships", read: (tx, id) => tx.select().from(memberships).where(eq(memberships.tenantId, id)), remove: async (tx, id) => { await tx.delete(memberships).where(eq(memberships.tenantId, id)); } },
 ];
 

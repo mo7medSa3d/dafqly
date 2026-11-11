@@ -25,6 +25,13 @@ import { LocaleToggle } from "./LocaleToggle";
 import { LogoutButton } from "./LogoutButton";
 import { InitialAvatar } from "./ui";
 import { CommandPalette } from "./CommandPalette";
+import { NotificationBell } from "./NotificationBell";
+import {
+  AiCopilotDrawer,
+  type CopilotTab,
+  type OpenCopilotDetail,
+} from "./AiCopilotDrawer";
+import type { NotificationTone } from "@tahseel/core";
 
 const ITEMS = [
   { href: "dashboard", key: "dashboard", testid: "nav-dashboard", Icon: SquaresFour },
@@ -51,9 +58,15 @@ export function AppShell({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
+  const [copilotConfig, setCopilotConfig] = useState<{
+    tab: CopilotTab;
+    debtorId?: string;
+    tone?: NotificationTone;
+  }>({ tab: "briefing" });
   const isEn = locale === "en";
 
-  // Global Ctrl+K / Cmd+K shortcut listener
+  // Global Ctrl+K / Cmd+K shortcut + custom event listener for AI Copilot drawer
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -61,8 +74,21 @@ export function AppShell({
         setSearchOpen((prev) => !prev);
       }
     };
+    const handleOpenCopilot = (e: Event) => {
+      const detail = (e as CustomEvent<OpenCopilotDetail>).detail ?? {};
+      setCopilotConfig({
+        tab: detail.tab ?? "briefing",
+        debtorId: detail.debtorId,
+        tone: detail.tone,
+      });
+      setCopilotOpen(true);
+    };
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("tahseel:open-ai-copilot", handleOpenCopilot);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("tahseel:open-ai-copilot", handleOpenCopilot);
+    };
   }, []);
 
   const isActive = (href: string) => pathname === `/${locale}/${href}` || pathname.startsWith(`/${locale}/${href}/`);
@@ -139,6 +165,7 @@ export function AppShell({
                 key={href}
                 data-testid={testid}
                 href={`/${locale}/${href}`}
+                prefetch={false}
                 onClick={() => setMobileOpen(false)}
                 aria-current={active ? "page" : undefined}
                 title={t(key)}
@@ -246,6 +273,22 @@ export function AppShell({
                 </kbd>
               </button>
 
+              <button
+                type="button"
+                data-testid="ai-copilot-trigger-btn"
+                onClick={() => {
+                  setCopilotConfig({ tab: "briefing" });
+                  setCopilotOpen(true);
+                }}
+                className="flex items-center gap-1.5 rounded-full bg-callout px-3 py-1.5 text-xs font-bold text-primary transition-all hover:bg-primary hover:text-primary-fg shadow-2xs"
+                title={isEn ? "AI Collections Copilot" : "مساعد التحصيل الذكي"}
+              >
+                <Sparkle size={15} weight="fill" aria-hidden />
+                <span className="hidden sm:inline">{isEn ? "AI Copilot" : "المساعد الذكي"}</span>
+              </button>
+
+              <NotificationBell locale={locale} />
+
               <span className="hidden items-center gap-1.5 rounded-full bg-surface-muted/60 px-3 py-1 text-xs font-bold text-text-muted md:inline-flex shadow-2xs">
                 <ShieldCheck size={15} weight="fill" aria-hidden className="text-primary" />
                 <span>{isEn ? "Encrypted & Secure" : "اتصال آمن ومشفّر"}</span>
@@ -266,6 +309,14 @@ export function AppShell({
       </div>
 
       <CommandPalette isOpen={searchOpen} onClose={() => setSearchOpen(false)} locale={locale} />
+      <AiCopilotDrawer
+        isOpen={copilotOpen}
+        onClose={() => setCopilotOpen(false)}
+        locale={locale}
+        initialTab={copilotConfig.tab}
+        initialDebtorId={copilotConfig.debtorId}
+        initialTone={copilotConfig.tone}
+      />
     </div>
   );
 }

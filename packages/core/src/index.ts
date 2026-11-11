@@ -16,3 +16,4 @@ export * from "./cheques";
 export * from "./reports";
 export * from "./forecast";
 export * from "./plans";
+export * from "./intelligence";

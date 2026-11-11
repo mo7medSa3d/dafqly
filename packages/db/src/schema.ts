@@ -585,6 +585,33 @@ export const subscriptionInvoices = pgTable("subscription_invoices", {
 ]);
 
 /**
+ * notifications: tenant-scoped operational & AI-generated alerts (disputes,
+ * receipt claims, human-inbox messages, cheques, overdue spikes, daily AI
+ * briefings). Deduplicated per (tenant_id, dedupe_key) so alerts never
+ * spam or repeat once created/dismissed.
+ */
+export const notifications = pgTable("notifications", {
+  id: id(),
+  tenantId: tenantId(),
+  kind: varchar("kind", { length: 40 }).notNull(),
+  severity: varchar("severity", { length: 16 }).notNull().default("info"),
+  titleAr: text("title_ar").notNull(),
+  titleEn: text("title_en").notNull(),
+  bodyAr: text("body_ar").notNull(),
+  bodyEn: text("body_en").notNull(),
+  actionUrl: text("action_url"),
+  entityType: varchar("entity_type", { length: 32 }),
+  entityId: uuid("entity_id"),
+  dedupeKey: varchar("dedupe_key", { length: 160 }).notNull(),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+  createdAt: createdAt(), updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("notifications_tenant_dedupe_uniq").on(t.tenantId, t.dedupeKey),
+  index("notifications_tenant_unread_idx").on(t.tenantId, t.dismissedAt, t.readAt, t.createdAt),
+]);
+
+/**
  * tenant_deletions (M6, ADR-024): the platform-level TOMBSTONE left behind
  * when a tenant deletes all its data (§8 delete-tenant-data). Deliberately
  * NOT a tenant table: it must survive the tenant's deletion, so it has no
@@ -630,5 +657,6 @@ export const TENANT_TABLES = [
   { name: "cheques", table: cheques, probeColumn: "bank", probeValue: "probe" },
   { name: "cheque_alerts", table: chequeAlerts, probeColumn: "alert_kind", probeValue: "due_today" },
   { name: "subscription_invoices", table: subscriptionInvoices, probeColumn: "plan_key", probeValue: "probe" },
+  { name: "notifications", table: notifications, probeColumn: "severity", probeValue: "warning" },
 ] as const;
 export type TenantTableName = (typeof TENANT_TABLES)[number]["name"];

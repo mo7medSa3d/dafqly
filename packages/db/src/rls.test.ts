@@ -62,6 +62,7 @@ d("RLS cross-tenant isolation (generic, every tenant table)", () => {
       case "cheques": return { id, tenant_id: tenant, debtor_id: debtorId, direction: "receivable", number: `CHQ-${tenant.slice(0, 8)}`, bank: "Probe Bank", amount_minor: 5000, issue_date: "2026-11-01", due_date: "2026-12-01", status: "held" };
       case "cheque_alerts": return { id, tenant_id: tenant, cheque_id: rowIds.get("cheques")?.[which], alert_kind: "due_today", alert_date: "2026-12-01" };
       case "subscription_invoices": return { id, tenant_id: tenant, plan_key: "starter", period_start: "2026-11-01", period_end: "2026-12-01", amount_minor: 4900, status: "issued" };
+      case "notifications": return { id, tenant_id: tenant, kind: "ai_briefing", severity: "info", title_ar: "تنبيه", title_en: "Alert", body_ar: "تفاصيل", body_en: "Details", dedupe_key: `probe-${tenant}` };
       default: throw new Error(`no factory for tenant table ${table}`);
     }
   }

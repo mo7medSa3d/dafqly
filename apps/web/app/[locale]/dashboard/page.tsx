@@ -6,12 +6,16 @@ import { auth } from "@/server/auth";
 import { appDb, ownerDb } from "@/server/db";
 import { getDashboardSummary, listTenantsForUser, todayInTimezone } from "@/server/services";
 import { getKpis, getForecast } from "@/server/reports";
+import { getWorkspaceIntelligence } from "@/server/intelligence";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { BillingClient } from "@/components/BillingClient";
+import { DashboardIntelligence } from "@/components/DashboardIntelligence";
 import { EmptyInvoicesIllustration, ForecastIllustration, HeroBandArt, SecurityLockBadge } from "@/components/illustrations";
 import { AgingBar, ForecastChart } from "@/components/charts";
 import { EmptyState, InitialAvatar, Panel, SecurityNotice } from "@/components/ui";
+
+export const dynamic = "force-dynamic";
 
 export default async function DashboardPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
@@ -27,10 +31,11 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
   const tn = await getTranslations("nav");
   const isAr = locale === "ar";
   const today = todayInTimezone(tenant.timezone);
-  const [summary, kpisFull, forecast] = await Promise.all([
+  const [summary, kpisFull, forecast, intel] = await Promise.all([
     getDashboardSummary(appDb(), tenant.tenantId, today),
     getKpis(appDb(), tenant.tenantId, today),
     getForecast(appDb(), tenant.tenantId, today),
+    getWorkspaceIntelligence(appDb(), tenant.tenantId, tenant.businessNameAr, today),
   ]);
   const isEmpty = summary.openInvoices === 0 && summary.debtors === 0;
   const fmt = (minor: string) => formatEgp(BigInt(minor));
@@ -185,6 +190,8 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
           </Link>
         </EmptyState>
       )}
+
+      {!isEmpty && <DashboardIntelligence locale={locale} intel={intel} />}
 
       {/* Reports, Forecast & Operations (12-col balanced layout) */}
       <section data-testid="reports" className="flex flex-col gap-6">
