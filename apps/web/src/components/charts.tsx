@@ -109,23 +109,22 @@ const BUCKET_BAR: Record<string, string> = {
 export function AgingBar({ buckets }: { buckets: AgingBucket[] }) {
   const total = buckets.reduce((s, b) => s + b.amountMinor, 0);
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex h-4 w-full overflow-hidden rounded-full bg-surface-muted" dir="ltr" role="img"
-        aria-label={buckets.map((b) => `${b.label}: ${b.formatted}`).join(" · ")}>
-        {total > 0 && buckets.filter((b) => b.amountMinor > 0).map((b) => (
-          <span key={b.key} className={`h-full ${BUCKET_BAR[b.key] ?? "bg-slate-400"}`} style={{ width: `${(b.amountMinor / total) * 100}%` }} />
-        ))}
-      </div>
-      <ul className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+    <div className="flex flex-col gap-3">
+      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {buckets.map((b) => {
           const pct = total > 0 ? Math.round((b.amountMinor / total) * 100) : 0;
           return (
-            <li key={b.key} className="flex items-center gap-2 rounded-xl bg-surface-muted/60 px-3 py-2 text-xs sm:text-sm">
-              <span className={`size-2.5 shrink-0 rounded-full ${BUCKET_BAR[b.key] ?? "bg-slate-400"}`} aria-hidden />
-              <span className="min-w-0 truncate text-text-muted">{b.label}</span>
+            <li
+              key={b.key}
+              className="flex items-center gap-2.5 rounded-xl bg-surface-muted/50 px-3.5 py-2.5 text-xs sm:text-sm transition-colors hover:bg-surface-muted"
+            >
+              <span className={`size-2 shrink-0 rounded-full ${BUCKET_BAR[b.key] ?? "bg-slate-400"}`} aria-hidden />
+              <span className="min-w-0 truncate font-medium text-text-muted">{b.label}</span>
               <span className="ms-auto flex shrink-0 items-center gap-1.5" dir="ltr">
                 <span className="tnum font-bold text-text">{b.formatted}</span>
-                <span className="tnum text-xs text-text-subtle">({pct}%)</span>
+                <span className="tnum rounded-md bg-surface px-1.5 py-0.5 text-[11px] font-semibold text-text-muted">
+                  {pct}%
+                </span>
               </span>
             </li>
           );

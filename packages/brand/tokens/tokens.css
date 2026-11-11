@@ -147,7 +147,11 @@
     --status-draft-bg: #1A1D26;
   }
 }
+:root[data-theme="light"] {
+  color-scheme: light;
+}
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #080A0E;
   --surface: #101219;
   --surface-muted: #1A1D26;

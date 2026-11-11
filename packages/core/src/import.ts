@@ -23,10 +23,10 @@ const HEADER_ALIASES: Record<ImportField, readonly string[]> = {
   name: [
     "name", "customer", "customername", "client", "clientname", "debtor", "debtorname",
     "accountname", "contact", "contactname", "fullname", "party", "partyname", "person", "merchant", "user",
-    "الاسم", "اسم", "اسم العميل", "العميل", "اسم المدين", "المدين", "اسم المشترك",
+    "الاسم", "اسم", "اسم العميل", "العميل", "اسم المدين", "الطرف المدين", "اسم المشترك",
     "المشترك", "اسم المشتري", "المشتري", "اسم الزبون", "الزبون", "الطرف", "طرف التعامل",
-    "جهة التعامل", "اسم جهة التعامل", "اسم الحساب", "الحساب", "صاحب الحساب", "التاجر", "اسم التاجر", "الاسم بالكامل",
-    "الاسم الكامل", "الاسم رباعي", "اسم الشخص", "اسم الطرف", "الطرف المدين", "بيان العميل", "بيان الحساب",
+    "جهة التعامل", "اسم جهة التعامل", "اسم الحساب", "صاحب الحساب", "التاجر", "اسم التاجر", "الاسم بالكامل",
+    "الاسم الكامل", "الاسم رباعي", "اسم الشخص", "اسم الطرف",
     "الشركة", "اسم الشركة", "المؤسسة", "طرف ثان", "الطرف الثاني", "المستفيد", "اسم المستفيد", "بيانات العميل",
   ],
   phone: [
@@ -37,19 +37,20 @@ const HEADER_ALIASES: Record<ImportField, readonly string[]> = {
     "رقم التواصل", "التواصل", "تواصل", "الاتصال", "رقم الاتصال", "المحمول", "رقم المحمول",
     "تليفون", "موبايل", "هاتف", "تلفون", "موبايلات", "هواتف", "تليفونات",
     "ارقام الهواتف", "ارقام الموبايل", "تليفون العميل", "موبايل العميل", "هاتف العميل", "رقم هاتف العميل",
-    "رقم تليفون العميل", "جهة الاتصال", "رقم العميل",
+    "رقم تليفون العميل", "رقم محمول العميل", "جهة الاتصال", "وسيلة التواصل", "وسيلة الاتصال",
   ],
   amount: [
-    "amount", "amountdue", "total", "totaldue", "balance", "balanceoutstanding",
-    "due", "owed", "price", "value", "debit", "net", "remaining", "outstanding", "money",
+    "amount", "amountdue", "total", "totaldue", "balance", "balanceoutstanding", "balancedue",
+    "due", "owed", "price", "value", "debit", "net", "remaining", "outstanding", "money", "sum",
     "المبلغ", "المبلغ المستحق", "المستحق", "المديونية", "الرصيد", "القيمة",
     "اجمالي", "الاجمالي", "إجمالي", "الإجمالي", "إجمالي المبلغ", "اجمالي المبلغ", "اجمالي المطلوب",
     "صافي", "الصافي", "صافي المبلغ", "صافي القيمة", "المتبقي", "المبلغ المتبقي", "رصيد المدين",
     "رصيد العميل", "المطلوب", "المبلغ المطلوب", "الدين", "قيمة الفاتورة", "مبلغ الفاتورة",
-    "مستحق", "اصل الدين", "الرصيد الحالي", "الحساب المستحق", "المبلغ الاجمالي", "المبلغ المطلوب سداده",
-    "المطلوب سداده", "المستحق دفعه", "الباقي", "المتبقي عليه", "له / عليه", "عليه", "مدين",
+    "مستحق", "اصل الدين", "أصل الدين", "الرصيد الحالي", "الحساب المستحق", "المبلغ الاجمالي", "المبلغ المطلوب سداده",
+    "المطلوب سداده", "المستحق دفعه", "الباقي", "المتبقي عليه", "له / عليه", "عليه", "مدين", "المدين", "المبلغ المدين",
     "رصيد ختامي", "رصيد سابق", "رصيد حالي", "حساب مستحق", "قيمة البضاعة", "اجمالي الفاتورة", "اجمالي الحساب",
-    "مجموع الفاتورة", "المجموع",
+    "مجموع الفاتورة", "المجموع", "الرصيد الدفتري", "رصيد دفتري", "الحساب", "رصيد الحساب", "صافي الرصيد",
+    "إجمالي الرصيد", "اجمالي الرصيد", "مستحقات", "المستحقات",
   ],
   dueDate: [
     "duedate", "due", "deadline", "paymentdate", "paydate", "expiry", "expdate", "maturitydate",
@@ -59,7 +60,7 @@ const HEADER_ALIASES: Record<ImportField, readonly string[]> = {
   ],
   issuedDate: [
     "issueddate", "issued", "date", "invoicedate", "billdate", "createddate", "transdate",
-    "التاريخ", "تاريخ الإصدار", "تاريخ الفاتورة", "تاريخ الاصدار", "تاريخ التحرير",
+    "التاريخ", "تاريخ", "تاريخ الإصدار", "تاريخ الفاتورة", "تاريخ الاصدار", "تاريخ التحرير",
     "تاريخ المعاملة", "تاريخ الحركة", "تاريخ القيد", "تاريخ الفاتوره", "تاريخ المستند",
     "تاريخ العملية", "تاريخ البيع", "تاريخ الشراء", "تاريخ الارسال", "تاريخ الاذن", "تاريخ اليوم",
   ],
@@ -67,14 +68,15 @@ const HEADER_ALIASES: Record<ImportField, readonly string[]> = {
     "reference", "ref", "refno", "referenceno", "invoiceno", "invoicenumber",
     "invoice", "billno", "billnumber", "no", "number", "id", "code", "invoiceid",
     "المرجع", "رقم الفاتورة", "رقم الفاتوره", "رقم", "كود الفاتورة", "كود الفاتوره",
-    "رقم السند", "رقم الاشعار", "رقم الإشعار", "كود العميل", "رقم الاذن", "رقم العملية",
-    "مسلسل", "الكود", "كود", "رقم الوصل", "رقم المستند", "رقم المعاملة", "رقم القيد",
-    "رقم الإذن", "رقم الحركة", "رقم الطلب", "رقم الايصال", "رقم الإيصال",
+    "رقم السند", "رقم الاشعار", "رقم الإشعار", "كود العميل", "رقم العميل", "معرف العميل",
+    "رقم الاذن", "رقم العملية", "مسلسل", "الكود", "كود", "رقم الوصل", "رقم المستند",
+    "رقم المعاملة", "رقم القيد", "رقم الإذن", "رقم الحركة", "رقم الطلب", "رقم الايصال", "رقم الإيصال",
+    "م", "م.", "ت", "ت.",
   ],
   description: [
     "description", "desc", "details", "item", "items", "service", "particulars",
-    "الوصف", "البيان", "التفاصيل", "شرح", "البند", "الصنف", "الخدمة", "ملاحظة البيان",
-    "تفاصيل الفاتورة", "شرح القيد",
+    "الوصف", "البيان", "بيان", "التفاصيل", "شرح", "البند", "الصنف", "الخدمة", "ملاحظة البيان",
+    "تفاصيل الفاتورة", "شرح القيد", "بيان العميل", "بيان الحساب", "بيان الفاتورة",
   ],
   notes: [
     "notes", "note", "comments", "comment", "remarks", "memo",
@@ -230,9 +232,11 @@ export function detectHeaderRow(grid: Grid, maxScanRows = 25): { rowIndex: numbe
         score = 500 + directCount * 10 + inferredCount * 2;
       }
     } else if (directCoreCount >= 2 && directCount >= 2) {
-      score = 100 + directCount;
+      score = 100 + directCount * 10;
     } else if (directCoreCount >= 1 && (directCoreCount + inferredCount >= 2)) {
-      score = 50 + directCount + inferredCount;
+      score = 50 + directCount * 5 + inferredCount * 2;
+    } else if (directCount >= 2) {
+      score = 30 + directCount * 5 + directCoreCount * 10;
     }
 
     if (score > (best?.score ?? 0)) {
@@ -471,25 +475,53 @@ export function decodeCsvBuffer(bytes: Uint8Array | Buffer): string {
 
 export function detectCsvDelimiter(text: string): string {
   const clean = text.replace(/^\uFEFF/, "");
-  const sample = clean.slice(0, 8192);
-  let commas = 0;
-  let semicolons = 0;
-  let tabs = 0;
-  let inQuotes = false;
-  for (let i = 0; i < sample.length; i++) {
-    const ch = sample[i];
-    if (ch === '"') {
-      if (sample[i + 1] === '"') i++;
-      else inQuotes = !inQuotes;
-    } else if (!inQuotes) {
-      if (ch === ",") commas++;
-      else if (ch === ";") semicolons++;
-      else if (ch === "\t") tabs++;
+  const lines = clean.split(/\r?\n/).filter((l) => l.trim().length > 0).slice(0, 15);
+  if (lines.length === 0) return ",";
+
+  const candidates = [",", ";", "\t", "|"] as const;
+  let bestDelim = ",";
+  let bestScore = -1;
+
+  for (const delim of candidates) {
+    let consistentCols = -1;
+    let isConsistent = true;
+    let headerMatches = 0;
+    let totalFields = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      let colCount = 1;
+      let inQ = false;
+      for (let j = 0; j < line.length; j++) {
+        const c = line[j];
+        if (c === '"') inQ = !inQ;
+        else if (!inQ && c === delim) colCount++;
+      }
+      totalFields += colCount;
+      if (i === 0) {
+        consistentCols = colCount;
+        const cells = line.split(delim).map((c) => c.replace(/^"|"$/g, "").trim());
+        for (const cell of cells) {
+          if (matchField(cell)) headerMatches++;
+        }
+      } else {
+        if (colCount !== consistentCols) isConsistent = false;
+      }
+    }
+
+    if (consistentCols <= 1) continue;
+
+    let score = totalFields;
+    if (isConsistent) score += 500;
+    score += headerMatches * 1000;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestDelim = delim;
     }
   }
-  if (semicolons > commas && semicolons >= tabs) return ";";
-  if (tabs > commas && tabs > semicolons) return "\t";
-  return ",";
+
+  return bestDelim;
 }
 
 /** RFC-4180 CSV parser with auto-detected delimiter (supports comma, semicolon, tab, quoted fields, CRLF). */

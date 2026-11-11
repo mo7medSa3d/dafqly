@@ -49,6 +49,29 @@ describe("header detection and mapping (F2: Arabic + English headers, header on 
 
     const m3 = suggestMapping(["اسم الحساب", "واتساب", "المديونية"]);
     expect(m3).toMatchObject({ name: 0, phone: 1, amount: 2 });
+
+    // "رقم العميل" is customer account/ID (reference), NOT phone
+    const m4 = suggestMapping(["رقم العميل", "اسم العميل", "رقم التليفون", "المبلغ المستحق"]);
+    expect(m4).toMatchObject({ reference: 0, name: 1, phone: 2, amount: 3 });
+
+    // "المدين" is Debit (amount), NOT debtor name
+    const m5 = suggestMapping(["اسم العميل", "رقم المحمول", "المدين"]);
+    expect(m5).toMatchObject({ name: 0, phone: 1, amount: 2 });
+
+    // "الحساب" is amount, while "صاحب الحساب" is name
+    const m6 = suggestMapping(["صاحب الحساب", "الموبايل", "الحساب"]);
+    expect(m6).toMatchObject({ name: 0, phone: 1, amount: 2 });
+  });
+  it("detects header rows with at least 2 recognized fields even if some core fields are manual", () => {
+    const grid: Grid = [
+      ["اسم العميل", "رقم الفاتورة", "البيان"],
+      ["شركة الأهرام", "INV-101", "توريد بضاعة"],
+    ];
+    const found = detectHeaderRow(grid);
+    expect(found?.rowIndex).toBe(0);
+    expect(found?.mapping.name).toBe(0);
+    expect(found?.mapping.reference).toBe(1);
+    expect(found?.mapping.description).toBe(2);
   });
   it("falls back to data inspection when amount column header is non-standard", () => {
     const grid: Grid = [
@@ -155,6 +178,15 @@ describe("workbook reading (F2 edge: merged cells)", () => {
     const detected = detectHeaderRow(grid);
     expect(detected?.rowIndex).toBe(0);
     expect(detected?.mapping).toMatchObject({ name: 0, phone: 1, amount: 2, dueDate: 3 });
+  });
+  it("auto-detects semicolon delimiter even when numbers contain unquoted commas", () => {
+    const csv = "الاسم;الموبايل;المبلغ\nأحمد;01001234567;1,500\nمحمود;01123456789;2,750\nسارة;01234567890;3,900\n";
+    const grid = parseCsvText(csv);
+    expect(grid[0]).toEqual(["الاسم", "الموبايل", "المبلغ"]);
+    expect(grid[1]).toEqual(["أحمد", "01001234567", "1,500"]);
+    const detected = detectHeaderRow(grid);
+    expect(detected?.rowIndex).toBe(0);
+    expect(detected?.mapping).toMatchObject({ name: 0, phone: 1, amount: 2 });
   });
   it("auto-detects tab delimiter (TSV)", () => {
     const tsv = "Name\tPhone\tAmount\nSara\t01009876543\t2000\n";

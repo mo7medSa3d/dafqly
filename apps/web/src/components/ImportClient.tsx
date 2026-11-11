@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { formatEgp } from "@tahseel/core";
-import { CheckCircle, FileCsv, FileText, UploadSimple, WarningCircle } from "@phosphor-icons/react";
+import { CheckCircle, DownloadSimple, FileCsv, FileText, UploadSimple, WarningCircle } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
 import { ImportIllustration } from "./illustrations";
 import { Panel, StatusPill, btnGhost, btnPrimary, inputCls } from "./ui";
@@ -11,7 +11,7 @@ const FIELDS = ["name", "phone", "amount", "dueDate", "issuedDate", "reference",
 type Field = (typeof FIELDS)[number];
 
 interface JobRow { rowNumber: number; status: string; errors: { field: string; reason: string }[]; data: { name: string; phoneE164: string; amountMinor: string; dueOn: string | null } | null }
-interface Job { id: string; fileName: string; status: string; stats: Record<string, number> | null; rows: JobRow[]; undoExpiresAt: string | null }
+interface Job { id: string; fileName: string; status: string; stats: Record<string, number> | null; headerLabels?: string[]; rows: JobRow[]; undoExpiresAt: string | null }
 interface JobLite { id: string; fileName: string; status: string; stats: Record<string, number> | null; undoExpiresAt: string | null }
 
 function fileToBase64(file: File): Promise<string> {
@@ -89,6 +89,21 @@ export function ImportClient() {
       await loadJob(jobId);
       await loadJobs();
     } catch { setMsg(t("failed")); } finally { setBusy(false); }
+  }
+
+  function downloadSampleCsv() {
+    const csvContent = isAr
+      ? "\uFEFFاسم العميل,رقم الهاتف,المبلغ المستحق,تاريخ الاستحقاق,رقم الفاتورة,ملاحظات\nأحمد محمد,01001234567,1500,2026-12-01,INV-1001,فاتورة بضاعة\nشركة الأمل,01122334455,4200.50,2026-12-15,INV-1002,توريد خامات\n"
+      : "Customer Name,Phone Number,Amount,Due Date,Invoice No,Notes\nAhmed Mohamed,01001234567,1500,2026-12-01,INV-1001,Goods delivery\nAl Amal Co,01122334455,4200.50,2026-12-15,INV-1002,Materials\n";
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", isAr ? "نموذج_استيراد_دافقلي.csv" : "dafqly_import_template.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 
   async function onUndo(id: string) {
@@ -172,6 +187,17 @@ export function ImportClient() {
                 <span>{isAr ? "تاريخ الاستحقاق (اختياري)" : "Due Date (Optional)"}</span>
               </li>
             </ul>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={downloadSampleCsv}
+                data-testid="import-sample-download"
+                className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95"
+              >
+                <DownloadSimple size={15} weight="bold" className="text-primary" />
+                <span>{isAr ? "تحميل نموذج تجريبي جاهز (CSV)" : "Download Sample Template (CSV)"}</span>
+              </button>
+            </div>
           </div>
           <div className="mt-4 rounded-xl bg-surface-muted/60 p-3 text-[11px] text-text-muted">
             {isAr
@@ -214,13 +240,26 @@ export function ImportClient() {
             )}
             <fieldset className="flex flex-col gap-3">
               <legend className="mb-1 font-bold">{t("mapping")}</legend>
+              {((mapping.name === undefined || mapping.name < 0) ||
+                (mapping.phone === undefined || mapping.phone < 0) ||
+                (mapping.amount === undefined || mapping.amount < 0)) && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs font-bold text-amber-700 dark:text-amber-300">
+                  {isAr
+                    ? "⚠️ تنبيه: يلزم تحديد أعمدة (الاسم، الهاتف، المبلغ) للاستيراد. حددها من القوائم واضغط «مطابقة الأعمدة»."
+                    : "⚠️ Note: Name, Phone, and Amount columns are required. Please assign them and click «Mapping»."}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 {FIELDS.map((f) => (
                   <label key={f} className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t(`fields.${f}`)}</span>
                     <select data-testid={`import-map-${f}`} className={inputCls} value={mapping[f] ?? -1}
                       onChange={(e) => setMapping((m) => ({ ...m, [f]: Number(e.target.value) }))}>
                       <option value={-1}>{t("fields.none")}</option>
-                      {Array.from({ length: columns }, (_, i) => <option key={i} value={i}>{i + 1}</option>)}
+                      {Array.from({ length: columns }, (_, i) => {
+                        const lbl = job.headerLabels?.[i];
+                        const text = lbl ? `${i + 1} - ${lbl}` : `${i + 1}`;
+                        return <option key={i} value={i}>{text}</option>;
+                      })}
                     </select></label>
                 ))}
               </div>

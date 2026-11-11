@@ -67,6 +67,18 @@ async function run() {
 
   await page.screenshot({ path: `${shotsDir}/ar_dashboard_dark_smooth.png`, fullPage: false });
 
+  // Rapid repeated click test (ensures no race conditions or broken theme cookie)
+  console.log("Testing rapid repeated clicks on LocaleToggle...");
+  const localeToggleAr = page.getByTestId("locale-toggle").first();
+  await Promise.allSettled([
+    localeToggleAr.click({ force: true }),
+    localeToggleAr.click({ force: true }),
+    localeToggleAr.click({ force: true }),
+  ]);
+  await page.waitForTimeout(1000);
+  const themeAfterRapid = await page.evaluate(() => document.documentElement.dataset.theme);
+  console.log(`Theme after rapid clicks: ${themeAfterRapid}`);
+
   // 3. Testing Excel/CSV Import
   console.log("3. Testing Excel/CSV Import on /ar/import...");
   await page.goto("http://localhost:3000/ar/import", { waitUntil: "networkidle" });
@@ -113,6 +125,20 @@ async function run() {
   await page.waitForTimeout(2000);
   await page.waitForSelector('[data-testid="import-stats"]', { timeout: 15000 });
   await page.screenshot({ path: `${shotsDir}/ar_import_preview_win1256_success.png`, fullPage: true });
+
+  // 5. Test Semicolon CSV with Eastern Arabic numbers and currency suffix ("١،٥٠٠ ج.م")
+  console.log("5. Testing Semicolon CSV with Eastern Arabic digits & currency suffix...");
+  const tempEasternCsvPath = resolve(process.cwd(), "apps/web/e2e/fixtures/egyptian-eastern-semicolon.csv");
+  const easternCsvContent =
+    "جهة التعامل;رقم التواصل;المبلغ المستحق;تاريخ الاستحقاق\n" +
+    "علي المصري;01511223344;١،٥٠٠ ج.م;2026-12-30\n" +
+    "سارة فهمي;01199887766;٣،٢٥٠.٥٠ جنيه;2026-12-31\n";
+  writeFileSync(tempEasternCsvPath, easternCsvContent, "utf8");
+
+  await fileInput.setInputFiles(tempEasternCsvPath);
+  await page.waitForTimeout(2000);
+  await page.waitForSelector('[data-testid="import-stats"]', { timeout: 15000 });
+  await page.screenshot({ path: `${shotsDir}/ar_import_preview_eastern_semicolon_success.png`, fullPage: true });
 
   console.log("All E2E scenarios completed successfully!");
   await browser.close();

@@ -100,10 +100,10 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
       {/* 4-Card Executive KPI Summary (Equal height, unified rhythm, zero clutter) */}
       <section aria-label="kpis" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {/* Card 1: Total Outstanding */}
-        <div className="flex flex-col justify-between rounded-2xl border border-border bg-surface p-5 transition-shadow hover:shadow-sm">
+        <div className="flex flex-col justify-between rounded-3xl bg-surface p-6 shadow-sm transition-all hover:shadow-md">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-text-muted">{t("totalOutstanding")}</span>
-            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">
+            <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-bold text-primary">
               {isAr ? "المستحق الكلي" : "Total Due"}
             </span>
           </div>
@@ -121,10 +121,10 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
         </div>
 
         {/* Card 2: Overdue */}
-        <div className="flex flex-col justify-between rounded-2xl border border-border bg-surface p-5 transition-shadow hover:shadow-sm">
+        <div className="flex flex-col justify-between rounded-3xl bg-surface p-6 shadow-sm transition-all hover:shadow-md">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-text-muted">{stats[0]!.label}</span>
-            <span className="rounded-full bg-danger-bg px-2 py-0.5 text-[11px] font-bold text-danger">
+            <span className="rounded-full bg-danger-bg px-2.5 py-0.5 text-[11px] font-bold text-danger">
               {isAr ? "متأخر" : "Overdue"}
             </span>
           </div>
@@ -138,10 +138,10 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
         </div>
 
         {/* Card 3: Collected This Month */}
-        <div className="flex flex-col justify-between rounded-2xl border border-border bg-surface p-5 transition-shadow hover:shadow-sm">
+        <div className="flex flex-col justify-between rounded-3xl bg-surface p-6 shadow-sm transition-all hover:shadow-md">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-text-muted">{stats[1]!.label}</span>
-            <span className="rounded-full bg-status-paid-bg px-2 py-0.5 text-[11px] font-bold text-status-paid-fg">
+            <span className="rounded-full bg-status-paid-bg px-2.5 py-0.5 text-[11px] font-bold text-status-paid-fg">
               {isAr ? "تم التحصيل" : "Received"}
             </span>
           </div>
@@ -155,10 +155,10 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
         </div>
 
         {/* Card 4: Collection Rate & DSO */}
-        <div className="flex flex-col justify-between rounded-2xl border border-border bg-surface p-5 transition-shadow hover:shadow-sm">
+        <div className="flex flex-col justify-between rounded-3xl bg-surface p-6 shadow-sm transition-all hover:shadow-md">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-text-muted">{stats[2]!.label}</span>
-            <span className="rounded-full bg-teal-500/10 px-2 py-0.5 text-[11px] font-bold text-teal-600 dark:text-teal-300">
+            <span className="rounded-full bg-teal-500/10 px-2.5 py-0.5 text-[11px] font-bold text-teal-600 dark:text-teal-300">
               {isAr ? "كفاءة" : "Efficiency"}
             </span>
           </div>
@@ -294,7 +294,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             </Panel>
 
             {/* Current Plan & Subscription (Required for m5 test and executive monitoring) */}
-            <BillingClient locale={locale} />
+            <BillingClient locale={locale} compact />
           </div>
         </div>
       </section>

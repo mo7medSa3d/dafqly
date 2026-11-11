@@ -12,6 +12,11 @@ describe("parseEgp", () => {
   it("accepts Eastern Arabic digits and the Arabic decimal separator", () => {
     expect(parseEgp("١٢٥٠٫٥٠")).toBe(125050n);
     expect(parseEgp("١٬٢٥٠")).toBe(125000n);
+    expect(parseEgp("١،٥٠٠")).toBe(150000n);
+    expect(parseEgp("١٢٥٠،٥٠")).toBe(125050n);
+    expect(parseEgp("1.250,50")).toBe(125050n);
+    expect(parseEgp("1250,50")).toBe(125050n);
+    expect(parseEgp("١َ٥ُ٠٠")).toBe(150000n);
   });
   it("rejects more than 2 decimal places, junk and empty input", () => {
     expect(() => parseEgp("1.234")).toThrow(MoneyParseError);

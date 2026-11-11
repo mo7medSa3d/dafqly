@@ -10,8 +10,20 @@ export class MoneyParseError extends Error {
 
 export function parseEgp(input: string): bigint {
   if (typeof input !== "string") throw new MoneyParseError(String(input), "not a string");
-  const normalized = normalizeDigits(input).trim().replace(/,/g, "").replace(/\s+/g, "");
+  let normalized = normalizeDigits(input)
+    .trim()
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
+    .replace(/\s+/g, "");
   if (normalized === "") throw new MoneyParseError(input, "empty");
+
+  if (/^\d{1,3}(\.\d{3})*,\d{1,2}$/.test(normalized)) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (/^\d+,\d{1,2}$/.test(normalized)) {
+    normalized = normalized.replace(",", ".");
+  } else {
+    normalized = normalized.replace(/,/g, "");
+  }
+
   if (!/^\d+(\.\d{1,2})?$/.test(normalized)) {
     if (/^\d+\.\d{3,}$/.test(normalized)) throw new MoneyParseError(input, "more than 2 decimal places");
     throw new MoneyParseError(input, "expected digits with at most 2 decimal places");

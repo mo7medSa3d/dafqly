@@ -76,10 +76,10 @@
   html, body {
     overflow-x: clip;
     max-width: 100%;
-  }
-  body {
     background: var(--bg);
     color: var(--text);
+  }
+  body {
     font-family: var(--font-brand);
     line-height: var(--lh-body);
     letter-spacing: 0;

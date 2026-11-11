@@ -81,14 +81,14 @@ export function AppShell({
 
       {/* Sidebar / Mobile Drawer Navigation */}
       <aside
-        className={`fixed inset-y-0 start-0 z-50 flex flex-col border-e border-border bg-surface shadow-2xl transition-transform duration-300 ease-in-out lg:z-40 lg:shadow-none lg:transition-[width] ${
+        className={`fixed inset-y-0 start-0 z-50 flex flex-col bg-surface/90 dark:bg-surface/80 backdrop-blur-2xl shadow-[4px_0_30px_-4px_rgba(20,36,58,0.06)] dark:shadow-[4px_0_35px_-4px_rgba(0,0,0,0.4)] transition-transform duration-300 ease-in-out lg:z-40 lg:transition-[width] ${
           collapsed ? "w-[280px] lg:w-[80px]" : "w-[280px] lg:w-[272px]"
         } ${
           mobileOpen ? "translate-x-0" : "max-lg:-translate-x-full rtl:max-lg:translate-x-full lg:translate-x-0"
         }`}
       >
         {/* Drawer / Sidebar Top Header */}
-        <div className="flex h-16 shrink-0 items-center justify-between border-b border-border/60 px-4">
+        <div className="flex h-16 shrink-0 items-center justify-between px-4">
           <div className="flex items-center gap-3 overflow-hidden">
             {!collapsed ? (
               <BrandLockup size="md" showTagline locale={locale} />
@@ -97,7 +97,7 @@ export function AppShell({
                 type="button"
                 onClick={() => setCollapsed(false)}
                 title={isEn ? "Expand sidebar" : "توسيع القائمة"}
-                className="flex size-10 shrink-0 items-center justify-center rounded-2xl border border-[var(--brand-tile-border)] bg-[var(--brand-tile-bg)] transition-transform hover:scale-105"
+                className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--brand-tile-bg)] shadow-xs transition-transform hover:scale-105"
               >
                 <BrandMark variant="white" size={24} />
               </button>
@@ -110,7 +110,7 @@ export function AppShell({
               type="button"
               onClick={() => setCollapsed(true)}
               title={isEn ? "Collapse sidebar" : "طي القائمة"}
-              className="hidden lg:flex size-8 shrink-0 items-center justify-center rounded-full border border-border text-text-muted transition-colors hover:border-primary hover:bg-callout hover:text-primary"
+              className="hidden lg:flex size-8 shrink-0 items-center justify-center rounded-xl bg-surface-muted/60 text-text-muted transition-all hover:bg-callout hover:text-primary active:scale-95"
             >
               <CaretDoubleRight size={15} weight="bold" aria-hidden className="ltr:rotate-180" />
             </button>
@@ -122,7 +122,7 @@ export function AppShell({
             data-testid="mobile-menu-close"
             onClick={() => setMobileOpen(false)}
             aria-label={isEn ? "Close menu" : "إغلاق القائمة"}
-            className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-border text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 lg:hidden"
+            className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-surface-muted/60 text-text-muted transition-all hover:bg-danger-bg hover:text-danger active:scale-95 lg:hidden"
           >
             <X size={18} weight="bold" />
           </button>
@@ -144,8 +144,8 @@ export function AppShell({
                   collapsed ? "lg:justify-center lg:px-0" : ""
                 } ${
                   active
-                    ? "bg-primary text-primary-fg shadow-sm shadow-primary/25"
-                    : "text-text-muted hover:bg-callout hover:text-text hover:translate-x-[-2px] rtl:hover:translate-x-[2px]"
+                    ? "bg-primary text-primary-fg shadow-sm shadow-primary/30"
+                    : "text-text-muted hover:bg-callout/70 hover:text-text hover:translate-x-[-2px] rtl:hover:translate-x-[2px]"
                 }`}
               >
                 {/* 2026 Modern Squircle Icon Badge */}
@@ -171,8 +171,8 @@ export function AppShell({
         </nav>
 
         {/* Sidebar Footer with Tenant Profile & Logout */}
-        <div className="mt-auto flex shrink-0 flex-col gap-3 border-t border-border p-3.5 lg:p-4">
-          <div className="flex items-center gap-3">
+        <div className="mt-auto flex shrink-0 flex-col gap-3 p-3.5 lg:p-4">
+          <div className="flex items-center gap-3 rounded-2xl bg-surface-muted/50 p-2.5 transition-colors">
             <InitialAvatar name={businessName} size={36} />
             <div className={`min-w-0 flex-1 ${collapsed ? "lg:hidden" : "block"}`}>
               <p className="truncate text-sm font-bold leading-tight">{businessName}</p>
@@ -195,7 +195,7 @@ export function AppShell({
         collapsed ? "lg:ps-[80px]" : "lg:ps-[272px]"
       }`}>
         {/* Top Header Bar */}
-        <header className="sticky top-0 z-30 border-b border-border bg-surface/95 backdrop-blur">
+        <header className="sticky top-0 z-30 bg-surface/80 dark:bg-surface/70 backdrop-blur-xl shadow-xs shadow-navy-950/[0.03] dark:shadow-black/20">
           <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
             <div className="flex min-w-0 items-center gap-3">
               {/* Mobile Hamburger Button */}
@@ -204,7 +204,7 @@ export function AppShell({
                 data-testid="mobile-menu-toggle"
                 onClick={() => setMobileOpen((v) => !v)}
                 aria-label={isEn ? "Open navigation menu" : "فتح القائمة الرئيسية"}
-                className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-text shadow-xs transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95 lg:hidden"
+                className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-surface-muted/60 text-text shadow-2xs transition-all hover:bg-callout hover:text-primary active:scale-95 lg:hidden"
               >
                 <List size={22} weight="bold" />
               </button>
@@ -215,7 +215,7 @@ export function AppShell({
                 className="flex items-center gap-2 lg:hidden"
                 title={isEn ? "Dashboard" : "الرئيسية"}
               >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[var(--brand-tile-border)] bg-[var(--brand-tile-bg)] shadow-xs">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-[var(--brand-tile-bg)] shadow-xs">
                   <BrandMark variant="white" size={18} />
                 </span>
                 <span className="text-base font-extrabold text-text">{isEn ? "Dafqly" : "دافقلي"}</span>
@@ -227,7 +227,7 @@ export function AppShell({
                   <activeItem.Icon size={16} weight="fill" aria-hidden />
                 </span>
                 <span className="truncate text-base font-bold text-text">{t(activeItem.key)}</span>
-                <span className="truncate rounded-full border border-border bg-surface-muted px-2.5 py-0.5 text-xs font-medium text-text-muted">
+                <span className="truncate rounded-full bg-surface-muted/70 px-2.5 py-0.5 text-xs font-semibold text-text-muted">
                   {businessName}
                 </span>
               </div>
@@ -238,18 +238,18 @@ export function AppShell({
               <button
                 type="button"
                 onClick={() => setSearchOpen(true)}
-                className="flex items-center gap-1.5 sm:gap-2 rounded-full border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text-muted transition-colors hover:border-primary hover:text-text sm:px-3.5"
+                className="flex items-center gap-1.5 sm:gap-2 rounded-full bg-surface-muted/60 hover:bg-surface-muted px-3 py-1.5 text-xs font-medium text-text-muted transition-all hover:text-text sm:px-3.5 shadow-2xs hover:shadow-xs"
                 title={isEn ? "Quick search (Ctrl+K)" : "بحث سريع (Ctrl+K)"}
               >
                 <MagnifyingGlass size={15} weight="bold" className="text-primary" />
                 <span className="hidden sm:inline">{isEn ? "Quick search..." : "بحث سريع..."}</span>
-                <kbd className="hidden rounded bg-surface-muted px-1.5 py-0.5 text-[10px] font-semibold text-text-subtle md:inline-block">
+                <kbd className="hidden rounded bg-surface/80 px-1.5 py-0.5 text-[10px] font-semibold text-text-subtle md:inline-block">
                   Ctrl K
                 </kbd>
               </button>
 
-              <span className="hidden items-center gap-1.5 rounded-full border border-[var(--icon-box-border)] bg-[var(--icon-box-bg)] px-3 py-1 text-xs font-bold text-[var(--icon-box-fg)] md:inline-flex">
-                <ShieldCheck size={15} weight="fill" aria-hidden />
+              <span className="hidden items-center gap-1.5 rounded-full bg-surface-muted/60 px-3 py-1 text-xs font-bold text-text-muted md:inline-flex shadow-2xs">
+                <ShieldCheck size={15} weight="fill" aria-hidden className="text-primary" />
                 <span>{isEn ? "Encrypted & Secure" : "اتصال آمن ومشفّر"}</span>
               </span>
               <ThemeToggle />

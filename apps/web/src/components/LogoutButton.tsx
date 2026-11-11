@@ -1,5 +1,4 @@
 "use client";
-import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { SignOut } from "@phosphor-icons/react";
 import { signOut } from "@/lib/auth-client";
@@ -13,7 +12,6 @@ export function LogoutButton({
 }) {
   const t = useTranslations("auth");
   const locale = useLocale();
-  const router = useRouter();
   return (
     <button
       type="button"
@@ -22,15 +20,18 @@ export function LogoutButton({
       data-testid="logout-btn"
       className={
         compact
-          ? "inline-flex size-9 items-center justify-center rounded-full border border-border-strong/60 bg-surface text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary"
-          : `inline-flex min-h-[36px] items-center justify-center gap-2 rounded-full border border-border-strong/60 bg-surface px-4 text-xs font-bold text-text transition-colors hover:border-primary hover:bg-callout ${
+          ? "inline-flex size-9 items-center justify-center rounded-xl bg-surface-muted/60 text-text-muted transition-all hover:bg-danger-bg hover:text-danger active:scale-95"
+          : `inline-flex min-h-[38px] items-center justify-center gap-2 rounded-xl bg-surface-muted/60 px-4 text-xs font-bold text-text-muted transition-all hover:bg-danger-bg hover:text-danger active:scale-95 ${
               wide ? "w-full min-h-[44px] text-sm" : ""
             }`
       }
       onClick={async () => {
-        await signOut();
-        router.push(`/${locale}/login`);
-        router.refresh();
+        try {
+          await signOut();
+        } catch {
+          /* ignore error to guarantee navigation */
+        }
+        window.location.assign(`/${locale}`);
       }}
     >
       <SignOut size={17} weight="fill" aria-hidden />

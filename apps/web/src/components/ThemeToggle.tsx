@@ -77,7 +77,7 @@ export function ThemeToggle({
       title={label}
       aria-label={label}
       data-testid="theme-toggle"
-      className={`inline-flex ${sizeCls} shrink-0 items-center justify-center rounded-full border border-border-strong/60 bg-surface text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary ${className}`}
+      className={`inline-flex ${sizeCls} shrink-0 items-center justify-center rounded-xl bg-surface-muted/60 text-text-muted transition-all hover:bg-callout hover:text-primary active:scale-95 shadow-2xs hover:shadow-xs ${className}`}
     >
       {mounted && theme === "dark" ? (
         <Sun size={iconSize} weight="fill" aria-hidden />

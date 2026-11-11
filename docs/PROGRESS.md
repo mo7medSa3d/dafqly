@@ -7,6 +7,57 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### Review Hardening & Quality Verification (2026-11-11) — **COMPLETE**
+- **Critical Fixes & Edge Case Hardening**:
+  - `packages/brand/tokens/tokens.css`: Fixed PostCSS syntax error (missing closing `}` in `@media (prefers-color-scheme: dark)`), restoring clean Next.js production builds.
+  - `apps/web/src/server/ai-workspace.ts`: Fixed TS2345 type error in `ai.integration.test.ts` where `z.infer` was incorrectly used for input parameters instead of `z.input`, which bypassed schema defaults (`mime`, `currency`, `channel`). Added explicit runtime parsing via `analyzeReceiptInput.parse`, `mapHeadersInput.parse`, and `generateNotificationInput.parse` ensuring schema defaults and Zod validation are enforced.
+  - `packages/core/src/digits.ts` & `packages/core/src/money.ts`: Fixed unhandled Arabic comma `،` (U+060C) and European/Arabic decimal comma formatting (`1250,50` and `1.250,50`). Enabled parsing of Eastern Arabic numerals with currency suffix (`"١،٥٠٠ ج.م"`) without false `unparseable amount` errors. Confined Tashkeel/Tatweel stripping to `parseEgp` to avoid breaking Arabic prose in `fakeClassifyReply` and `resolveRelativeDate`.
+  - `apps/web/src/components/LogoutButton.tsx`: Removed unused `useRouter` import and hook call that was failing ESLint.
+  - `apps/web/e2e/verify-full-system.mts`: Added edge-case test coverage for rapid repeated clicks on `LocaleToggle` (preventing race conditions) and semicolon CSV containing Eastern Arabic numbers with currency suffixes (`"١،٥٠٠ ج.م"`), verified via headless Chromium with full-page screenshots.
+- **Verification Evidence**:
+  - `pnpm lint`: Passed cleanly (0 errors across ESLint, brand token check, and secrets scan).
+  - `pnpm typecheck`: Passed cleanly across all 9 packages with 0 errors.
+  - `pnpm test`: Passed cleanly across all workspace packages (357/357 tests).
+  - `pnpm eval`: All synthetic targets met (100% intent, 100% date accuracy, 100% opt-out recall).
+  - `pnpm --filter @tahseel/web build`: Production build succeeded (37/37 static routes generated).
+
+### Borderless Luxury Shell, Persistent 30-Day Session, Unified AI Workspace Engine & 3-Tier Billing Redesign (2026-11-11) — **COMPLETE**
+- **Borderless Floating Luxury Shell & Navbar/Sidebar Polish (`AppShell.tsx`, `ThemeToggle.tsx`, `LocaleToggle.tsx`)**:
+  - Removed all boxy, harsh dividing border lines (`border-e`, `border-b`, `border-t`, `border-border`) from `AppShell.tsx`, sidebar, sidebar header, sidebar footer, and top navbar.
+  - Upgraded to modern 2026 luxury glassmorphic elevation (`backdrop-blur-2xl`, ultra-subtle tinted micro-shadows `shadow-[4px_0_30px_-4px_rgba(20,36,58,0.06)] dark:shadow-[4px_0_35px_-4px_rgba(0,0,0,0.4)]`, floating borderless controls).
+  - Modernized `ThemeToggle` and `LocaleToggle` into borderless floating pills with micro-elevation, eliminating harsh circle borders and hover URL tooltips.
+  - Polished squircle active nav states, mobile drawer toggle, search pill, and footer tenant card.
+- **Persistent 30-Day Session & Fast Cookie Cache (`apps/web/src/server/auth.ts`)**:
+  - Updated Better-Auth configuration with 30-day session lifetime (`expiresIn: 60 * 60 * 24 * 30`, `updateAge: 60 * 60 * 24`).
+  - Enabled fast cookie cache (`cookieCache: { enabled: true, maxAge: 5 * 60 }`) and secure attributes (`defaultCookieAttributes: { sameSite: "lax", secure: process.env.NODE_ENV === "production", httpOnly: true }`), preventing random logouts while maintaining rock-solid security.
+- **Unified AI Workspace Engine & Anti-Prompt Injection Guardrails (`packages/core/src/ai.ts`, `apps/web/src/server/ai-workspace.ts`)**:
+  - Implemented `packages/core/src/ai.ts`:
+    - `sanitizePromptData`: Rigorous anti-prompt-injection sanitizer stripping prompt breaks, delimiters, and command tokens from untrusted customer text.
+    - `smartHeaderMapper`: Confidence-scored Arabic/Egyptian accounting ledger header mapper.
+    - `parseReceiptScreenshotAnalysis`: Robust receipt verification with anti-fraud duplicate hash/reference checking, tamper signal detection, future date detection, and auto-confirm policy gating.
+    - `generateSmartNotification`: Tone-adapted, context-aware payment reminders in Arabic and English.
+  - Implemented `apps/web/src/server/ai-workspace.ts` with full audit logging in the `auditLog` database table.
+  - Defined `AI_WORKSPACE_TOOLS` schema for LLM function calling (`parse_receipt_screenshot`, `smart_header_mapper`, `generate_smart_notification`).
+  - Mounted `aiWorkspace` router in `apps/web/src/server/routers.ts` with tenant isolation and Zod validation.
+  - Comprehensive unit and integration test coverage: 25 unit tests (`packages/core/src/ai.test.ts`) and 11 integration tests (`apps/web/src/server/ai.integration.test.ts`), all passing.
+- **3-Tier Luxury Billing & Subscription Redesign (`/billing` & `BillingClient.tsx`)**:
+  - Completely redesigned `BillingClient.tsx` into a modern 3-tier card layout ("البداية التجريبية / Starter Trial", "النمو الذكي / Growth Pro [الأكثر طلباً]", "المؤسسات الكبرى / Enterprise").
+  - Added monthly/annual switch with 20% discount badge.
+  - Added feature checklists with checkmark icons.
+  - Preserved `compact` mode for `/dashboard` sidebar rail without progress bars, retaining `data-testid="upgrade-starter"` and `data-testid="upgrade-${p.key}"`.
+  - Expanded container in `apps/web/app/[locale]/billing/page.tsx` from `max-w-4xl` to `max-w-6xl` to cleanly house the 3 cards.
+- **Distracting Progress / Aging Bars Removed from Overview (`/dashboard`)**:
+  - Cleaned up `AgingBar` in `apps/web/src/components/charts.tsx`, removing the distracting colored progress bar strip and replacing it with clean status pill cards with percentages and amounts.
+  - Upgraded 4 KPI cards on `/dashboard` to borderless `rounded-3xl bg-surface p-6 shadow-sm hover:shadow-md`.
+- **Immediate Landing Page Redirect on Logout (`LogoutButton.tsx`)**:
+  - Updated `LogoutButton.tsx` so user is redirected directly to the landing page `/${locale}` instead of `/login`.
+- **Comprehensive Quality Verification**:
+  - `pnpm lint`: 0 errors (brand tokens and secrets checks passed).
+  - `pnpm typecheck`: 0 errors across all 9 packages.
+  - `pnpm test`: 355/355 unit & integration tests passed.
+  - Playwright E2E: `verify-full-system.mts` and `verify-ui-ux.mts` passed 100%. `m5.spec.ts` (billing/upgrade) and `new-features.spec.ts` passed 100%.
+  - Next.js production build succeeded completely (37/37 static routes generated).
+
 ### World-Class Language Switching & Robust Excel/CSV Import Polish (2026-11-10) — **COMPLETE**
 - **Smooth Language Switching & Direction Transition (`LocaleToggle.tsx` & `AppShell.tsx`)**:
   - Replaced `<a>` tag with interactive `<button type="button">`, removing any browser hover URL preview tooltip in the bottom/top status bar.

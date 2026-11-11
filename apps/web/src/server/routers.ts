@@ -31,6 +31,12 @@ import { exportTenantData, deleteTenantData } from "./tenant-data";
 import { FakePaymentProvider } from "@tahseel/providers";
 import { paymentProviderFromEnv, realGatewayConfigured } from "./gateway";
 import { globalSearch, listAuditTrail } from "./search";
+import {
+  mapWorkspaceHeaders, mapHeadersInput,
+  analyzeWorkspaceReceipt, analyzeReceiptInput,
+  generateWorkspaceNotification, generateNotificationInput,
+  AI_WORKSPACE_TOOLS,
+} from "./ai-workspace";
 
 const pageArgs = (input: { cursor?: string; limit?: number } | undefined) => ({
   cursor: input?.cursor ? decodeCursor(input.cursor) : undefined,
@@ -327,6 +333,22 @@ export const appRouter = router({
     list: tenantProcedure
       .input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional())
       .query(async ({ ctx, input }) => listAuditTrail(ctx.appDb, ctx.tenantId, input?.limit ?? 25)),
+  },
+  aiWorkspace: {
+    tools: tenantProcedure.query(() => AI_WORKSPACE_TOOLS),
+    mapHeaders: tenantProcedure
+      .input(mapHeadersInput)
+      .mutation(async ({ ctx, input }) => mapWorkspaceHeaders(ctx.appDb, ctx.tenantId, ctx.user.id, input)),
+    analyzeReceipt: tenantProcedure
+      .input(analyzeReceiptInput)
+      .mutation(async ({ ctx, input }) => analyzeWorkspaceReceipt(ctx.appDb, ctx.tenantId, ctx.user.id, input)),
+    generateNotification: tenantProcedure
+      .input(generateNotificationInput)
+      .mutation(async ({ ctx, input }) => {
+        const mine = await listTenantsForUser(ctx.ownerDb, ctx.user.id);
+        const businessName = mine.find((m) => m.tenantId === ctx.tenantId)?.businessNameAr ?? "DAFQLY";
+        return generateWorkspaceNotification(ctx.appDb, ctx.tenantId, ctx.user.id, businessName, input);
+      }),
   },
 });
 export type AppRouter = typeof appRouter;

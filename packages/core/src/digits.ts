@@ -9,7 +9,7 @@ export function normalizeDigits(input: string): string {
     const x = EXTENDED.indexOf(ch);
     if (x >= 0) { out += String(x); continue; }
     if (ch === "٫") { out += "."; continue; } // Arabic decimal separator U+066B
-    if (ch === "٬") { out += ","; continue; } // Arabic thousands separator U+066C
+    if (ch === "٬" || ch === "،") { out += ","; continue; } // Arabic thousands separator U+066C & Arabic comma U+060C
     out += ch;
   }
   return out;

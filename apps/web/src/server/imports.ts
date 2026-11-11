@@ -128,6 +128,7 @@ export async function updateImportMapping(app: Db, tenantId: string, actor: stri
 export interface ImportJobView {
   id: string; fileName: string; status: string; mapping: ColumnMapping | null;
   headerRow: number | null; stats: Record<string, number> | null;
+  headerLabels?: string[];
   committedAt: string | null; undoExpiresAt: string | null;
   rows: { rowNumber: number; status: string; errors: { field: string; reason: string }[]; data: StoredRow["data"]; debtorId: string | null; invoiceId: string | null }[];
 }
@@ -137,9 +138,13 @@ export async function getImportJob(app: Db, tenantId: string, jobId: string): Pr
     const [job] = await tx.select().from(importJobs).where(eq(importJobs.id, jobId));
     if (!job) throw new AppError("NOT_FOUND", "Import job not found", 404);
     const rows = await tx.select().from(importRows).where(eq(importRows.jobId, jobId)).orderBy(asc(importRows.rowNumber));
+    const grid = (job.sourceGrid ?? []) as Grid;
+    const headerRowCells = grid[job.headerRow ?? 0] ?? [];
+    const headerLabels = headerRowCells.map((c) => (c === null || c === undefined ? "" : String(c).trim()));
     return {
       id: job.id, fileName: job.fileName, status: job.status,
       mapping: job.mapping as ColumnMapping | null, headerRow: job.headerRow,
+      headerLabels,
       stats: job.stats, committedAt: job.committedAt?.toISOString() ?? null,
       undoExpiresAt: job.undoExpiresAt?.toISOString() ?? null,
       rows: rows.map((r) => {

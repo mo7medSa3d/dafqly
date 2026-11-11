@@ -28,7 +28,22 @@ const authConfig = betterAuth({
       verify: (data: { hash: string; password: string }) => argon2Verify(data.hash, data.password),
     },
   },
-  session: { expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
+  session: {
+    expiresIn: 60 * 60 * 24 * 30, // 30 days persistent session for uninterrupted merchant access
+    updateAge: 60 * 60 * 24, // Refresh token age after 24h of active use
+    cookieCache: {
+      enabled: true,
+      maxAge: 5 * 60, // 5 minutes fast cookie cache to prevent DB session roundtrips
+    },
+  },
+  advanced: {
+    useSecureCookies: process.env.NODE_ENV === "production",
+    defaultCookieAttributes: {
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      httpOnly: true,
+    },
+  },
   // Better Auth ships its own sign-in rate limiter (observed in testing:
   // 429 after 3 attempts/10s, non-uniform body). It is disabled so the
   // app's single limiter (src/server/rate-limit.ts, applied in the auth
