@@ -44,6 +44,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  compress: true,
+  reactStrictMode: true,
   transpilePackages: ["@tahseel/core", "@tahseel/db", "@tahseel/brand"],
   serverExternalPackages: ["argon2", "postgres"],
   experimental: {

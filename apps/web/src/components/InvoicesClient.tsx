@@ -34,6 +34,7 @@ export function InvoicesClient({ businessName = "شركة النيل للتجا�
   const [items, setItems] = useState<Invoice[]>([]);
   const [debtors, setDebtors] = useState<DebtorLite[]>([]);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [status, setStatus] = useState<string>("");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [bucket, setBucket] = useState("");
@@ -53,11 +54,17 @@ export function InvoicesClient({ businessName = "شركة النيل للتجا�
 
   const nextAutoReference = `INV-${issuedOn.slice(0, 4)}-${items.length + 1001}`;
 
+  // Debounce search input to eliminate redundant queries
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 200);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const load = useCallback(async () => {
     try {
       const page = await trpc.invoices.list.query({
         limit: 100,
-        search: search || undefined,
+        search: debouncedSearch || undefined,
         status: (status || undefined) as never,
         overdue: overdueOnly || undefined,
         agingBucket: bucket || undefined,
@@ -66,7 +73,7 @@ export function InvoicesClient({ businessName = "شركة النيل للتجا�
     } catch {
       /* ignore */
     }
-  }, [search, status, overdueOnly, bucket]);
+  }, [debouncedSearch, status, overdueOnly, bucket]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     void trpc.debtors.list.query({ limit: 100 }).then((p) => {

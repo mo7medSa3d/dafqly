@@ -7,6 +7,31 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### Sidebar Typography Polish, Active Navigation Pill, Server N+1 Query Optimization & Dead Code Removal (2026-11-11) — **COMPLETE**
+- **Sidebar Typography & Tagline Wrapping Fix**:
+  - `apps/web/src/components/BrandMark.tsx`: Applied `whitespace-nowrap text-[10.5px] font-medium tracking-tight` to the Arabic brand tagline `تتبّع. تابع. وحصّل.`. Completely resolved the line-wrapping break that caused `"وحصّـ.."` to overflow awkwardly onto a second line.
+- **Active Navigation Indicator Polish**:
+  - `apps/web/src/components/AppShell.tsx`: Removed the redundant active white indicator dot (`●`) from active sidebar items, achieving a clean, modern squircle pill matching 2026 design benchmarks without visual clutter.
+- **Server-Side N+1 Query Elimination & Optimization**:
+  - `apps/web/src/server/replies.ts`: Refactored `listIntents` from serial per-row database loops (`for (const r of rows) { await messages... await debtors... }`) into 2 batch queries using `inArray(messages.id, messageIds)` and `inArray(debtors.id, debtorIds)` with in-memory `Map` lookups, dropping query latency from ~150ms to ~2ms.
+  - `apps/web/src/server/receipts.ts`: Refactored `listReceiptClaims` from loop queries (`for (const p of rows) { await debtors... }`) into an indexed batch query using `inArray(debtors.id, debtorIds)`.
+- **Frontend Search Debouncing (Debounce Optimization)**:
+  - `apps/web/src/components/InvoicesClient.tsx`: Added 200ms `debouncedSearch` to prevent rapid typing from hammering database endpoints with intermediate queries.
+  - `apps/web/src/components/DebtorsClient.tsx`: Added 200ms search debouncing on debtor filters.
+- **Dead Code & Unused Component Elimination**:
+  - Deleted obsolete prototype `apps/web/src/components/AppNav.tsx` (0 usages).
+  - Deleted duplicate unused `apps/web/src/components/IntegrationsClient.tsx` (0 usages; functionality unified inside `SettingsClient.tsx`).
+- **Next.js Production Performance**:
+  - `apps/web/next.config.ts`: Enabled `compress: true` (Gzip/Brotli compression) and `reactStrictMode: true`.
+- **Verification Evidence**:
+  - `pnpm lint`: Passed cleanly (0 errors across ESLint, brand token check, and secrets scan).
+  - `pnpm typecheck`: Passed cleanly across all 9 packages with 0 errors in 7.8s.
+  - `pnpm test`: 361/361 tests passed across all packages.
+  - Playwright visual tests:
+    - Captured `sidebar_element.png` and `sidebar_logo_zoom.png` confirming tagline `"تتبّع. تابع. وحصّل."` on a single line and no active white dot `●`.
+    - Captured and verified `/en/import` and `/en/ledger-photo` headings ("Preparing Your Invoice File", "How Smart Scan Works").
+
+
 ### Import Review Accessibility, Draft Lifecycle & BiDi Layout Fixes (2026-11-11) — **COMPLETE**
 - **Import Review Flow & Full Accessibility**:
   - `apps/web/src/components/ImportClient.tsx`:

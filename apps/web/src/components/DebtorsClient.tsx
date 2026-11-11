@@ -56,9 +56,13 @@ export function DebtorsClient({ businessName = "شركة النيل للتجار
     }
   }, []);
 
+  // Debounce search input to avoid flood of network calls on typing
   useEffect(() => {
-    void load("");
-  }, [load]);
+    const timer = setTimeout(() => {
+      void load(search);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [search, load]);
 
   async function onCreate() {
     setBusy(true);
@@ -337,18 +341,12 @@ export function DebtorsClient({ businessName = "شركة النيل للتجار
                 className={`${inputCls} ps-9.5 text-xs sm:text-sm`}
                 placeholder={isAr ? "ابحث بالاسم أو رقم الهاتف..." : "Search by name or phone..."}
                 value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  void load(e.target.value);
-                }}
+                onChange={(e) => setSearch(e.target.value)}
               />
               {search && (
                 <button
                   type="button"
-                  onClick={() => {
-                    setSearch("");
-                    void load("");
-                  }}
+                  onClick={() => setSearch("")}
                   className="absolute end-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text"
                 >
                   <X size={14} weight="bold" />

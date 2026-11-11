@@ -229,22 +229,34 @@ export async function listIntents(app: Db, tenantId: string, opts: { onlyHuman?:
   return withTenant(app, tenantId, async (tx) => {
     let rows = await tx.select().from(messageIntents).orderBy(desc(messageIntents.createdAt)).limit(100);
     if (opts.onlyHuman) rows = rows.filter((r) => r.resolvedBy === "human");
-    const out = [];
-    for (const r of rows) {
-      const [msg] = await tx.select().from(messages).where(eq(messages.id, r.messageId));
-      const [debtor] = msg?.debtorId
-        ? await tx.select().from(debtors).where(eq(debtors.id, msg.debtorId))
-        : [undefined];
-      out.push({
+    if (rows.length === 0) return [];
+
+    const messageIds = Array.from(new Set(rows.map((r) => r.messageId).filter(Boolean)));
+    const msgList = messageIds.length > 0
+      ? await tx.select().from(messages).where(inArray(messages.id, messageIds))
+      : [];
+    const msgMap = new Map(msgList.map((m) => [m.id, m]));
+
+    const debtorIds = Array.from(new Set(msgList.map((m) => m.debtorId).filter(Boolean))) as string[];
+    const debtorList = debtorIds.length > 0
+      ? await tx.select({ id: debtors.id, displayName: debtors.displayName, phoneE164: debtors.phoneE164 })
+          .from(debtors)
+          .where(inArray(debtors.id, debtorIds))
+      : [];
+    const debtorMap = new Map(debtorList.map((d) => [d.id, d]));
+
+    return rows.map((r) => {
+      const msg = msgMap.get(r.messageId);
+      const debtor = msg?.debtorId ? debtorMap.get(msg.debtorId) : undefined;
+      return {
         id: r.id, messageId: r.messageId, intent: r.intent, confidence: r.confidence,
         resolvedBy: r.resolvedBy, actionTaken: r.actionTaken,
         extracted: r.extracted, createdAt: r.createdAt.toISOString(),
         text: msg?.bodyText ?? null, debtorId: msg?.debtorId ?? null,
         debtorName: debtor?.displayName ?? null,
         debtorPhone: debtor?.phoneE164 ?? null,
-      });
-    }
-    return out;
+      };
+    });
   });
 }
 

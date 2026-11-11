@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import {
   AppError, allocatePayment, decideReceiptOutcome, evaluateReceiptChecks, formatEgp,
@@ -201,16 +201,21 @@ export async function listReceiptClaims(app: Db, tenantId: string) {
     const rows = await tx.select().from(payments)
       .where(and(eq(payments.source, "receipt_ai"), eq(payments.status, "claimed")))
       .orderBy(desc(payments.createdAt));
-    const out = [];
-    for (const p of rows) {
-      const [debtor] = await tx.select().from(debtors).where(eq(debtors.id, p.debtorId));
-      out.push({
-        id: p.id, debtorId: p.debtorId, debtorName: debtor?.displayName ?? "",
-        amountMinor: p.amountMinor.toString(), method: p.method, receivedOn: p.receivedOn,
-        referenceNo: p.referenceNo, evidenceFileId: p.evidenceFileId,
-        createdAt: p.createdAt.toISOString(),
-      });
-    }
-    return out;
+    if (rows.length === 0) return [];
+
+    const debtorIds = Array.from(new Set(rows.map((p) => p.debtorId)));
+    const debtorList = debtorIds.length > 0
+      ? await tx.select({ id: debtors.id, displayName: debtors.displayName })
+          .from(debtors)
+          .where(inArray(debtors.id, debtorIds))
+      : [];
+    const debtorMap = new Map(debtorList.map((d) => [d.id, d.displayName]));
+
+    return rows.map((p) => ({
+      id: p.id, debtorId: p.debtorId, debtorName: debtorMap.get(p.debtorId) ?? "",
+      amountMinor: p.amountMinor.toString(), method: p.method, receivedOn: p.receivedOn,
+      referenceNo: p.referenceNo, evidenceFileId: p.evidenceFileId,
+      createdAt: p.createdAt.toISOString(),
+    }));
   });
 }

@@ -162,11 +162,6 @@ export function AppShell({
                 </span>
 
                 <span className={`truncate ${collapsed ? "lg:hidden" : "inline"}`}>{t(key)}</span>
-
-                {/* Active Indicator Dot */}
-                {active && !collapsed && (
-                  <span className="ms-auto hidden h-2 w-2 rounded-full bg-white lg:inline-block" aria-hidden />
-                )}
               </Link>
             );
           })}

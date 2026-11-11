@@ -91,7 +91,7 @@ export function BrandLockup({
           {isEn ? "Dafqly" : "دفقلي"}
         </span>
         {showTagline && (
-          <span className={`mt-1 text-[11px] font-medium ${onDark ? "text-navy-100" : "text-text-muted"}`}>
+          <span className={`mt-1 whitespace-nowrap text-[10.5px] font-medium tracking-tight ${onDark ? "text-navy-100" : "text-text-muted"}`}>
             {isEn ? "Track. Follow. Get Paid." : "تتبّع. تابع. وحصّل."}
           </span>
         )}
