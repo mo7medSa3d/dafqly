@@ -26,19 +26,20 @@ interface Debtor {
 }
 
 type FilterType = "all" | "has_balance" | "settled" | "opted_out" | "risk";
-type SortType = "balance_desc" | "newest" | "name_asc";
+type SortType = "default" | "balance_desc" | "newest" | "name_asc";
 
 const fmt = (minor: string | undefined) => formatEgp(BigInt(minor || "0"));
 
-export function DebtorsClient({ businessName = "شركة النيل للتجارة" }: { businessName?: string }) {
+export function DebtorsClient({ businessName }: { businessName?: string }) {
   const t = useTranslations("debtors");
   const locale = useLocale();
   const isAr = locale === "ar";
+  const effectiveBusinessName = businessName || (isAr ? "منشأتك" : "Your Business");
 
   const [items, setItems] = useState<Debtor[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterType>("all");
-  const [sort, setSort] = useState<SortType>("balance_desc");
+  const [sort, setSort] = useState<SortType>("default");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
@@ -154,12 +155,12 @@ export function DebtorsClient({ businessName = "شركة النيل للتجار
     const balance = BigInt(d.totalOutstandingMinor || "0");
     if (balance > 0n) {
       return isAr
-        ? `مرحباً ${d.displayName}، تحية طيبة من ${businessName}. نود تذكيركم بوجود مستحقات بقيمة ${fmt(d.totalOutstandingMinor)} ج.م. للتفاصيل أو السداد نسعد بتواصلكم.`
-        : `Hello ${d.displayName}, greeting from ${businessName}. A gentle reminder that your outstanding balance is ${fmt(d.totalOutstandingMinor)} EGP. Thank you!`;
+        ? `مرحباً ${d.displayName}، تحية طيبة من ${effectiveBusinessName}. نود تذكيركم بوجود مستحقات بقيمة ${fmt(d.totalOutstandingMinor)} ج.م. للتفاصيل أو السداد نسعد بتواصلكم.`
+        : `Hello ${d.displayName}, greeting from ${effectiveBusinessName}. A gentle reminder that your outstanding balance is ${fmt(d.totalOutstandingMinor)} EGP. Thank you!`;
     }
     return isAr
-      ? `مرحباً ${d.displayName}، تحية طيبة من ${businessName}. نود شكركم لتعاملكم الراقي، حسابكم لدينا مسدد بالكامل.`
-      : `Hello ${d.displayName}, thank you for your business with ${businessName}. Your account is fully settled!`;
+      ? `مرحباً ${d.displayName}، تحية طيبة من ${effectiveBusinessName}. نود شكركم لتعاملكم الراقي، حسابكم لدينا مسدد بالكامل.`
+      : `Hello ${d.displayName}, thank you for your business with ${effectiveBusinessName}. Your account is fully settled!`;
   }
 
   function openWhatsApp(d: Debtor) {
@@ -362,8 +363,8 @@ export function DebtorsClient({ businessName = "شركة النيل للتجار
                 onChange={(e) => setSort(e.target.value as SortType)}
                 className="rounded-xl border border-border bg-surface px-3 py-2 text-xs font-semibold text-text focus:border-primary focus:outline-hidden"
               >
+                <option value="default">{isAr ? "الترتيب الافتراضي" : "Default"}</option>
                 <option value="balance_desc">{isAr ? "الأعلى مديونية أولاً" : "Highest Balance First"}</option>
-                <option value="newest">{isAr ? "الأحدث إضافة" : "Newest"}</option>
                 <option value="name_asc">{isAr ? "أبجدي بالاسم (A-Z)" : "Alphabetical (A-Z)"}</option>
               </select>
             </div>
@@ -584,13 +585,13 @@ export function DebtorsClient({ businessName = "شركة النيل للتجار
             </div>
             <p className="text-xs leading-relaxed text-text-muted">
               {isAr
-                ? "💡 يمكنك إعادة تفعيل التذكيرات التلقائية لأي عميل قام بالرد أو طلب استئناف الرسائل بنقرة واحدة على زر (تفعيل التذكير) في القائمة."
-                : "💡 You can re-enable automatic WhatsApp reminders anytime with one click on the (Resume) button."}
+                ? "إمكانية إيقاف أو استئناف التذكيرات التلقائية بنقرة واحدة لكل عميل."
+                : "Pause or resume automated WhatsApp reminders with one click per customer."}
             </p>
             <div className="rounded-xl bg-callout p-3 text-xs text-text-muted">
-              🛡️ {isAr
-                ? "تُحترم ساعات الهدوء ليلاً، ولا يُرسل أي تذكير لفاتورة تم سدادها أو التنازع عليها."
-                : "Quiet hours are honored, and reminders are never sent for paid or disputed invoices."}
+              {isAr
+                ? "تُحترم ساعات الهدوء، وتتوقف التذكيرات تلقائياً للفواتير المسددة."
+                : "Quiet hours are honored, and reminders pause automatically for paid invoices."}
             </div>
           </div>
         </aside>

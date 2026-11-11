@@ -297,7 +297,7 @@ export function ImportClient() {
                 <legend className="mb-1 font-bold">{t("mapping")}</legend>
                 {job.status !== "pending_review" && (
                   <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-semibold text-text-muted">
-                    {isAr ? "🔒 العرض للقراءة فقط (تم الاعتماد)" : "🔒 Read-only view (already committed)"}
+                    {isAr ? "للقراءة فقط (معتمد)" : "Read-only (committed)"}
                   </span>
                 )}
               </div>
@@ -306,8 +306,8 @@ export function ImportClient() {
                 (mapping.amount === undefined || mapping.amount < 0)) && (
                 <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs font-bold text-amber-700 dark:text-amber-300">
                   {isAr
-                    ? "⚠️ تنبيه: يلزم تحديد أعمدة (الاسم، الهاتف، المبلغ) للاستيراد. حددها من القوائم واضغط «مطابقة الأعمدة»."
-                    : "⚠️ Note: Name, Phone, and Amount columns are required. Please assign them and click «Mapping»."}
+                    ? "حدّد أعمدة الاسم والهاتف والمبلغ للمتابعة."
+                    : "Name, phone, and amount columns are required to continue."}
                 </div>
               )}
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -447,6 +447,7 @@ export function ImportClient() {
                           )}
                         </div>
                         <div className="flex items-center gap-2 pt-0.5 text-xs text-text-muted">
+                          <span className="sr-only">{j.status}</span>
                           {isPendingReview && (
                             <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-bold text-amber-700 dark:text-amber-400">
                               {t("statusPending")}
