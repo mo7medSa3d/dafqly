@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import path from "node:path";
 import fs from "node:fs/promises";
 
-const FIXES_DIR = "/home/mo7amed_saad/.gemini/antigravity/brain/63a56c42-1795-4033-b6d7-87733e39731b/fixes";
+const FIXES_DIR = path.resolve(process.cwd(), "e2e/screenshots/fixes");
 
 test.describe("New Features: Search, WhatsApp Share, Audit Trail", () => {
   test.beforeAll(async () => {

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, copyFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const localShotsDir = resolve(process.cwd(), "apps/web/e2e/screenshots/fixes");
-const artifactShotsDir = "/home/mo7amed_saad/.gemini/antigravity/brain/63a56c42-1795-4033-b6d7-87733e39731b/fixes";
+const artifactShotsDir = process.env.ARTIFACT_SHOTS_DIR || localShotsDir;
 
 if (!existsSync(localShotsDir)) mkdirSync(localShotsDir, { recursive: true });
 if (!existsSync(artifactShotsDir)) mkdirSync(artifactShotsDir, { recursive: true });
