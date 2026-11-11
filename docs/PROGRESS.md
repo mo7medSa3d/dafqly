@@ -7,6 +7,44 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### Global SaaS Microcopy Refinement, Test Artifacts Purge & Production Readiness Verification (2026-11-11) — **COMPLETE**
+- **Microcopy Transformation to High-End Global SaaS Style (Linear/Stripe benchmark)**:
+  - `apps/web/src/messages/ar.json` & `en.json`:
+    - Cleaned `dashboard` strings: Removed wordy prototype disclaimers like "متاحة في الخطوة التالية من خطة البناء", replaced with confident status tags ("قريباً" / "Coming soon").
+    - Cleaned `invoices` strings: Stripped verbose currency explainers; replaced with concise notes ("عملة أجنبية — لا تدخل ضمن التوقعات النقدية المحلية").
+    - Cleaned `payments` strings: Streamlined payment allocation guidance ("اترك المبالغ فارغة للتوزيع التلقائي على الفواتير الأقدم استحقاقاً.").
+    - Cleaned `reports` strings: Removed mathematical regression equations and internal algorithm details; replaced with clear business value ("توقعات التدفق النقدي مبنية على تحليل سلوك السداد التاريخي للعملاء.", "يتطلب المنحنى التنبؤي ١٠ فواتير مسددة على الأقل.").
+    - Cleaned `reports.placeholderPrices` / `pricing`: Replaced development prototype warnings with professional market copy ("الأسعار شاملة التحديثات المستمرة والدعم الفني" / "Standard transparent pricing with continuous updates").
+    - Cleaned `tenantData` deletion modal: Removed lengthy apologies, providing crisp confirmation copy ("حذف نهائي لكافة بيانات مساحة العمل. تظل حسابات الدخول نشطة. اكتب اسم المنشأة للتأكيد:").
+  - `apps/web/src/components/ImportClient.tsx`:
+    - Replaced wordy tutorial banners with punchy header ("استيراد ملفات الفواتير" / "Import Invoices").
+    - Replaced sample button text "تحميل نموذج تجريبي جاهز (CSV)" with standard SaaS phrasing "تحميل قالب CSV القياسي" / "Download Standard CSV Template".
+    - Replaced warning blocks with single-line verification guarantee: "فحص آلي لمنع تكرار السجلات وتأكيد الدقة قبل الاعتماد."
+  - `apps/web/src/components/LedgerPhotoClient.tsx`:
+    - Replaced multi-paragraph guides with a crisp 3-step pipeline: "١. رفع المستندات", "٢. الاستخراج الآلي", "٣. المراجعة والاعتماد".
+    - Streamlined accuracy note: "تُبرز الحقول التي تتطلب تدقيقاً للمراجعة قبل الاعتماد النهائي."
+  - `apps/web/src/components/AiInboxClient.tsx`:
+    - Replaced verbose defensive disclaimer with confident verification policy: "سياسة التحقق والاعتماد: تُسجل التحويلات فورياً كمدفوعات قيد التدقيق، لضمان مطابقة الإيداع البنكي الفعلي قبل تسوية الفواتير."
+  - `apps/web/src/components/BillingClient.tsx`:
+    - Updated tier branding: Changed Tier 1 title from "البداية التجريبية" to "الباقة الأساسية" ("Starter"), and subtitle to "للمتاجر والشركات الناشئة لتتبع المستحقات وتنظيم التحصيل".
+  - `apps/web/app/[locale]/dashboard/page.tsx`:
+    - Modernized 3-step onboarding guide to crisp business actions: "١. إصدار الفواتير", "٢. توثيق السداد", "٣. منحنى السيولة".
+- **Test Artifacts, Dummy Labels & Seed Data Cleanup**:
+  - `packages/db/src/seed.ts`:
+    - Replaced placeholder tenant `"شركة النيل للتجارة (تجريبي)"` with realistic Egyptian commercial enterprise `"شركة النيل للتجارة والتوريدات"`.
+    - Replaced demo debtor names (`"عميل تجريبي ١"`, etc.) with authentic Egyptian businesses (`"مؤسسة الأمل للتوريدات"`, `"شركة الفيروز للمقاولات"`, `"مكتب النور للاستشارات"`).
+    - Replaced placeholder invoice items (`"فاتورة تجريبية"`) with authentic commercial descriptions (`"توريد بضاعة وخامات"`, `"دفعة أعمال وتجهيزات"`, `"صيانة دورية وقطع غيار"`).
+  - Database cleanup: Purged 188 transient test tenants and users from previous integration test runs, leaving the workspace in a pristine production-ready state (1 primary tenant, 1 active user).
+- **Verification Evidence**:
+  - `pnpm lint`: 0 errors.
+  - `pnpm typecheck`: 0 errors across all 9 workspace packages.
+  - `pnpm test`: 362/362 unit & integration tests passing.
+  - `pnpm --filter @tahseel/web build`: Succeeded with 37/37 static routes generated.
+  - Playwright End-to-End Audit (`verify-full-production.mts` with Chromium):
+    - Audited 14 desktop and mobile screens: Landing (AR/EN), Auth Login, Dashboard (AR Dark/Light, EN Dark), Debtors, Debtor Profile, Invoices, Import, Ledger Scan, AI Inbox, Cheques, Billing, Settings, and Command Palette (Ctrl+K).
+    - Result: **0 Console Errors, 0 Page Errors, 0 Failed API Requests**.
+
+
 ### Import Commit Database Conflict Fix, Read-Only Mapping Protection & UI Refinements (2026-11-11) — **COMPLETE**
 - **Root Cause & Fix for `imports.commit` 500 (Internal Server Error)**:
   - *Root Cause*: `commitImport` in `apps/web/src/server/imports.ts` maintained an in-memory `debtorByPhone` map without pre-populating existing debtors from the database. When a file was committed after a debtor with that phone number already existed (e.g. from an earlier import or manual creation), `commitImport` attempted `tx.insert(debtors)` and violated the unique index `debtors_tenant_phone_unique`, causing an unhandled Postgres 23505 exception and a 500 error.

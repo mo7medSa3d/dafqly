@@ -273,12 +273,12 @@ export function AiInboxClient() {
         <div className="panel-shadow flex flex-col gap-3 rounded-2xl border border-border bg-surface p-5 text-xs text-text-muted">
           <div className="flex items-center gap-2 text-sm font-bold text-text">
             <ShieldCheck size={18} weight="fill" className="text-primary" />
-            <span>{isAr ? "معايير المراجعة البشرية" : "Human Verification Rules"}</span>
+            <span>{isAr ? "سياسة التحقق والاعتماد" : "Verification Policy"}</span>
           </div>
           <p className="leading-relaxed">
             {isAr
-              ? "لحماية أموالك، لا يغلق النظام أي فاتورة تلقائياً بناءً على صورة إيصال فقط. إيصال التحويل يُعتبر ادعاءً بالسداد حتى تؤكده بنفسك أو تفعّل التحصيل الآلي التام."
-              : "To protect your business, receipts are claims until confirmed by you."}
+              ? "تُسجل التحويلات فورياً كمدفوعات قيد التدقيق، لضمان مطابقة الإيداع البنكي الفعلي قبل تسوية الفواتير."
+              : "Payments are logged as pending review to guarantee reconciliation against bank deposits before closing invoices."}
           </p>
         </div>
       </aside>

@@ -189,10 +189,10 @@ export function BillingClient({
   const tiers = [
     {
       key: "trial",
-      titleAr: "البداية التجريبية",
-      titleEn: "Starter Trial",
-      subtitleAr: "للمتاجر الصغيرة والمشاريع الناشئة لتجربة النظام",
-      subtitleEn: "For small merchants and freelancers starting out",
+      titleAr: "الباقة الأساسية",
+      titleEn: "Starter",
+      subtitleAr: "للمتاجر والشركات الناشئة لتتبع المستحقات وتنظيم التحصيل",
+      subtitleEn: "For small merchants and startups organizing receivables",
       planKey: "trial",
       planObj: trialPlan,
       icon: Lightning,

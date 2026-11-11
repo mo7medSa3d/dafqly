@@ -211,22 +211,22 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
                     </p>
                     <p className="mt-1 text-xs text-text-muted">
                       {isAr
-                        ? "تحتاج الخوارزمية الذكية إلى ١٠ فواتير مسددة على الأقل للتنبؤ الدقيق بحركة السيولة."
-                        : "The model requires at least 10 settled invoices to accurately project cash flow."}
+                        ? "تحليل تنبؤي مدعوم بالذكاء الاصطناعي لحركة التدفقات النقدية."
+                        : "AI-powered cash-flow forecasting based on payment trends."}
                     </p>
                   </div>
                   <div className="grid w-full max-w-lg grid-cols-1 gap-2.5 pt-2 text-start text-xs sm:grid-cols-3">
                     <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface-muted/40 p-3">
-                      <span className="font-bold text-primary">١. إضافة الفواتير</span>
-                      <span className="text-text-muted">تسجيل فواتير العملاء الحالية</span>
+                      <span className="font-bold text-primary">{isAr ? "١. إصدار الفواتير" : "1. Issue Invoices"}</span>
+                      <span className="text-text-muted">{isAr ? "تسجيل المستحقات" : "Record receivables"}</span>
                     </div>
                     <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface-muted/40 p-3">
-                      <span className="font-bold text-primary">٢. تسجيل السداد</span>
-                      <span className="text-text-muted">تجميع نمط السداد الزمني</span>
+                      <span className="font-bold text-primary">{isAr ? "٢. توثيق السداد" : "2. Log Payments"}</span>
+                      <span className="text-text-muted">{isAr ? "تسجيل المقبوضات" : "Collect receipts"}</span>
                     </div>
                     <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface-muted/40 p-3">
-                      <span className="font-bold text-primary">٣. المنحنى التنبؤي</span>
-                      <span className="text-text-muted">توقع سيولة ٨ أسابيع قادمة</span>
+                      <span className="font-bold text-primary">{isAr ? "٣. منحنى السيولة" : "3. Cash Forecast"}</span>
+                      <span className="text-text-muted">{isAr ? "توقع تدفقات ٨ أسابيع" : "8-week projection"}</span>
                     </div>
                   </div>
                 </div>

@@ -47,7 +47,7 @@ try {
       defaultTermsDays: 14, easternDigits: false,
     };
     await db.insert(tenants).values({
-      id: tenantId, name: "Nile Trading (demo)", businessNameAr: "شركة النيل للتجارة (تجريبي)",
+      id: tenantId, name: "Nile Trading", businessNameAr: "شركة النيل للتجارة والتوريدات",
       timezone: "Africa/Cairo", plan: "trial", trialEndsAt: new Date(Date.now() + 14 * 86_400_000), settings,
     });
     await db.insert(user).values({ id: userId, name: "Demo Owner", email: DEMO_EMAIL, emailVerified: true });
@@ -58,9 +58,9 @@ try {
     await db.insert(memberships).values({ tenantId, userId, role: "owner" });
 
     const demoDebtors = [
-      { displayName: "عميل تجريبي ١", phoneE164: "+201001111111" },
-      { displayName: "عميل تجريبي ٢", phoneE164: "+201002222222" },
-      { displayName: "عميل تجريبي ٣", phoneE164: "+201003333333" },
+      { displayName: "مؤسسة الأمل للتوريدات", phoneE164: "+201001111111" },
+      { displayName: "شركة الفيروز للمقاولات", phoneE164: "+201002222222" },
+      { displayName: "مكتب النور للاستشارات", phoneE164: "+201003333333" },
     ];
     const debtorIds: string[] = [];
     for (const d of demoDebtors) {
@@ -71,9 +71,9 @@ try {
     const today = new Date();
     const iso = (daysFromNow: number) => new Date(today.getTime() + daysFromNow * 86_400_000).toISOString().slice(0, 10);
     await db.insert(invoices).values([
-      { tenantId, debtorId: debtorIds[0]!, reference: "INV-DEMO-1", description: "فاتورة تجريبية", amountMinor: 125_050n, issuedOn: iso(-20), dueOn: iso(-5), status: "open", source: "manual" },
-      { tenantId, debtorId: debtorIds[1]!, reference: "INV-DEMO-2", description: "فاتورة تجريبية", amountMinor: 500_000n, issuedOn: iso(-10), dueOn: iso(3), status: "partially_paid", paidMinor: 200_000n, source: "manual" },
-      { tenantId, debtorId: debtorIds[2]!, reference: "INV-DEMO-3", description: "فاتورة تجريبية", amountMinor: 75_000n, issuedOn: iso(-40), dueOn: iso(-30), status: "paid", paidMinor: 75_000n, source: "manual" },
+      { tenantId, debtorId: debtorIds[0]!, reference: "INV-DEMO-1", description: "توريد بضاعة وخامات", amountMinor: 125_050n, issuedOn: iso(-20), dueOn: iso(-5), status: "open", source: "manual" },
+      { tenantId, debtorId: debtorIds[1]!, reference: "INV-DEMO-2", description: "دفعة أعمال وتجهيزات", amountMinor: 500_000n, issuedOn: iso(-10), dueOn: iso(3), status: "partially_paid", paidMinor: 200_000n, source: "manual" },
+      { tenantId, debtorId: debtorIds[2]!, reference: "INV-DEMO-3", description: "صيانة دورية وقطع غيار", amountMinor: 75_000n, issuedOn: iso(-40), dueOn: iso(-30), status: "paid", paidMinor: 75_000n, source: "manual" },
     ]);
     await db.insert(auditLog).values({
       tenantId, actorUserId: userId, action: "tenant.seeded", entity: "tenant", entityId: tenantId,

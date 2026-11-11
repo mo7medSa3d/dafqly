@@ -211,30 +211,30 @@ export function ImportClient() {
             <div className="flex items-center gap-2">
               <FileText size={20} weight="fill" className="text-primary" />
               <h2 className="text-base font-bold text-text">
-                {isAr ? "تجهيز ملف الفواتير" : "Preparing Your Invoice File"}
+                {isAr ? "استيراد ملفات الفواتير" : "Invoice File Import"}
               </h2>
             </div>
             <p className="text-xs leading-relaxed text-text-muted" dir={isAr ? "rtl" : "ltr"}>
               {isAr ? (
                 <>
-                  يمكنك رفع أي ملف إكسل أو ملف بيانات <bdi className="font-semibold text-text">CSV</bdi> يحتوي على أسماء العملاء وأرقام هواتفهم والمبالغ المستحقة. سيتعرف النظام تلقائياً على الأعمدة ويمنحك فرصة كاملة لمراجعتها واعتمادها قبل الحفظ.
+                  رفع مباشر لملفات <bdi className="font-semibold text-text">Excel</bdi> وجداول <bdi className="font-semibold text-text">CSV</bdi> مع مطابقة تلقائية للأعمدة وفحص فوري للمستحقات قبل الاعتماد.
                 </>
               ) : (
-                "Upload any Excel or CSV file with customer names, phones, and amounts due. The system automatically detects columns and gives you a chance to review before confirming."
+                "Direct Excel and CSV spreadsheet upload with automated column detection and instant data validation before commit."
               )}
             </p>
             <ul className="flex flex-col gap-1.5 pt-1 text-xs text-text-muted">
               <li className="flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-teal-500" />
-                <span>{isAr ? "الاسم (العميل أو الشركة المدين)" : "Name (Customer or Debtor Company)"}</span>
+                <span>{isAr ? "اسم العميل أو المنشأة" : "Customer or Business Name"}</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-teal-500" />
-                <span>{isAr ? "الهاتف (محلي أو بصيغة دولية)" : "Phone (Local or International)"}</span>
+                <span>{isAr ? "رقم الهاتف للتواصل والتذكيرات" : "Phone Number"}</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-teal-500" />
-                <span>{isAr ? "المبلغ بالجنيه المصري" : "Amount (EGP)"}</span>
+                <span>{isAr ? "المبلغ المستحق" : "Amount Due"}</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-teal-500" />
@@ -249,14 +249,14 @@ export function ImportClient() {
                 className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95"
               >
                 <DownloadSimple size={15} weight="bold" className="text-primary" />
-                <span>{isAr ? "تحميل نموذج تجريبي جاهز (CSV)" : "Download Sample Template (CSV)"}</span>
+                <span>{isAr ? "تحميل قالب CSV القياسي" : "Download Standard CSV Template"}</span>
               </button>
             </div>
           </div>
           <div className="mt-4 rounded-xl bg-surface-muted/60 p-3 text-[11px] text-text-muted" dir={isAr ? "rtl" : "ltr"}>
             {isAr
-              ? "🛡️ يتم فحص الملف تلقائياً لمنع أي تكرار وتنبيهك قبل حفظ البيانات."
-              : "🛡️ Files are automatically checked to prevent duplicates and warn you before saving."}
+              ? "فحص آلي لمنع تكرار السجلات وتأكيد الدقة قبل الاعتماد."
+              : "Automated validation prevents duplicate records before commit."}
           </div>
         </div>
       </div>

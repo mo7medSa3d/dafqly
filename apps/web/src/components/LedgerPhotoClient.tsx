@@ -181,7 +181,7 @@ export function LedgerPhotoClient() {
             <div className="flex items-center gap-2">
               <Notebook size={20} weight="fill" className="text-primary" />
               <h2 className="text-base font-bold text-text">
-                {isAr ? "كيف يعمل المسح الذكي؟" : "How Smart Scan Works"}
+                {isAr ? "المسح الضوئي الذكي" : "Smart Document Scan"}
               </h2>
             </div>
             <ul className="flex flex-col gap-2 pt-1 text-xs text-text-muted" dir={isAr ? "rtl" : "ltr"}>
@@ -189,32 +189,32 @@ export function LedgerPhotoClient() {
                 <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">1</span>
                 <span>
                   {isAr
-                    ? "تصوير صفحات الدفتر الورقي بإضاءة واضحة وتجنب الظلال."
-                    : "Photograph ledger pages under clear lighting, avoiding heavy shadows."}
+                    ? "التقاط أو رفع صور دفاتر الحسابات والمستندات الورقية"
+                    : "Capture or upload ledger pages and receipts"}
                 </span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">2</span>
                 <span>
                   {isAr
-                    ? "استخراج القيود، أسماء العملاء، الهواتف، والمبالغ بالذكاء الاصطناعي."
-                    : "Extract entries, customer names, phone numbers, and amounts with AI."}
+                    ? "استخراج فوري للقيود والمطابقة التلقائية مع سجلات العملاء"
+                    : "Instant AI data extraction and customer matching"}
                 </span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">3</span>
                 <span>
                   {isAr
-                    ? "مراجعة المعاملات وتأكيد تحويلها لفواتير بنقرة واحدة مع ربط العملاء."
-                    : "Review detected transactions and confirm them into invoices with one click."}
+                    ? "مراجعة واعتماد بنقرة واحدة للتحويل إلى فواتير نشطة"
+                    : "One-click review and conversion to active invoices"}
                 </span>
               </li>
             </ul>
           </div>
           <div className="mt-4 rounded-xl bg-surface-muted/60 p-3 text-[11px] text-text-muted" dir={isAr ? "rtl" : "ltr"}>
             {isAr
-              ? "💡 يتم تمييز الحقول ذات الدقة المنخفضة باللون الأصفر لتراجعها بدقة قبل التأكيد."
-              : "💡 Low-confidence fields are highlighted in yellow for your review before confirmation."}
+              ? "تُبرز الحقول التي تتطلب تدقيقاً للمراجعة قبل الاعتماد النهائي."
+              : "Fields requiring review are highlighted for verification."}
           </div>
         </div>
       </div>
