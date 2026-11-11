@@ -171,8 +171,8 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
               setSelectedIndex(0);
             }}
             placeholder={t("placeholder")}
-            style={{ outline: "none", boxShadow: "none" }}
-            className="w-full border-none bg-transparent text-sm sm:text-base font-medium text-text placeholder:text-text-subtle focus:outline-none focus:ring-0"
+            style={{ outline: "none", boxShadow: "none", border: "none" }}
+            className="command-palette-input w-full border-0 bg-transparent text-sm sm:text-base font-medium text-text placeholder:text-text-subtle focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
           />
           {query ? (
             <button

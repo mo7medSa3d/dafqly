@@ -136,3 +136,12 @@ html.switching-locale *::after {
   transition: none !important;
   animation-duration: 0s !important;
 }
+
+/* Ensure modal inputs and palette search bars never have browser-agent focus rectangle */
+.command-palette-input,
+.command-palette-input:focus,
+.command-palette-input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+}

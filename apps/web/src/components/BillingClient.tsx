@@ -290,11 +290,6 @@ export function BillingClient({
             : "Transparent pricing without hidden fees. Accelerate receivables collection and protect your cash flow."}
         </p>
 
-        {/* Placeholder Price Disclaimer Badge */}
-        <p className="text-xs text-text-muted rounded-full bg-surface-muted/70 px-3 py-1">
-          {t("placeholderPrices")}
-        </p>
-
         {/* Monthly vs Annual Toggle */}
         <div className="mt-4 flex items-center gap-3 rounded-2xl bg-surface-muted/60 p-1.5 shadow-2xs">
           <button
@@ -484,16 +479,18 @@ export function BillingClient({
               </thead>
               <tbody className="divide-y divide-border/40">
                 {subInvoices.map((inv) => {
+                  const normPlan = (inv.planKey || "").toLowerCase();
                   const planTitle = isAr
-                    ? (inv.planKey === "trial" ? "فترة تجريبية" : inv.planKey === "starter" ? "الباقة الأساسية" : inv.planKey === "growth" ? "باقة النمو" : inv.planKey === "pro" ? "الباقة الاحترافية" : inv.planKey)
-                    : (inv.planKey === "trial" ? "Trial Period" : inv.planKey === "starter" ? "Starter Plan" : inv.planKey === "growth" ? "Growth Plan" : inv.planKey === "pro" ? "Pro Plan" : inv.planKey);
+                    ? (normPlan === "trial" ? "فترة تجريبية" : normPlan === "starter" ? "الباقة الأساسية" : normPlan === "growth" ? "باقة النمو" : normPlan === "pro" ? "الباقة الاحترافية" : inv.planKey)
+                    : (normPlan === "trial" ? "Trial Period" : normPlan === "starter" ? "Starter Plan" : normPlan === "growth" ? "Growth Plan" : normPlan === "pro" ? "Pro Plan" : inv.planKey);
                   const isFree = BigInt(inv.amountMinor) === 0n;
                   const formattedAmt = isFree
                     ? (isAr ? "0.00 ج.م (مجاناً)" : "0.00 EGP (Free)")
                     : `${formatEgp(BigInt(inv.amountMinor))} ${isAr ? "ج.م" : "EGP"}`;
+                  const normStatus = (inv.status || "").toLowerCase();
                   const statusLabel = isAr
-                    ? (inv.status === "paid" ? "تم السداد" : inv.status === "open" ? "معلقة" : inv.status)
-                    : (inv.status === "paid" ? "Paid" : inv.status === "open" ? "Open" : inv.status);
+                    ? (normStatus === "paid" ? "تم السداد" : normStatus === "open" ? "معلقة" : inv.status)
+                    : (normStatus === "paid" ? "Paid" : normStatus === "open" ? "Open" : inv.status);
 
                   return (
                     <tr key={inv.id} className="transition-colors hover:bg-callout/40">

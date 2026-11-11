@@ -87,11 +87,11 @@ export function BrandLockup({
         <BrandMark variant="white" size={markPx} />
       </span>
       <div className="flex min-w-0 flex-col leading-none">
-        <span className={`font-extrabold tracking-tight ${textCls} ${onDark ? "text-white" : "text-text"}`}>
+        <span className={`font-extrabold ${isEn ? "tracking-tight" : ""} ${textCls} ${onDark ? "text-white" : "text-text"}`}>
           {isEn ? "Dafqly" : "دفقلي"}
         </span>
         {showTagline && (
-          <span className={`mt-1 whitespace-nowrap text-[10px] font-medium tracking-tight ${onDark ? "text-navy-100" : "text-text-muted"}`}>
+          <span className={`mt-1 whitespace-nowrap text-[10px] font-medium leading-none ${isEn ? "tracking-tight text-navy-100" : "text-text-muted"} ${onDark ? "text-navy-100" : "text-text-muted"}`}>
             {isEn ? "Track. Follow. Get Paid." : "تتبّع. تابع. وحصّل."}
           </span>
         )}

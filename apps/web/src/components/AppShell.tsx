@@ -82,7 +82,7 @@ export function AppShell({
       {/* Sidebar / Mobile Drawer Navigation */}
       <aside
         className={`fixed inset-y-0 start-0 z-50 flex flex-col bg-surface/90 dark:bg-surface/80 backdrop-blur-2xl shadow-[4px_0_30px_-4px_rgba(20,36,58,0.06)] dark:shadow-[4px_0_35px_-4px_rgba(0,0,0,0.4)] transition-transform duration-300 ease-in-out lg:z-40 lg:transition-[width] ${
-          collapsed ? "w-[280px] lg:w-[80px]" : "w-[280px] lg:w-[272px]"
+          collapsed ? "w-[280px] lg:w-[80px]" : "w-[280px] lg:w-[280px]"
         } ${
           mobileOpen
             ? "translate-x-0 pointer-events-auto"
@@ -189,7 +189,7 @@ export function AppShell({
 
       {/* Main Content Area: Zero offset on mobile (full width), offset on desktop */}
       <div className={`flex min-h-dvh flex-col min-w-0 max-w-full overflow-x-hidden transition-[padding] ps-0 ${
-        collapsed ? "lg:ps-[80px]" : "lg:ps-[272px]"
+        collapsed ? "lg:ps-[80px]" : "lg:ps-[280px]"
       }`}>
         {/* Top Header Bar */}
         <header className="sticky top-0 z-30 bg-surface/80 dark:bg-surface/70 backdrop-blur-xl shadow-xs shadow-navy-950/[0.03] dark:shadow-black/20">

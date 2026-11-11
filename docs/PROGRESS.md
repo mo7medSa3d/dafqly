@@ -7,6 +7,27 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### Visual & Microcopy Polish Across 6 User-Reported Areas (2026-11-11) — **COMPLETE**
+- **1. Test Import Jobs Purge (Image 1 Resolved)**:
+  - Ensured database `import_jobs` has 0 transient `temp-*` files. The import page now renders the clean production empty state ("لا توجد عمليات استيراد سابقة").
+- **2. Sidebar Brand Tagline Truncation Fix (Images 2 & 4 Resolved)**:
+  - *Root Cause*: `tracking-tight` was applied to Arabic text (`BrandMark.tsx`), violating Hard Rule #8 ("Never use letter-spacing on Arabic text") and compressing the cursive ligature at the end of "وحصّل." which broke into `ـا ..`. Additionally, the desktop sidebar width was `272px`, which squeezed the header container.
+  - *Fix*:
+    - Removed `tracking-tight` from Arabic text in `BrandMark.tsx`, preserving it only for English.
+    - Expanded desktop sidebar width to `w-[280px] lg:w-[280px]` and adjusted main content padding to `lg:ps-[280px]` in `AppShell.tsx`.
+    - Tagline `تتبّع. تابع. وحصّل.` now renders on a single line with full glyph integrity and zero clipping or dots. Verified via `sidebar_tagline_zoom.png`.
+- **3. Command Palette Focus Outline Removal (Image 3 Resolved)**:
+  - *Root Cause*: Browser user-agent `:focus-visible` styling added a blue rectangle outline around the input.
+  - *Fix*: Added dedicated `.command-palette-input` utility in `apps/web/app/globals.css` with `outline: none !important; box-shadow: none !important; border: none !important;` and applied `focus-visible:outline-none focus-visible:ring-0`. Verified via `command_palette_no_outline.png`.
+- **4. Billing Invoices Localization & Robustness (Image 5 Resolved)**:
+  - *Fix*: Added case-insensitive normalization for `planKey` and `status` in `BillingClient.tsx` so all invoice rows display cleanly in Arabic (`فترة تجريبية`, `0.00 ج.م (مجاناً)`, `تم السداد`).
+- **5. Pricing Prototype Disclaimer Removal (Image 6 Resolved)**:
+  - *Fix*: Removed the prototype disclaimer badge `{t("placeholderPrices")}` ("الأسعار المعروضة مؤقتة وقيد التحديد النهائي") from `BillingClient.tsx`. The plans header now flows directly into the billing cadence toggle in crisp modern SaaS fashion.
+- **6. Production Server Deployment**:
+  - Rebuilt Next.js production build (`next build` in 7.1s, 37/37 routes).
+  - Restarted production server on port 3000 (`next start`).
+  - Playwright visual audit verified all 5 captured screenshots with 0 errors.
+
 ### Global SaaS Microcopy Refinement, Test Artifacts Purge & Production Readiness Verification (2026-11-11) — **COMPLETE**
 - **Microcopy Transformation to High-End Global SaaS Style (Linear/Stripe benchmark)**:
   - `apps/web/src/messages/ar.json` & `en.json`:
