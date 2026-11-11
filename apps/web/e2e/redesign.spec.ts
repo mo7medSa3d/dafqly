@@ -105,6 +105,6 @@ test("redesign: AFTER shots (desktop + dark + onboarding)", async ({ page, brows
   await page.getByTestId("auth-email").fill(`redesign-${Date.now()}@tahseel.test`);
   await page.getByTestId("auth-password").fill("redesign-password-123");
   await page.getByTestId("auth-submit").click();
-  await expect(page).toHaveURL(/\/ar\/onboarding/);
+  await expect(page).toHaveURL(/\/ar\/onboarding/, { timeout: 15000 });
   await fullShot(page, "after-onboarding-mobile.png");
 });

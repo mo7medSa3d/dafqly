@@ -13,6 +13,7 @@ export default defineConfig({
     baseURL: "http://localhost:3000",
     viewport: { width: 390, height: 844 }, // mobile-first (BRAND §8)
     locale: "ar-EG",
+    channel: "chrome",
   },
   webServer: {
     command: "pnpm build && pnpm start",

@@ -84,7 +84,9 @@ export function AppShell({
         className={`fixed inset-y-0 start-0 z-50 flex flex-col bg-surface/90 dark:bg-surface/80 backdrop-blur-2xl shadow-[4px_0_30px_-4px_rgba(20,36,58,0.06)] dark:shadow-[4px_0_35px_-4px_rgba(0,0,0,0.4)] transition-transform duration-300 ease-in-out lg:z-40 lg:transition-[width] ${
           collapsed ? "w-[280px] lg:w-[80px]" : "w-[280px] lg:w-[272px]"
         } ${
-          mobileOpen ? "translate-x-0" : "max-lg:-translate-x-full rtl:max-lg:translate-x-full lg:translate-x-0"
+          mobileOpen
+            ? "translate-x-0 pointer-events-auto"
+            : "max-lg:-translate-x-full rtl:max-lg:translate-x-full max-lg:pointer-events-none lg:pointer-events-auto lg:translate-x-0"
         }`}
       >
         {/* Drawer / Sidebar Top Header */}

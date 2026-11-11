@@ -10,7 +10,7 @@ import {
 } from "@tahseel/core";
 import { withTenant, type Db } from "@tahseel/db";
 import { auditLog, files, payments } from "@tahseel/db/schema";
-import { isNotNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
 
 /**
@@ -112,17 +112,30 @@ export async function analyzeWorkspaceReceipt(
     tamper_signals: ["invalid_extraction_structure"],
   };
 
-  let seenHashes = new Set<string>();
-  let seenReferences = new Set<string>();
+  const seenHashes = new Set<string>();
+  const seenReferences = new Set<string>();
 
   await withTenant(app, tenantId, async (tx) => {
-    const allFiles = await tx.select({ sha256: files.sha256 }).from(files);
-    seenHashes = new Set(allFiles.map((f) => f.sha256));
-    const paidRefs = await tx
-      .select({ referenceNo: payments.referenceNo })
-      .from(payments)
-      .where(isNotNull(payments.referenceNo));
-    seenReferences = new Set(paidRefs.map((p) => p.referenceNo!).filter(Boolean));
+    const existingFile = await tx
+      .select({ sha256: files.sha256 })
+      .from(files)
+      .where(eq(files.sha256, sha256))
+      .limit(1);
+    if (existingFile.length > 0) {
+      seenHashes.add(sha256);
+    }
+
+    if (extraction.reference_no) {
+      const cleanRef = extraction.reference_no.trim();
+      const existingPayment = await tx
+        .select({ referenceNo: payments.referenceNo })
+        .from(payments)
+        .where(eq(payments.referenceNo, cleanRef))
+        .limit(1);
+      if (existingPayment.length > 0 && existingPayment[0]?.referenceNo) {
+        seenReferences.add(existingPayment[0].referenceNo);
+      }
+    }
   });
 
   const analysis = parseReceiptScreenshotAnalysis({
@@ -159,6 +172,7 @@ export const generateNotificationInput = z.object({
   daysOverdue: z.number().int().default(0),
   dueDate: z.string().default(() => new Date().toISOString().slice(0, 10)),
   riskFlag: z.boolean().default(false),
+  reference: z.string().trim().optional(),
   tone: z.enum(["friendly", "polite", "firm", "urgent"]).optional(),
   locale: z.enum(["ar", "en"]).default("ar"),
   paymentLink: z.string().url().optional(),
@@ -182,6 +196,7 @@ export async function generateWorkspaceNotification(
     dueDate: input.dueDate,
     riskFlag: input.riskFlag,
     tenantBusinessName: businessName,
+    reference: input.reference,
     tone: input.tone,
     locale: input.locale,
     paymentLink: input.paymentLink,
@@ -241,6 +256,7 @@ export const AI_WORKSPACE_TOOLS = [
         amountMinor: { type: "integer", description: "Amount due in minor units (piasters)." },
         daysOverdue: { type: "integer", description: "Number of days invoice is overdue." },
         dueDate: { type: "string", description: "Due date in YYYY-MM-DD format." },
+        reference: { type: "string", description: "Optional invoice reference number." },
         tone: { type: "string", enum: ["friendly", "polite", "firm", "urgent"] },
       },
       required: ["debtorName", "amountMinor", "dueDate"],

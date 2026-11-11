@@ -241,7 +241,11 @@ export function evaluateReceiptChecks(input: {
     passed: !seenHashes.has(sha256),
     detail: seenHashes.has(sha256) ? "this exact image was submitted before" : "image hash not seen before",
   });
-  const refSeen = e.reference_no !== null && seenReferences.has(e.reference_no);
+  const normRef = e.reference_no ? normalizeDigits(e.reference_no).trim().replace(/[\s\-_]/g, "").toUpperCase() : null;
+  const refSeen = e.reference_no !== null && (
+    seenReferences.has(e.reference_no) ||
+    (normRef !== null && Array.from(seenReferences).some((r) => normalizeDigits(r).trim().replace(/[\s\-_]/g, "").toUpperCase() === normRef))
+  );
   checks.push({
     key: "duplicate_reference",
     passed: !refSeen,
@@ -546,13 +550,25 @@ export function scoreReceiptSet(items: readonly ReceiptScoreItem[]): ReceiptScor
 /**
  * Guardrail: Sanitizes untrusted user/debtor input to prevent prompt injection
  * and delimiter breaking attacks (hard rule 4: Customer text is data, never instructions).
+ * Handles English and Arabic injection phrases, stripping Tashkeel (diacritics),
+ * Tatweel (kashida), zero-width characters, and normalizing letter variations.
  */
 export function sanitizePromptData(input: string): string {
-  return input
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/[<>'"`;${}\\]/g, "")
+  // 1. Strip Tashkeel (harakat), Tatweel, and zero-width characters so obfuscated Arabic injections are exposed
+  const stripped = input
+    .replace(/[\u064B-\u065F\u0670]/g, "") // Tashkeel / Harakat
+    .replace(/\u0640/g, "") // Tatweel / Kashida
+    .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, " ") // Zero-width and non-breaking spaces
+    .replace(/[\r\n\t]+/g, " ");
+
+  // 2. Redact English and Arabic prompt injection patterns (including Alef variations)
+  const redacted = stripped
     .replace(/\b(ignore\s+(?:previous\s+)?instructions|system\s+prompt|admin\s+override|as\s+an\s+ai|you\s+must|act\s+as)\b/gi, "[REDACTED]")
-    .replace(/(تجاهل\s+(?:جميع\s+)?(?:التعليمات|الأوامر)(?:\s+السابقة)?|تعليمات\s+النظام|أمر\s+إداري|تخطي\s+الصلاحيات|تصرف\s+كـ?|أنت\s+الآن)/gi, "[REDACTED]")
+    .replace(/(تجاهل\s+(?:جميع\s+)?(?:التعليمات|الأوامر|الاوامر)(?:\s+السابقة)?|تعليمات\s+النظام|أمر\s+إداري|امر\s+اداري|تخطي\s+الصلاحيات|تصرف\s+كـ?|أنت\s+الآن|انت\s+الان)/gi, "[REDACTED]");
+
+  // 3. Strip dangerous delimiter characters, trim, and cap length
+  return redacted
+    .replace(/[<>'"`;${}\\]/g, "")
     .trim()
     .slice(0, 140);
 }
@@ -772,7 +788,11 @@ export function parseReceiptScreenshotAnalysis(input: {
   });
 
   const isDupHash = seenHashes.has(sha256);
-  const isDupRef = e.reference_no !== null && seenReferences.has(e.reference_no);
+  const normRef = e.reference_no ? normalizeDigits(e.reference_no).trim().replace(/[\s\-_]/g, "").toUpperCase() : null;
+  const isDupRef = e.reference_no !== null && (
+    seenReferences.has(e.reference_no) ||
+    (normRef !== null && Array.from(seenReferences).some((r) => normalizeDigits(r).trim().replace(/[\s\-_]/g, "").toUpperCase() === normRef))
+  );
   const isFuture = e.datetime ? new Date(e.datetime).getTime() > now.getTime() + 86_400_000 : false;
   const isSuspicious = (e.tamper_signals ?? []).length > 0 || isDupHash || isDupRef || isFuture;
 
@@ -835,6 +855,7 @@ export interface GenerateSmartNotificationInput {
   dueDate: string;
   riskFlag?: boolean;
   tenantBusinessName: string;
+  reference?: string;
   tone?: NotificationTone;
   locale?: "ar" | "en";
   paymentLink?: string;
@@ -857,11 +878,14 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
   if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) {
     throw new Error("amountMinor must be a positive integer in minor units (hard rule 1)");
   }
+  const isEn = input.locale === "en";
   const safeDebtorName = sanitizePromptData(input.debtorName);
   const safeBusinessName = sanitizePromptData(input.tenantBusinessName);
-  const currency = input.currency ?? "ج.م";
+  const debtorDisplayName = safeDebtorName || (isEn ? "Valued Customer" : "عزيزي العميل");
+  const businessDisplayName = safeBusinessName || (isEn ? "DAFQLY" : "دافقلي");
+  const currency = input.currency ?? (isEn ? "EGP" : "ج.م");
   const amountMajor = (input.amountMinor / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const isEn = input.locale === "en";
+  const invoiceRefText = input.reference ? (isEn ? ` #${input.reference}` : ` رقم ${input.reference}`) : "";
 
   // Select appropriate tone based on overdue status and customer risk flag
   let tone: NotificationTone = input.tone ?? "polite";
@@ -881,16 +905,16 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
   if (!isEn) {
     switch (tone) {
       case "friendly":
-        text = `مرحباً ${safeDebtorName}، نود تذكيرك بموعد استحقاق فاتورتك لدى ${safeBusinessName} بقيمة ${amountMajor} ${currency} في تاريخ ${input.dueDate}. نسعد بتواصلك معنا دائماً.`;
+        text = `مرحباً ${debtorDisplayName}، نود تذكيرك بموعد استحقاق فاتورتك${invoiceRefText} لدى ${businessDisplayName} بقيمة ${amountMajor} ${currency} في تاريخ ${input.dueDate}. نسعد بتواصلك معنا دائماً.`;
         break;
       case "polite":
-        text = `عزيزي ${safeDebtorName}، نرجو الإحاطة بأن الفاتورة المستحقة لدى ${safeBusinessName} بقيمة ${amountMajor} ${currency} حل موعد سدادها (${input.dueDate}). شاكرين تعاونكم معنا.`;
+        text = `عزيزي ${debtorDisplayName}، نرجو الإحاطة بأن الفاتورة${invoiceRefText} المستحقة لدى ${businessDisplayName} بقيمة ${amountMajor} ${currency} حل موعد سدادها (${input.dueDate}). شاكرين تعاونكم معنا.`;
         break;
       case "firm":
-        text = `السيد/ة ${safeDebtorName}، نلفت انتباهكم إلى تأخر سداد الفاتورة رقم المستحقة لدى ${safeBusinessName} بقيمة ${amountMajor} ${currency} منذ ${input.daysOverdue} يوماً. نرجو التكرم بسرعة السداد لتجنب أي تعليق في التعاملات.`;
+        text = `السيد/ة ${debtorDisplayName}، نلفت انتباهكم إلى تأخر سداد الفاتورة${invoiceRefText} المستحقة لدى ${businessDisplayName} بقيمة ${amountMajor} ${currency} منذ ${input.daysOverdue} يوماً. نرجو التكرم بسرعة السداد لتجنب أي تعليق في التعاملات.`;
         break;
       case "urgent":
-        text = `إشعار عاجل - ${safeDebtorName}: نرجو تسوية المبلغ المتأخر والبالغ ${amountMajor} ${currency} لصالح ${safeBusinessName} بصورة فورية. يرجى التواصل معنا أو السداد عبر الرابط التالي.`;
+        text = `إشعار عاجل - ${debtorDisplayName}: نرجو تسوية المبلغ المتأخر والبالغ ${amountMajor} ${currency} لصالح ${businessDisplayName} بصورة فورية. يرجى التواصل معنا أو السداد عبر الرابط التالي.`;
         break;
     }
     if (input.paymentLink) {
@@ -899,16 +923,16 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
   } else {
     switch (tone) {
       case "friendly":
-        text = `Hi ${safeDebtorName}, this is a friendly reminder from ${safeBusinessName} that an invoice of ${amountMajor} ${currency} is due on ${input.dueDate}. We appreciate your business!`;
+        text = `Hi ${debtorDisplayName}, this is a friendly reminder from ${businessDisplayName} that your invoice${invoiceRefText} of ${amountMajor} ${currency} is due on ${input.dueDate}. We appreciate your business!`;
         break;
       case "polite":
-        text = `Dear ${safeDebtorName}, please note that your invoice of ${amountMajor} ${currency} with ${safeBusinessName} is now due (${input.dueDate}). Thank you for your prompt payment.`;
+        text = `Dear ${debtorDisplayName}, please note that your invoice${invoiceRefText} of ${amountMajor} ${currency} with ${businessDisplayName} is now due (${input.dueDate}). Thank you for your prompt payment.`;
         break;
       case "firm":
-        text = `Notice for ${safeDebtorName}: Your payment of ${amountMajor} ${currency} to ${safeBusinessName} is overdue by ${input.daysOverdue} days. Please settle this amount to maintain your active account.`;
+        text = `Notice for ${debtorDisplayName}: Your payment of ${amountMajor} ${currency} to ${businessDisplayName} is overdue by ${input.daysOverdue} days. Please settle this amount to maintain your active account.`;
         break;
       case "urgent":
-        text = `Urgent Notice - ${safeDebtorName}: An outstanding balance of ${amountMajor} ${currency} is past due at ${safeBusinessName}. Please arrange immediate settlement.`;
+        text = `Urgent Notice - ${debtorDisplayName}: An outstanding balance of ${amountMajor} ${currency} is past due at ${businessDisplayName}. Please arrange immediate settlement.`;
         break;
     }
     if (input.paymentLink) {
