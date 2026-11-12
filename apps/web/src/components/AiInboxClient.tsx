@@ -77,14 +77,23 @@ export function AiInboxClient() {
   useEffect(() => { void load(); }, [load]);
 
   async function onReceiptFile(file: File) {
-    if (!debtorId) { setMsg(t("pickDebtorFirst")); return; }
     setBusy(true); setMsg(null);
     try {
       const out = await trpc.receipts.uploadAndProcess.mutate({
-        debtorId, fileName: file.name, mime: file.type || "image/png",
+        debtorId: debtorId || undefined,
+        fileName: file.name,
+        mime: file.type || "image/png",
         contentBase64: await fileToBase64(file),
       });
-      setMsg(t("receiptOutcome", { outcome: out.outcome }));
+      if (out.matchedDebtorName) {
+        setMsg(
+          isAr
+            ? `✨ تم التعرف التلقائي على العميل «${out.matchedDebtorName}» ومعالجة الإشعار بنجاح.`
+            : `Identified debtor "${out.matchedDebtorName}" and processed receipt.`,
+        );
+      } else {
+        setMsg(t("receiptOutcome", { outcome: out.outcome }));
+      }
       await load();
     } catch { setMsg(t("failed")); } finally { setBusy(false); }
   }
@@ -353,14 +362,14 @@ export function AiInboxClient() {
         <Panel title={t("receiptUploadTitle")} icon={UploadSimple}>
           <div className="flex flex-col gap-4">
             <label className={labelCls}>
-              <span>{t("debtor")}</span>
+              <span>{isAr ? "العميل (اختياري — يتعرف الذكاء الاصطناعي عليه تلقائياً)" : "Debtor (Optional — AI auto-detects)"}</span>
               <select
                 data-testid="receipt-debtor"
                 className={inputCls}
                 value={debtorId}
                 onChange={(e) => setDebtorId(e.target.value)}
               >
-                <option value="">{t("pickDebtor")}</option>
+                <option value="">{isAr ? "— كشف تلقائي بالذكاء الاصطناعي —" : "— Auto-detect via AI —"}</option>
                 {debtors.map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}
               </select>
             </label>

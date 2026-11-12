@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { formatEgp } from "@tahseel/core";
 import { useCurrency } from "./CurrencyContext";
-import { BellRinging, CalendarBlank, Camera, Checks, ShieldCheck } from "@phosphor-icons/react";
+import { BellRinging, CalendarBlank, Camera, Checks, ShieldCheck, Sparkle } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
 import { ChequesIllustration } from "./illustrations";
 import { EmptyState, Panel, StatusPill, btnGhost, btnPrimary, inputCls, labelCls } from "./ui";
@@ -51,6 +51,10 @@ export function ChequesClient() {
   const [busy, setBusy] = useState(false);
   const todayIso = new Date().toISOString().slice(0, 10);
   const due30Iso = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  const [matchedInfo, setMatchedInfo] = useState<{
+    debtorName: string;
+    invoiceRef: string | null;
+  } | null>(null);
   const [form, setForm] = useState({
     debtorId: "", direction: "receivable", number: "", bank: "", amount: "",
     issueDate: todayIso, dueDate: due30Iso, invoiceId: "", imageFileId: "",
@@ -78,15 +82,20 @@ export function ChequesClient() {
   }, [form.debtorId]);
 
   async function onPhoto(file: File) {
-    setBusy(true); setMsg(null);
+    setBusy(true); setMsg(null); setMatchedInfo(null);
     try {
       const out = await trpc.cheques.extractPhoto.mutate({
         fileName: file.name, mime: file.type || "image/png",
         contentBase64: await fileToBase64(file),
       });
       if (out.extraction) {
+        const matchedDebtorId = out.matchedDebtor?.id ?? "";
+        const matchedInvoiceId = out.matchedInvoice?.id ?? "";
+
         setForm((f) => ({
           ...f,
+          debtorId: matchedDebtorId || f.debtorId,
+          invoiceId: matchedInvoiceId || f.invoiceId,
           number: out.extraction!.number ?? f.number,
           bank: out.extraction!.bank ?? f.bank,
           amount: out.extraction!.amount_minor !== null ? (out.extraction!.amount_minor / 100).toFixed(2) : f.amount,
@@ -94,6 +103,13 @@ export function ChequesClient() {
           dueDate: out.extraction!.due_date ?? f.dueDate,
           imageFileId: out.fileId,
         }));
+
+        if (out.matchedDebtor) {
+          setMatchedInfo({
+            debtorName: out.matchedDebtor.displayName,
+            invoiceRef: out.matchedInvoice?.reference ?? null,
+          });
+        }
         setMsg(t("prefilled"));
       }
     } catch { setMsg(t("failed")); } finally { setBusy(false); }
@@ -287,6 +303,29 @@ export function ChequesClient() {
               <input data-testid="cheque-photo" type="file" accept="image/*" disabled={busy} className="sr-only"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void onPhoto(f); }} />
             </label>
+
+            {matchedInfo && (
+              <div
+                data-testid="ai-cheque-match-badge"
+                className="flex flex-col gap-1.5 rounded-2xl border border-primary/40 bg-callout/60 p-3.5 text-xs animate-in fade-in slide-in-from-top-2 duration-300"
+              >
+                <div className="flex items-center gap-1.5 font-extrabold text-primary">
+                  <Sparkle size={15} weight="fill" />
+                  <span>{isAr ? "مطابقة ذكية بالذكاء الاصطناعي" : "AI Smart Match"}</span>
+                </div>
+                <p className="leading-relaxed text-text">
+                  {isAr
+                    ? `تم التعرف على صاحب الشيك: «${matchedInfo.debtorName}» ${
+                        matchedInfo.invoiceRef
+                          ? `وربطه تلقائياً بالفاتورة رقم #${matchedInfo.invoiceRef}`
+                          : "وتعبئة بيانات السداد"
+                      }.`
+                    : `Identified drawer: "${matchedInfo.debtorName}" ${
+                        matchedInfo.invoiceRef ? `linked to invoice #${matchedInfo.invoiceRef}` : ""
+                      }.`}
+                </p>
+              </div>
+            )}
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
               <label className={labelCls}><span>{t("debtor")}</span>

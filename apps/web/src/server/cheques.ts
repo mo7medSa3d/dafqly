@@ -2,11 +2,11 @@ import { and, eq, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import { AppError, assertChequeTransition, canTransitionCheque, dueAlertKind, formatEgp, groupChequesByWeek,
-  localDateOf, parseEgp, planReversalAllocations,
+  localDateOf, parseEgp, planReversalAllocations, suggestDebtorByName,
   type ChequeAlertKind, type ChequeStatus, type ChequeExtraction,
 } from "@tahseel/core";
 import {
-  auditLog, chequeAlerts, cheques, debtors, invoices, paymentAllocations, payments, tenants, usageLedger,
+  auditLog, chequeAlerts, cheques, debtors, invoices, paymentAllocations, payments, usageLedger,
 } from "@tahseel/db/schema";
 import { withTenant, type Db } from "@tahseel/db";
 import type { OcrLlmProvider, StorageProvider } from "@tahseel/providers";
@@ -259,31 +259,128 @@ export async function listChequeAlerts(app: Db, tenantId: string): Promise<Chequ
 // ------------------------------------------------------------ photo pre-fill
 export interface ChequePhotoDeps { llm: OcrLlmProvider; storage: StorageProvider }
 
+export interface MatchedDebtorLite {
+  id: string;
+  displayName: string;
+  phoneE164: string;
+  outstandingMinor: string;
+}
+
+export interface MatchedInvoiceLite {
+  id: string;
+  reference: string | null;
+  amountMinor: string;
+  dueOn: string;
+}
+
+export interface ExtractChequePhotoResult {
+  fileId: string;
+  extraction: ChequeExtraction | null;
+  matchedDebtor: MatchedDebtorLite | null;
+  matchedInvoice: MatchedInvoiceLite | null;
+}
+
 /**
  * F9 photo path (pre-fill design): store the photo as a file, run the
  * vision extraction, and return the fields + file id so the UI can
  * PRE-FILL the manual registration form. The merchant reviews and submits
  * the form — extraction alone NEVER registers a cheque.
+ * Enhanced: Automatically matches drawer name or amount against debtors & open invoices!
  */
 export async function extractChequePhoto(
   app: Db, tenantId: string, actor: string, deps: ChequePhotoDeps,
   input: { bytes: Uint8Array; mime: string },
-): Promise<{ fileId: string; extraction: ChequeExtraction | null }> {
+): Promise<ExtractChequePhotoResult> {
   const stored = await storeUpload(app, deps.storage, tenantId, actor, { bytes: input.bytes, mime: input.mime, kind: "other" });
   const got = await getFileBytes(app, deps.storage, tenantId, stored.id);
   const result = await deps.llm.extractCheque(got.bytes, got.file.mime);
+
+  let matchedDebtor: MatchedDebtorLite | null = null;
+  let matchedInvoice: MatchedInvoiceLite | null = null;
+
   await withTenant(app, tenantId, async (tx) => {
     await tx.insert(usageLedger).values({
       tenantId, kind: "llm_vision",
       units: result.inputTokens + result.outputTokens, costEstimateMinor: 0n,
     });
-    const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
-    void tenant;
     await audit(tx, tenantId, actor, "cheque.photo_extracted", "file", stored.id, {
       promptVersion: result.promptVersion, model: result.model, found: result.data !== null,
     });
+
+    if (result.data) {
+      const allDebtors = await tx
+        .select({ id: debtors.id, displayName: debtors.displayName, phoneE164: debtors.phoneE164 })
+        .from(debtors)
+        .where(isNull(debtors.deletedAt));
+
+      let matchedDebtorId: string | null = null;
+
+      // 1. Match by extracted drawer name if available
+      if (result.data.drawer_name && result.data.drawer_name.trim().length > 1) {
+        const suggestion = suggestDebtorByName(result.data.drawer_name, allDebtors);
+        if (suggestion && suggestion.score >= 0.5) {
+          matchedDebtorId = suggestion.debtorId;
+        }
+      }
+
+      // 2. If no name match, attempt matching open invoices by amount
+      if (!matchedDebtorId && result.data.amount_minor && result.data.amount_minor > 0) {
+        const matchingInvs = await tx
+          .select({ debtorId: invoices.debtorId, id: invoices.id, reference: invoices.reference, amountMinor: invoices.amountMinor, dueOn: invoices.dueOn, paidMinor: invoices.paidMinor })
+          .from(invoices)
+          .where(and(eq(invoices.status, "open")));
+
+        const exactMatch = matchingInvs.find((inv) => (inv.amountMinor - inv.paidMinor) === BigInt(result.data!.amount_minor!));
+        if (exactMatch) {
+          matchedDebtorId = exactMatch.debtorId;
+          matchedInvoice = {
+            id: exactMatch.id,
+            reference: exactMatch.reference,
+            amountMinor: exactMatch.amountMinor.toString(),
+            dueOn: exactMatch.dueOn,
+          };
+        }
+      }
+
+      // 3. Populate matched debtor info and find debtor's open invoice if not already found
+      if (matchedDebtorId) {
+        const deb = allDebtors.find((d) => d.id === matchedDebtorId);
+        if (deb) {
+          const debInvs = await tx
+            .select({ id: invoices.id, reference: invoices.reference, amountMinor: invoices.amountMinor, paidMinor: invoices.paidMinor, dueOn: invoices.dueOn })
+            .from(invoices)
+            .where(and(eq(invoices.debtorId, deb.id), eq(invoices.status, "open")));
+
+          const totalOutstanding = debInvs.reduce((acc, inv) => acc + (inv.amountMinor - inv.paidMinor), 0n);
+
+          matchedDebtor = {
+            id: deb.id,
+            displayName: deb.displayName,
+            phoneE164: deb.phoneE164,
+            outstandingMinor: totalOutstanding.toString(),
+          };
+
+          if (!matchedInvoice && debInvs.length > 0) {
+            // Pick invoice with matching amount or the oldest due
+            const matchingByAmount = result.data.amount_minor
+              ? debInvs.find((i) => (i.amountMinor - i.paidMinor) === BigInt(result.data!.amount_minor!))
+              : null;
+            const chosen = matchingByAmount ?? debInvs[0];
+            if (chosen) {
+              matchedInvoice = {
+                id: chosen.id,
+                reference: chosen.reference,
+                amountMinor: chosen.amountMinor.toString(),
+                dueOn: chosen.dueOn,
+              };
+            }
+          }
+        }
+      }
+    }
   });
-  return { fileId: stored.id, extraction: result.data };
+
+  return { fileId: stored.id, extraction: result.data, matchedDebtor, matchedInvoice };
 }
 
 export { localDateOf };

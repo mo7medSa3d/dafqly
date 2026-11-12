@@ -30,6 +30,7 @@ import {
 import { getForecast, getKpis } from "./reports";
 import { getDashboardSummary } from "./services";
 import { syncWorkspaceNotifications } from "./notifications";
+import { aiDeps } from "./engine";
 
 export interface DebtorIntelligenceView {
   debtorId: string;
@@ -682,6 +683,52 @@ export async function askWorkspaceCopilot(
     answerAr = `${intel.headlineAr}\n${intel.summaryAr}`;
     answerEn = `${intel.headlineEn}\n${intel.summaryEn}`;
     quickLinks.push({ labelAr: "الفواتير", labelEn: "Invoices", href: "/invoices" });
+  }
+
+  // 3. Dynamic Gemini GenAI Intelligence invocation for user inquiries
+  if (safeQuestion.length > 0) {
+    const ai = aiDeps();
+    if (!ai.usingFakeLlm && ai.llm.generateText) {
+      try {
+        const topDebtorsSummary = intel.debtorScores.slice(0, 5).map((d, i) =>
+          `${i + 1}. ${d.displayName}: مستحق ${formatEgp(BigInt(d.outstandingMinor))} ج.م (متأخر ${d.maxDaysOverdue} يوم، تصنيف مخاطر: ${d.tier}، إجراء مقترح: ${d.recommendation.titleAr})`
+        ).join("\n");
+
+        const prompt = [
+          `بيانات دفاتر منشأة «${businessName}» بتاريخ اليوم (${todayIso}):`,
+          `- إجمالي المستحقات: ${formatEgp(BigInt(intel.metrics.totalOutstandingMinor))} ج.م`,
+          `- المتأخرات: ${formatEgp(BigInt(intel.metrics.overdueMinor))} ج.م`,
+          `- المحصل هذا الشهر: ${formatEgp(BigInt(intel.metrics.collectedThisMonthMinor))} ج.م (نسبة التحصيل: ${intel.metrics.collectionRate}%)`,
+          `- متوسط فترة التحصيل (DSO): ${intel.metrics.dsoDays} يوم`,
+          `- الشيكات: ${intel.metrics.upcomingChequesCount} قادمة للتحصيل، ${intel.metrics.bouncedChequesCount} مرتدة`,
+          `- الإيصالات والاعتراضات: ${intel.metrics.pendingClaimsCount} إيصال بانتظار التأكيد، ${intel.metrics.openDisputesCount} اعتراض مفتوح`,
+          `- أهم العملاء في المحفظة:\n${topDebtorsSummary || "لا توجد مديونيات متأخرة حالياً"}`,
+          matchedDebtor
+            ? `- العميل المستعلم عنه: ${matchedDebtor.displayName} (رصيد: ${formatEgp(BigInt(matchedDebtor.outstandingMinor))} ج.م، متأخر: ${matchedDebtor.maxDaysOverdue} يوم، أفضل وقت للتذكير: ${matchedDebtor.optimalWindow.windowLabelAr})`
+            : "",
+          "",
+          `استفسار صاحب المنشأة: "${safeQuestion}"`,
+        ].filter(Boolean).join("\n");
+
+        const systemInstruction = [
+          "أنت المستشار المالي والائتماني الذكي لمنصة «دفقلي» (DAFQLY).",
+          "مهمتك مساعدة صاحب المنشأة على متابعة وتحصيل مستحقاته وتقديم نصائح مالية مبنية على الأرقام الحقيقية في الدفاتر.",
+          "القواعد:",
+          "1. أجب بلغة عربية احترافية، دقيقة، وقوية كخبير مالي متمرس (CFO) بدون حشو إنشائي.",
+          "2. اذكر الأرقام والأسماء المحددة من الدفاتر بدقة.",
+          "3. اقترح إجراءات عملية قابلة للتنفيذ الفوري (تذكير واتساب بنبرة معينة، جدولة أقساط، إيداع شيك).",
+          input.locale === "en" ? "4. Please respond in professional English." : "4. أجب باللغة العربية الفصحى البسيطة والمهنية.",
+        ].join("\n");
+
+        const res = await ai.llm.generateText(prompt, systemInstruction);
+        if (res.text && res.text.trim().length > 10) {
+          answerAr = res.text.trim();
+          answerEn = res.text.trim();
+        }
+      } catch {
+        // Fall back gracefully to synthesized response
+      }
+    }
   }
 
   await withTenant(app, tenantId, async (tx) => {

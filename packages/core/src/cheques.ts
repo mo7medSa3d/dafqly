@@ -111,6 +111,8 @@ export const chequeExtractionSchema = z.object({
   amount_minor: z.number().int().positive().nullable(),
   issue_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  drawer_name: z.string().trim().nullable().optional().default(null),
+  payee_name: z.string().trim().nullable().optional().default(null),
   confidence: z.number().min(0).max(1),
 });
 export type ChequeExtraction = z.infer<typeof chequeExtractionSchema>;

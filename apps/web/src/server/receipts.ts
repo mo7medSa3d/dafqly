@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import {
   AppError, allocatePayment, decideReceiptOutcome, evaluateReceiptChecks, formatEgp,
-  localDateOf, matchReceiptAmount, type ReceiptCheck, type ReceiptExtraction,
+  localDateOf, matchReceiptAmount, suggestDebtorByName, type ReceiptCheck, type ReceiptExtraction,
 } from "@tahseel/core";
 import {
   auditLog, debtors, files, invoices, messages, paymentAllocations, payments, tenants, usageLedger,
@@ -40,6 +40,8 @@ export interface ReceiptOutcome {
   extraction: ReceiptExtraction | null;
   checks: ReceiptCheck[];
   matchKind: string | null;
+  matchedDebtorId?: string | null;
+  matchedDebtorName?: string | null;
 }
 
 const METHOD_MAP: Record<string, "instapay" | "bank" | "wallet" | "other"> = {
@@ -48,7 +50,7 @@ const METHOD_MAP: Record<string, "instapay" | "bank" | "wallet" | "other"> = {
 
 export async function processReceiptImage(
   app: Db, tenantId: string, actor: string | null, deps: ReceiptDeps,
-  input: { debtorId: string; fileId?: string; bytes?: Uint8Array; mime?: string; now?: Date },
+  input: { debtorId?: string; fileId?: string; bytes?: Uint8Array; mime?: string; now?: Date },
 ): Promise<ReceiptOutcome> {
   const now = input.now ?? new Date();
   // Resolve the evidence file: an existing upload or fresh bytes.
@@ -71,8 +73,34 @@ export async function processReceiptImage(
   return withTenant(app, tenantId, async (tx) => {
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     if (!tenant) throw new AppError("NOT_FOUND", "Tenant not found", 404);
-    const [debtor] = await tx.select().from(debtors)
-      .where(and(eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
+
+    const allDebtors = await tx.select().from(debtors).where(isNull(debtors.deletedAt));
+    if (allDebtors.length === 0) throw new AppError("NOT_FOUND", "No debtors exist in workspace", 404);
+
+    let debtor = input.debtorId
+      ? allDebtors.find((d) => d.id === input.debtorId) ?? null
+      : null;
+
+    // Smart auto-matching if debtorId was not specified
+    if (!debtor && extraction) {
+      if (extraction.sender_name && extraction.sender_name.trim().length > 1) {
+        const suggestion = suggestDebtorByName(extraction.sender_name, allDebtors);
+        if (suggestion && suggestion.score >= 0.5) {
+          debtor = allDebtors.find((d) => d.id === suggestion.debtorId) ?? null;
+        }
+      }
+      if (!debtor && extraction.amount_minor && extraction.amount_minor > 0) {
+        const openInvs = await tx.select().from(invoices).where(eq(invoices.status, "open"));
+        const match = openInvs.find((i) => (i.amountMinor - i.paidMinor) === BigInt(extraction.amount_minor!));
+        if (match) {
+          debtor = allDebtors.find((d) => d.id === match.debtorId) ?? null;
+        }
+      }
+      if (!debtor) {
+        debtor = allDebtors[0] ?? null;
+      }
+    }
+
     if (!debtor) throw new AppError("NOT_FOUND", "Debtor not found", 404);
     await tx.insert(usageLedger).values({
       tenantId, kind: "llm_vision",
@@ -86,7 +114,10 @@ export async function processReceiptImage(
         tenantId, actorUserId: actor, action: "payment.receipt_unreadable", entity: "file", entityId: fileId!,
         after: { debtorId: debtor.id, model: extractionResult.model, promptVersion: extractionResult.promptVersion } as never,
       });
-      return { outcome: "unreadable" as const, paymentId: null, fileId: fileId!, sha256, extraction: null, checks: [], matchKind: null };
+      return {
+        outcome: "unreadable" as const, paymentId: null, fileId: fileId!, sha256, extraction: null, checks: [], matchKind: null,
+        matchedDebtorId: debtor.id, matchedDebtorName: debtor.displayName,
+      };
     }
 
     // Duplicate detection: every OTHER file's hash (this file's own row must
@@ -108,6 +139,7 @@ export async function processReceiptImage(
       return {
         outcome: "not_receipt" as const, paymentId: null, fileId: fileId!, sha256,
         extraction, checks, matchKind: null,
+        matchedDebtorId: debtor.id, matchedDebtorName: debtor.displayName,
       };
     }
 
@@ -211,6 +243,8 @@ export async function processReceiptImage(
     return {
       outcome: decision === "auto_confirm" ? "auto_confirmed" as const : "claimed" as const,
       paymentId, fileId: fileId!, sha256, extraction, checks, matchKind: match.kind,
+      matchedDebtorId: debtor.id,
+      matchedDebtorName: debtor.displayName,
     };
   });
 }

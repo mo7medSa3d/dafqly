@@ -245,7 +245,7 @@ export const appRouter = router({
     // F7: merchant upload -> extraction + checks -> claimed (or auto-confirmed) payment.
     uploadAndProcess: tenantProcedure
       .input(z.object({
-        debtorId: z.string().uuid(),
+        debtorId: z.string().uuid().optional(),
         fileName: z.string().trim().min(1).max(200),
         mime: z.string().trim().min(3).max(80),
         contentBase64: z.string().min(4),

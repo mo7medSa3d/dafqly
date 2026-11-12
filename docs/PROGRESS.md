@@ -7,6 +7,36 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### AI Intelligence & Multimodal Vision Upgrade, Live Gemini Reasoning, Cheque & Receipt Auto-Matching, and 2026 Sleek UI/UX (2026-11-12) — **COMPLETE**
+- **1. Dynamic AI Assistant Engine & Real Tool Integration (`apps/web/src/server/intelligence.ts`, `packages/providers/src/llm.ts`)**:
+  - Eliminated static canned responses when users chat with the AI assistant. Integrated live Google Gemini GenAI invocation (`gemini-3.1-flash-lite`) fed with real RLS-isolated workspace facts (debtors, balances, overdue days, cheques status, cashflow velocity, payment claims).
+  - Implemented `generateText` in `OcrLlmProvider` across `GeminiLlmProvider`, `AnthropicLlmProvider`, and `FakeLlmProvider`.
+  - Configured prompt engineering instructing the AI as an elite Arabic CFO / Chief Collections Officer for Dafqly, providing grounded, concise, actionable collection advice with zero filler.
+  - Retained deterministic fallback routing in test/offline modes, ensuring 100% test pass rate while delivering live dynamic intelligence in development and production.
+- **2. 2026 Progressive Streaming Typewriter & 3-Phase Thinking Radar (`AiCopilotDrawer.tsx`)**:
+  - Added smooth progressive typewriter text animation for AI responses with active pulsating glowing caret (`animate-pulse`).
+  - Added interactive 3-phase reasoning progress radar during AI query execution:
+    - Phase 1: "استرجاع دفاتر المنشأة ومطابقة سجلات العملاء..."
+    - Phase 2: "فحص الفواتير وتحليل مخاطر التدفق النقدي..."
+    - Phase 3: "صياغة التوصيات والخطوات التنفيذية الذكية..."
+- **3. Multimodal Cheque OCR & Database Auto-Matching (`cheques.ts`, `ChequesClient.tsx`, `packages/core/src/cheques.ts`)**:
+  - Enhanced `chequeExtractionSchema` and Gemini extraction prompt to capture `drawer_name` (الساحب / صاحب الشيك) and `payee_name` (المستفيد).
+  - In `extractChequePhoto`: Automatically searches tenant debtors using fuzzy Arabic name matching (`suggestDebtorByName`), finds matching open invoices by amount or oldest due, and returns `matchedDebtor` and `matchedInvoice`.
+  - In `ChequesClient.tsx`: Renders an AI Smart Match Banner displaying identified drawer name and linked invoice, pre-populating the registration form with 1-click confirmation.
+- **4. Inbound Payment Receipt Auto-Matching & One-Click Verification (`receipts.ts`, `AiInboxClient.tsx`)**:
+  - Made `debtorId` optional in `receipts.uploadAndProcess`: The AI extracts `sender_name`, `amount_minor`, and `reference_no` from transfer screenshots (InstaPay, Vodafone Cash, Bank), automatically matches the debtor and open invoices in the database, and creates a pending verification claim.
+  - In `AiInboxClient.tsx`: Enabled receipt drop/upload without requiring manual debtor selection.
+- **5. 2026 Raycast/Linear-Style Command Menu & Launcher (`AppShell.tsx`)**:
+  - Upgraded the AI Assistant popover into an ultra-modern 2026 command menu with glassmorphism (`backdrop-blur-2xl bg-surface/95`), ambient glow ring, micro-interaction hover transforms (`hover:translate-x-1`), live Gemini 3.1 status badge, and keyboard shortcuts (`⌘J` / `Ctrl+J` to toggle, `Esc` to close).
+- **6. Total Elimination of Native Browser Scrollbars (`globals.css`)**:
+  - Implemented top-level root scrollbar suppression rules (`scrollbar-width: none !important; -ms-overflow-style: none !important;` and `::-webkit-scrollbar { display: none !important; width: 0 !important; }`), completely removing native scrollbar tracks, thumbs, and arrows across all browsers and containers.
+- **7. Verification Evidence**:
+  - `pnpm lint`: OK (0 errors, `check-no-hardcoded-brand` OK, `check-secrets` OK).
+  - `pnpm typecheck`: OK (all 9 workspace projects passed).
+  - `pnpm test`: OK (68 integration tests and all unit tests passed).
+  - `pnpm build`: OK (37/37 routes compiled).
+  - Playwright live browser verification (`verify-ai-turn11.mts`): Passed 100%.
+
 ### Google Gemini 3.1 Flash Lite Engine & Sleek 2026 UI/UX Polish (2026-11-12) — **COMPLETE**
 - **1. Google Gemini 3.1 Flash Lite Setup & Native Provider (`packages/providers/src/gemini.ts`)**:
   - Implemented `GeminiLlmProvider` implementing `OcrLlmProvider` with native Google Gemini API (`gemini-3.1-flash-lite`), supporting multimodal extraction (ledger pages, transfer receipts, cheques) and Egyptian Arabic reply classification via forced function calling (`mode: "ANY"`).

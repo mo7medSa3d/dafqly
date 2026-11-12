@@ -25,6 +25,8 @@ export const CHEQUE_TOOL_SCHEMA = {
     amount_minor: { type: ["number", "null"], description: "Amount in integer minor units (piasters)" },
     issue_date: { type: ["string", "null"], description: "YYYY-MM-DD" },
     due_date: { type: ["string", "null"], description: "YYYY-MM-DD (the date written on the cheque)" },
+    drawer_name: { type: ["string", "null"], description: "Name of the drawer or account holder signing the cheque (الساحب أو صاحب الحساب)" },
+    payee_name: { type: ["string", "null"], description: "Name of the beneficiary/payee (المستفيد)" },
     confidence: { type: "number", minimum: 0, maximum: 1 },
   },
   required: ["confidence"],

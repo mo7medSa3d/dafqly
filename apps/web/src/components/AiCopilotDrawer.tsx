@@ -235,6 +235,47 @@ export function AiCopilotDrawer({
   const [asking, setAsking] = useState(false);
   const [copilotAnswer, setCopilotAnswer] = useState<CopilotAnswer | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatTurn[]>([]);
+  const [streamedText, setStreamedText] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [thinkingPhase, setThinkingPhase] = useState(0);
+
+  useEffect(() => {
+    if (!asking) {
+      setThinkingPhase(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setThinkingPhase((p) => (p + 1) % 3);
+    }, 1100);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [asking]);
+
+  useEffect(() => {
+    if (!copilotAnswer) {
+      setStreamedText("");
+      setIsStreaming(false);
+      return;
+    }
+    const fullText = isEn ? copilotAnswer.answerEn : copilotAnswer.answerAr;
+    setIsStreaming(true);
+    let index = 0;
+    const step = Math.max(3, Math.floor(fullText.length / 40));
+    const interval = window.setInterval(() => {
+      index += step;
+      if (index >= fullText.length) {
+        setStreamedText(fullText);
+        setIsStreaming(false);
+        window.clearInterval(interval);
+      } else {
+        setStreamedText(fullText.slice(0, index));
+      }
+    }, 18);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [copilotAnswer, isEn]);
 
   const initialToneRef = useRef(initialTone);
   initialToneRef.current = initialTone;
@@ -1195,13 +1236,41 @@ export function AiCopilotDrawer({
             </form>
 
             {asking && (
-              <div className="flex items-center justify-center gap-2 rounded-2xl border border-border/60 bg-surface-muted/30 p-3.5 text-xs text-text-muted">
-                <Cpu size={15} weight="fill" className="animate-spin text-primary" aria-hidden />
-                <span>
-                  {isEn
-                    ? "Executing AI function calls on workspace ledger..."
-                    : "جاري استدعاء دوال البيانات وتحليل مؤشرات المنشأة..."}
-                </span>
+              <div className="flex flex-col gap-2 rounded-2xl border border-primary/25 bg-callout/50 p-4 text-xs animate-in fade-in duration-300">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 font-extrabold text-primary">
+                    <Sparkle size={15} weight="fill" className="animate-spin text-primary" />
+                    <span>{isEn ? "DAFQLY Reasoning Engine" : "محرك التحليل الذكي — دفقلي"}</span>
+                  </div>
+                  <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-bold text-primary">
+                    Gemini 3.1
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-text">
+                  <div className="relative flex size-2 shrink-0">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+                    <span className="relative inline-flex size-2 rounded-full bg-primary" />
+                  </div>
+                  <span className="font-semibold text-xs leading-relaxed transition-all duration-300">
+                    {thinkingPhase === 0
+                      ? isEn
+                        ? "Querying workspace ledger & customer records..."
+                        : "استرجاع دفاتر المنشأة ومطابقة سجلات العملاء..."
+                      : thinkingPhase === 1
+                        ? isEn
+                          ? "Evaluating cashflow forecast & collection risk..."
+                          : "فحص الفواتير وتحليل مخاطر التدفق النقدي..."
+                        : isEn
+                          ? "Synthesizing executive advice & next best actions..."
+                          : "صياغة التوصيات والخطوات التنفيذية الذكية..."}
+                  </span>
+                </div>
+                <div className="h-1 w-full overflow-hidden rounded-full bg-surface/80">
+                  <div
+                    className="h-full bg-primary transition-all duration-500 ease-out"
+                    style={{ width: `${(thinkingPhase + 1) * 33}%` }}
+                  />
+                </div>
               </div>
             )}
 
@@ -1238,9 +1307,12 @@ export function AiCopilotDrawer({
                   </div>
                 )}
 
-                {/* AI Synthesized Answer */}
+                {/* AI Synthesized Answer with progressive streaming */}
                 <p className="whitespace-pre-line text-xs leading-relaxed text-text">
-                  {isEn ? copilotAnswer.answerEn : copilotAnswer.answerAr}
+                  {streamedText || (isEn ? copilotAnswer.answerEn : copilotAnswer.answerAr)}
+                  {isStreaming && (
+                    <span className="inline-block h-3.5 w-1.5 rounded-xs bg-primary align-middle opacity-90 animate-pulse ms-1" />
+                  )}
                 </p>
 
                 {/* Matched Customer Interactive Action Card */}

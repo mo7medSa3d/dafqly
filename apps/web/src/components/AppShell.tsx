@@ -132,6 +132,13 @@ export function AppShell({
         e.preventDefault();
         setSearchOpen((prev) => !prev);
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        setAiMenuOpen((prev) => !prev);
+      }
+      if (e.key === "Escape") {
+        setAiMenuOpen(false);
+      }
     };
     const handleOpenCopilot = (e: Event) => {
       const detail = (e as CustomEvent<OpenCopilotDetail>).detail ?? {};
@@ -387,30 +394,41 @@ export function AppShell({
       </div>
 
       {/* Floating Modern AI Assistant Menu & Launcher */}
-      <div className="fixed bottom-5 left-5 z-40 flex flex-col items-start gap-2">
+      <div className="fixed bottom-5 left-5 z-40 flex flex-col items-start gap-2.5">
         {/* Modern 2026 Assistant Command Menu Popover */}
         {aiMenuOpen && !copilotOpen && (
           <div
             data-testid="ai-assistant-menu"
-            className="panel-shadow flex w-[min(90vw,340px)] flex-col gap-2 rounded-2xl border border-border/80 bg-surface/98 p-3 shadow-2xl backdrop-blur-2xl animate-in fade-in slide-in-from-bottom-3 duration-200"
+            className="flex w-[min(92vw,350px)] flex-col gap-2 rounded-3xl border border-primary/25 bg-surface/95 p-3.5 shadow-[0_20px_50px_rgba(0,0,0,0.28),0_0_20px_color-mix(in_srgb,var(--primary)_18%,transparent)] backdrop-blur-2xl animate-in fade-in slide-in-from-bottom-3 duration-200"
           >
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-border/60 pb-2.5 px-1">
-              <div className="flex items-center gap-2">
-                <span className="flex size-6 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <Sparkle size={14} weight="fill" />
+            <div className="flex items-center justify-between border-b border-border/60 pb-3 px-1">
+              <div className="flex items-center gap-2.5">
+                <span className="flex size-7 items-center justify-center rounded-xl bg-primary/15 text-primary">
+                  <Sparkle size={16} weight="fill" />
                 </span>
-                <span className="text-xs font-extrabold text-text">
-                  {isEn ? "DAFQLY AI Copilot" : "مساعد دفقلي الذكي"}
-                </span>
+                <div className="flex flex-col">
+                  <span className="text-xs font-black tracking-tight text-text">
+                    {isEn ? "DAFQLY AI Copilot" : "مساعد دفقلي الذكي"}
+                  </span>
+                  <span className="text-[10px] text-text-muted">
+                    {isEn ? "Autonomous Collections & Liquidity" : "التحصيل الذكي وإدارة السيولة"}
+                  </span>
+                </div>
               </div>
-              <span className="rounded-full bg-callout px-2 py-0.5 text-[10px] font-bold text-primary">
-                Gemini 3.1 Live
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="flex items-center gap-1 rounded-full bg-callout px-2 py-0.5 text-[10px] font-bold text-primary">
+                  <span className="size-1.5 rounded-full bg-primary animate-pulse" />
+                  Gemini 3.1
+                </span>
+                <kbd className="hidden sm:inline-block rounded-md border border-border bg-surface px-1.5 py-0.5 text-[9px] font-bold text-text-muted">
+                  Esc
+                </kbd>
+              </div>
             </div>
 
             {/* Menu Options */}
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1.5">
               <button
                 type="button"
                 data-testid="ai-menu-briefing-btn"
@@ -419,14 +437,19 @@ export function AppShell({
                   setCopilotConfig({ tab: "briefing" });
                   setCopilotOpen(true);
                 }}
-                className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-start text-xs font-semibold text-text transition-colors hover:bg-callout hover:text-primary active:scale-[0.98]"
+                className="group flex items-center gap-3 rounded-2xl p-2.5 text-start text-xs font-semibold text-text transition-all duration-200 hover:bg-callout hover:text-primary hover:translate-x-1 active:scale-[0.98]"
               >
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-primary">
-                  <Lightning size={15} weight="fill" />
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-transform group-hover:scale-110">
+                  <Lightning size={16} weight="fill" />
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="font-bold">{isEn ? "Executive Briefing" : "الملخص التنفيذي للمحفظة"}</span>
-                  <span className="text-[10px] text-text-muted">{isEn ? "Liquidity & health indicators" : "مؤشرات السيولة وصحة العملاء"}</span>
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold">{isEn ? "Executive Briefing" : "الملخص التنفيذي للمحفظة"}</span>
+                    <span className="rounded-md bg-surface px-1.5 py-0.5 text-[9px] font-bold text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                      {isEn ? "Overview" : "نظرة عامة"}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-text-muted">{isEn ? "Liquidity health & priority collection plan" : "مؤشرات السيولة وخطة التحصيل ذات الأولوية"}</span>
                 </div>
               </button>
 
@@ -438,14 +461,19 @@ export function AppShell({
                   setCopilotConfig({ tab: "assistant" });
                   setCopilotOpen(true);
                 }}
-                className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-start text-xs font-semibold text-text transition-colors hover:bg-callout hover:text-primary active:scale-[0.98]"
+                className="group flex items-center gap-3 rounded-2xl p-2.5 text-start text-xs font-semibold text-text transition-all duration-200 hover:bg-callout hover:text-primary hover:translate-x-1 active:scale-[0.98]"
               >
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-primary">
-                  <Robot size={15} weight="fill" />
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-transform group-hover:scale-110">
+                  <Robot size={16} weight="fill" />
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="font-bold">{isEn ? "Ask AI Assistant" : "محادثة مباشرة مع الذكاء الاصطناعي"}</span>
-                  <span className="text-[10px] text-text-muted">{isEn ? "Instant answers & analysis" : "تحليل فوري واستفسارات عن المعاملات"}</span>
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold">{isEn ? "Ask AI Assistant" : "محادثة حية مع الذكاء الاصطناعي"}</span>
+                    <span className="rounded-md bg-surface px-1.5 py-0.5 text-[9px] font-bold text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                      Gemini
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-text-muted">{isEn ? "Instant answers & ledger deep-dive" : "استفسارات حية عن الدفاتر ومطابقة المعاملات"}</span>
                 </div>
               </button>
 
@@ -457,14 +485,19 @@ export function AppShell({
                   setCopilotConfig({ tab: "composer", mode: "reminder" });
                   setCopilotOpen(true);
                 }}
-                className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-start text-xs font-semibold text-text transition-colors hover:bg-callout hover:text-primary active:scale-[0.98]"
+                className="group flex items-center gap-3 rounded-2xl p-2.5 text-start text-xs font-semibold text-text transition-all duration-200 hover:bg-callout hover:text-primary hover:translate-x-1 active:scale-[0.98]"
               >
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-teal-600 dark:text-teal-400">
-                  <WhatsappLogo size={15} weight="fill" />
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 transition-transform group-hover:scale-110">
+                  <WhatsappLogo size={16} weight="fill" />
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="font-bold">{isEn ? "Smart Reminder Draft" : "صياغة تذكير ذكي للواتساب"}</span>
-                  <span className="text-[10px] text-text-muted">{isEn ? "Personalized payment messages" : "رسائل ودية أو حازمة بنقرة زر"}</span>
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold">{isEn ? "Smart Reminder Draft" : "صياغة تذكير ذكي للواتساب"}</span>
+                    <span className="rounded-md bg-surface px-1.5 py-0.5 text-[9px] font-bold text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                      WhatsApp
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-text-muted">{isEn ? "Context-aware payment reminders" : "رسائل ودية أو حازمة في أفضل وقت إرسال"}</span>
                 </div>
               </button>
 
@@ -476,20 +509,26 @@ export function AppShell({
                   setCopilotConfig({ tab: "composer", mode: "installment" });
                   setCopilotOpen(true);
                 }}
-                className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-start text-xs font-semibold text-text transition-colors hover:bg-callout hover:text-primary active:scale-[0.98]"
+                className="group flex items-center gap-3 rounded-2xl p-2.5 text-start text-xs font-semibold text-text transition-all duration-200 hover:bg-callout hover:text-primary hover:translate-x-1 active:scale-[0.98]"
               >
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-violet-600 dark:text-violet-400">
-                  <CalendarCheck size={15} weight="fill" />
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400 transition-transform group-hover:scale-110">
+                  <CalendarCheck size={16} weight="fill" />
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="font-bold">{isEn ? "Installment Settlement Plan" : "جدولة مديونية على أقساط"}</span>
-                  <span className="text-[10px] text-text-muted">{isEn ? "Structured tranches with down payment" : "تقسيط المبالغ المتأخرة باحترافية"}</span>
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold">{isEn ? "Installment Settlement Plan" : "جدولة مديونية على أقساط"}</span>
+                    <span className="rounded-md bg-surface px-1.5 py-0.5 text-[9px] font-bold text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                      Plan
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-text-muted">{isEn ? "Structured tranches with down payment" : "تقسيط المبالغ المتأخرة وصياغة عرض التسوية"}</span>
                 </div>
               </button>
             </div>
           </div>
         )}
 
+        {/* Trigger Button with Ambient Glow Ring */}
         <button
           type="button"
           data-testid="ai-copilot-trigger-btn"
@@ -506,20 +545,20 @@ export function AppShell({
               ? `AI Assistant (${priorityCount} actions, ${healthStatus})`
               : `المساعد الذكي (${priorityCount} إجراءات، حالة ${healthStatus === "urgent" ? "عاجلة" : healthStatus === "attention" ? "متابعة" : "مستقرة"})`
           }
-          className={`group flex items-center gap-2.5 rounded-full border px-4 py-2.5 shadow-xl transition-all duration-200 hover:scale-105 active:scale-95 ${
+          className={`group flex items-center gap-3 rounded-full border px-4 py-2.5 shadow-2xl transition-all duration-200 hover:scale-105 active:scale-95 ${
             copilotOpen || aiMenuOpen
-              ? "border-border bg-surface text-primary"
+              ? "border-primary bg-surface text-primary shadow-[0_10px_30px_rgba(0,0,0,0.15)] ring-2 ring-primary/20"
               : healthStatus === "urgent"
-                ? "border-status-overdue-border bg-primary text-primary-fg hover:bg-primary-hover shadow-status-overdue-border/30"
-                : "border-primary/30 bg-primary text-primary-fg hover:bg-primary-hover"
+                ? "border-status-overdue-border bg-primary text-primary-fg hover:bg-primary-hover shadow-status-overdue-border/30 ring-2 ring-status-overdue-fg/30"
+                : "border-primary/40 bg-primary text-primary-fg hover:bg-primary-hover shadow-[0_10px_30px_color-mix(in_srgb,var(--primary)_25%,transparent)] ring-2 ring-primary/20"
           }`}
         >
           <span
-            className={`relative flex size-8 items-center justify-center rounded-full ${
+            className={`relative flex size-8 items-center justify-center rounded-full transition-colors ${
               copilotOpen || aiMenuOpen ? "bg-callout text-primary" : "bg-white/20 text-white"
             }`}
           >
-            <ChatCircleDots size={19} weight="fill" aria-hidden />
+            <ChatCircleDots size={20} weight="fill" aria-hidden />
             {healthStatus === "urgent" ? (
               <span className="absolute -end-0.5 -top-0.5 flex size-2.5">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-status-overdue-fg opacity-75" />
@@ -538,9 +577,9 @@ export function AppShell({
             )}
           </span>
           <span className="flex flex-col items-start text-start">
-            <span className="flex items-center gap-1.5 text-xs font-extrabold leading-tight">
+            <span className="flex items-center gap-1.5 text-xs font-black leading-tight">
               <Sparkle size={12} weight="fill" aria-hidden />
-              <span>{isEn ? "AI Assistant" : "المساعد الذكي"}</span>
+              <span>{isEn ? "DAFQLY Copilot" : "المساعد الذكي"}</span>
               {priorityCount > 0 && (
                 <span
                   className={`rounded-full px-1.5 py-0.2 text-[10px] font-black ${
@@ -560,8 +599,8 @@ export function AppShell({
                   : "إغلاق النافذة"
                 : aiMenuOpen
                   ? isEn
-                    ? "Choose an action"
-                    : "اختر إجراءً سريعاً"
+                    ? "Choose action (Esc to close)"
+                    : "اختر إجراءً سريعاً (Esc للإغلاق)"
                   : healthStatus === "urgent"
                     ? isEn
                       ? `${priorityCount} urgent action(s)`
@@ -575,7 +614,7 @@ export function AppShell({
                         : "السيولة مستقرة ومحدثة"}
             </span>
           </span>
-          <CaretUp size={13} weight="bold" className={`transition-transform ${aiMenuOpen ? "rotate-180" : ""}`} />
+          <CaretUp size={13} weight="bold" className={`transition-transform duration-200 ${aiMenuOpen ? "rotate-180" : ""}`} />
         </button>
       </div>
 

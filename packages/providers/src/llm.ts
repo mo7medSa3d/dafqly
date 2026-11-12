@@ -41,6 +41,7 @@ export interface OcrLlmProvider {
   classifyReply(text: string, context: ReplyContext): Promise<LlmCallResult<ReplyClassification>>;
   /** F9: cheque photo -> fields for a merchant-reviewed pre-filled form (a claim, never a registration). */
   extractCheque(image: Uint8Array, mime: string): Promise<LlmCallResult<ChequeExtraction>>;
+  generateText?(prompt: string, systemInstruction?: string): Promise<{ text: string; inputTokens: number; outputTokens: number }>;
 }
 
 export class LlmNotConfiguredError extends Error {
@@ -163,6 +164,38 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
       toolSchema: CHEQUE_TOOL_SCHEMA, parse: parseChequeExtraction,
     });
   }
+
+  async generateText(prompt: string, systemInstruction?: string): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+    const model = this.opts.model ?? "claude-sonnet-5-5";
+    const endpoint = `${this.baseUrl}/v1/messages`;
+    const payload = {
+      model,
+      max_tokens: 1024,
+      system: systemInstruction,
+      messages: [{ role: "user", content: prompt }],
+    };
+    const res = await this.fetchFn(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": this.opts.apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`Anthropic API error: HTTP ${res.status} ${errText}`);
+    }
+    const body = (await res.json()) as { content?: Array<{ text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+    const text = body.content?.[0]?.text ?? "";
+    return {
+      text,
+      inputTokens: body.usage?.input_tokens ?? 0,
+      outputTokens: body.usage?.output_tokens ?? 0,
+    };
+  }
 }
 
 // --------------------------------------------------------------------- FAKE
@@ -257,6 +290,14 @@ export class FakeLlmProvider implements OcrLlmProvider {
     return {
       data: parseChequeExtraction(merged), model: this.modelVision,
       promptVersion: CHEQUE_PROMPT_VERSION, ...zeroUsage,
+    };
+  }
+
+  async generateText(_prompt: string, _systemInstruction?: string): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+    return {
+      text: `[تحليل الذكاء الاصطناعي]: تم فحص استفسارك ومطابقته مع دفاتر المنشأة. المستحقات والسيولة متابعة بدقة.`,
+      inputTokens: 50,
+      outputTokens: 50,
     };
   }
 }
