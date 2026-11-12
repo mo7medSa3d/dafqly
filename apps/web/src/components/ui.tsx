@@ -95,7 +95,7 @@ export function PageHeader({
             {eyebrow}
           </span>
         )}
-        <h1 className="text-[32px] font-bold leading-tight tracking-tight sm:text-[36px]">{title}</h1>
+        <h1 className="text-[32px] font-bold leading-tight sm:text-[36px]">{title}</h1>
         {subtitle && <p className="text-base text-text-muted">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
@@ -204,7 +204,7 @@ export function EmptyState({
   testId?: string;
 }) {
   return (
-    <div data-testid={testId} className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border-strong/60 bg-surface px-6 py-10 text-center">
+    <div data-testid={testId} className="flex flex-col items-center gap-3 rounded-2xl border border-border/70 bg-surface px-6 py-10 text-center shadow-xs">
       {illustration}
       <h2 className="text-lg font-bold">{title}</h2>
       {body && <p className="max-w-md text-sm text-text-muted">{body}</p>}

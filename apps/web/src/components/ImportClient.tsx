@@ -141,15 +141,16 @@ export function ImportClient() {
     }
   }
 
-  function downloadSampleCsv() {
-    const csvContent = isAr
+  function downloadSampleCsv(lang?: "ar" | "en") {
+    const useArabic = lang ? lang === "ar" : isAr;
+    const csvContent = useArabic
       ? "\uFEFFاسم العميل,رقم الهاتف,المبلغ المستحق,تاريخ الاستحقاق,رقم الفاتورة,ملاحظات\nأحمد محمد,01001234567,1500,2026-12-01,INV-1001,فاتورة بضاعة\nشركة الأمل,01122334455,4200.50,2026-12-15,INV-1002,توريد خامات\n"
       : "Customer Name,Phone Number,Amount,Due Date,Invoice No,Notes\nAhmed Mohamed,01001234567,1500,2026-12-01,INV-1001,Goods delivery\nAl Amal Co,01122334455,4200.50,2026-12-15,INV-1002,Materials\n";
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", isAr ? "نموذج_استيراد_دافقلي.csv" : "dafqly_import_template.csv");
+    link.setAttribute("download", useArabic ? "نموذج_استيراد_دافقلي.csv" : "dafqly_import_template.csv");
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -172,7 +173,7 @@ export function ImportClient() {
     <section className="flex flex-col gap-6">
       <div className="grid gap-6 lg:grid-cols-12">
         {/* Upload Dropzone */}
-        <label className="brand-pattern-light panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border-strong bg-surface p-8 text-center transition-all hover:border-primary hover:bg-surface-muted/40 lg:col-span-7">
+        <label className="brand-pattern-light panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-border/80 bg-surface/90 p-8 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/30 hover:shadow-md lg:col-span-7">
           <ImportIllustration size={80} />
           <div className="flex flex-col items-center gap-1">
             <span className="flex items-center gap-2 text-lg font-extrabold text-text">
@@ -241,15 +242,24 @@ export function ImportClient() {
                 <span>{isAr ? "تاريخ الاستحقاق (اختياري)" : "Due Date (Optional)"}</span>
               </li>
             </ul>
-            <div className="pt-2">
+            <div className="flex flex-wrap items-center gap-2 pt-2">
               <button
                 type="button"
-                onClick={downloadSampleCsv}
+                onClick={() => downloadSampleCsv(isAr ? "ar" : "en")}
                 data-testid="import-sample-download"
                 className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95"
               >
                 <DownloadSimple size={15} weight="bold" className="text-primary" />
-                <span>{isAr ? "تحميل قالب CSV القياسي" : "Download Standard CSV Template"}</span>
+                <span>{isAr ? "تحميل نموذج CSV العربي" : "Download Arabic CSV Template"}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadSampleCsv("en")}
+                data-testid="import-sample-download-en"
+                className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface-muted/60 px-3 py-1.5 text-xs font-semibold text-text-muted transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95"
+              >
+                <DownloadSimple size={15} weight="bold" />
+                <span>{isAr ? "النموذج الإنجليزي (English CSV)" : "English CSV Template"}</span>
               </button>
             </div>
           </div>

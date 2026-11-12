@@ -5,18 +5,23 @@ import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
   Bank,
+  CalendarCheck,
   CaretDoubleRight,
+  CaretUp,
+  ChatCircleDots,
   CloudArrowUp,
   CreditCard,
+  Lightning,
   List,
   MagnifyingGlass,
   Receipt,
+  Robot,
   Scan,
-  ShieldCheck,
   SlidersHorizontal,
   Sparkle,
   SquaresFour,
   UsersThree,
+  WhatsappLogo,
   X,
 } from "@phosphor-icons/react";
 import { BrandLockup, BrandMark } from "./BrandMark";
@@ -28,28 +33,52 @@ import { CommandPalette } from "./CommandPalette";
 import { NotificationBell } from "./NotificationBell";
 import {
   AiCopilotDrawer,
+  type ComposerMode,
   type CopilotTab,
   type OpenCopilotDetail,
 } from "./AiCopilotDrawer";
 import type { NotificationTone } from "@tahseel/core";
+import { trpc } from "@/lib/trpc-client";
+import { CurrencyProvider, useCurrency } from "./CurrencyContext";
+
+export { useCurrency };
 
 const ITEMS = [
-  { href: "dashboard", key: "dashboard", testid: "nav-dashboard", Icon: SquaresFour },
-  { href: "debtors", key: "debtors", testid: "nav-debtors", Icon: UsersThree },
-  { href: "invoices", key: "invoices", testid: "nav-invoices", Icon: Receipt },
-  { href: "import", key: "import", testid: "nav-import", Icon: CloudArrowUp },
-  { href: "ledger-photo", key: "ledgerPhoto", testid: "nav-ledger-photo", Icon: Scan },
-  { href: "ai-inbox", key: "aiInbox", testid: "nav-ai-inbox", Icon: Sparkle },
-  { href: "cheques", key: "cheques", testid: "nav-cheques", Icon: Bank },
-  { href: "billing", key: "billing", testid: "nav-billing", Icon: CreditCard },
-  { href: "settings", key: "settings", testid: "nav-settings", Icon: SlidersHorizontal },
+  { href: "dashboard", key: "dashboard", testid: "nav-dashboard", Icon: SquaresFour, group: "core" },
+  { href: "debtors", key: "debtors", testid: "nav-debtors", Icon: UsersThree, group: "core" },
+  { href: "invoices", key: "invoices", testid: "nav-invoices", Icon: Receipt, group: "core" },
+  { href: "cheques", key: "cheques", testid: "nav-cheques", Icon: Bank, group: "core" },
+  { href: "ai-inbox", key: "aiInbox", testid: "nav-ai-inbox", Icon: Sparkle, group: "ai", badgeAr: "AI", badgeEn: "AI" },
+  { href: "import", key: "import", testid: "nav-import", Icon: CloudArrowUp, group: "ai" },
+  { href: "ledger-photo", key: "ledgerPhoto", testid: "nav-ledger-photo", Icon: Scan, group: "ai", badgeAr: "OCR", badgeEn: "OCR" },
+  { href: "billing", key: "billing", testid: "nav-billing", Icon: CreditCard, group: "workspace" },
+  { href: "settings", key: "settings", testid: "nav-settings", Icon: SlidersHorizontal, group: "workspace" },
+] as const;
+
+const NAV_GROUPS = [
+  {
+    id: "core" as const,
+    labelAr: "العمليات الأساسية",
+    labelEn: "Core Operations",
+  },
+  {
+    id: "ai" as const,
+    labelAr: "الذكاء والأتمتة",
+    labelEn: "AI & Automation",
+  },
+  {
+    id: "workspace" as const,
+    labelAr: "الإدارة والحوكمة",
+    labelEn: "Workspace & Governance",
+  },
 ] as const;
 
 export function AppShell({
-  locale, businessName, testId, children,
+  locale, businessName, currency = "EGP", testId, children,
 }: {
   locale: string;
   businessName: string;
+  currency?: string;
   testId?: string;
   children: React.ReactNode;
 }) {
@@ -59,14 +88,44 @@ export function AppShell({
   const [collapsed, setCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
+  const [aiMenuOpen, setAiMenuOpen] = useState(false);
   const [copilotConfig, setCopilotConfig] = useState<{
     tab: CopilotTab;
     debtorId?: string;
     tone?: NotificationTone;
+    mode?: ComposerMode;
   }>({ tab: "briefing" });
   const isEn = locale === "en";
 
-  // Global Ctrl+K / Cmd+K shortcut + custom event listener for AI Copilot drawer
+  const [intel, setIntel] = useState<{
+    healthStatus: "strong" | "attention" | "urgent";
+    topActions: Array<{ debtorId: string; displayName: string }>;
+  } | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    trpc.intelligence.overview
+      .query({ syncNotifications: false })
+      .then((data) => {
+        if (mounted && data) {
+          setIntel({
+            healthStatus: data.healthStatus,
+            topActions: data.topActions.map((a) => ({ debtorId: a.debtorId, displayName: a.displayName })),
+          });
+        }
+      })
+      .catch(() => {
+        // Safe silent fallback for shell
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const healthStatus = intel?.healthStatus ?? "strong";
+  const priorityCount = intel?.topActions?.length ?? 0;
+
+  // Global Ctrl+K / Cmd+K shortcut + custom event listener for AI Copilot pop-up window
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -80,6 +139,7 @@ export function AppShell({
         tab: detail.tab ?? "briefing",
         debtorId: detail.debtorId,
         tone: detail.tone,
+        mode: detail.mode,
       });
       setCopilotOpen(true);
     };
@@ -95,7 +155,8 @@ export function AppShell({
   const activeItem = ITEMS.find((i) => isActive(i.href)) ?? ITEMS[0];
 
   return (
-    <div className="min-h-dvh bg-bg text-text">
+    <CurrencyProvider currency={currency} locale={locale}>
+      <div className="min-h-dvh bg-bg text-text">
       {/* Mobile Backdrop Overlay */}
       <div
         className={`fixed inset-0 z-40 bg-navy-950/60 backdrop-blur-xs transition-opacity duration-300 lg:hidden ${
@@ -105,18 +166,18 @@ export function AppShell({
         aria-hidden="true"
       />
 
-      {/* Sidebar / Mobile Drawer Navigation */}
+      {/* 2026 Enterprise SaaS Sidebar Dock */}
       <aside
-        className={`fixed inset-y-0 start-0 z-50 flex flex-col bg-surface/90 dark:bg-surface/80 backdrop-blur-2xl shadow-[4px_0_30px_-4px_rgba(20,36,58,0.06)] dark:shadow-[4px_0_35px_-4px_rgba(0,0,0,0.4)] transition-transform duration-300 ease-in-out lg:z-40 lg:transition-[width] ${
-          collapsed ? "w-[280px] lg:w-[80px]" : "w-[280px] lg:w-[280px]"
+        className={`fixed inset-y-0 start-0 z-50 flex flex-col border-e border-border/60 bg-surface/95 dark:bg-surface/90 backdrop-blur-2xl shadow-lg transition-transform duration-300 ease-in-out lg:z-40 lg:transition-[width] ${
+          collapsed ? "w-[280px] lg:w-[82px]" : "w-[280px] lg:w-[280px]"
         } ${
           mobileOpen
             ? "translate-x-0 pointer-events-auto"
             : "max-lg:-translate-x-full rtl:max-lg:translate-x-full max-lg:pointer-events-none lg:pointer-events-auto lg:translate-x-0"
         }`}
       >
-        {/* Drawer / Sidebar Top Header */}
-        <div className="flex h-16 shrink-0 items-center justify-between px-4">
+        {/* Top Brand & Collapse Header */}
+        <div className="flex h-16 shrink-0 items-center justify-between border-b border-border/50 px-4">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             {!collapsed ? (
               <BrandLockup size="md" showTagline locale={locale} />
@@ -124,23 +185,23 @@ export function AppShell({
               <button
                 type="button"
                 onClick={() => setCollapsed(false)}
-                title={isEn ? "Expand sidebar" : "توسيع القائمة"}
-                className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--brand-tile-bg)] shadow-xs transition-transform hover:scale-105"
+                title={isEn ? "Expand navigation dock" : "توسيع القائمة الجانبية"}
+                className="mx-auto flex size-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--brand-tile-bg)] shadow-xs transition-transform hover:scale-105"
               >
-                <BrandMark variant="white" size={24} />
+                <BrandMark variant="white" size={22} />
               </button>
             )}
           </div>
 
-          {/* Desktop Collapse / Expand Toggle */}
+          {/* Desktop Collapse Button */}
           {!collapsed && (
             <button
               type="button"
               onClick={() => setCollapsed(true)}
               title={isEn ? "Collapse sidebar" : "طي القائمة"}
-              className="hidden lg:flex size-8 shrink-0 items-center justify-center rounded-xl bg-surface-muted/60 text-text-muted transition-all hover:bg-callout hover:text-primary active:scale-95"
+              className="hidden lg:flex size-8 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-surface-muted/50 text-text-muted transition-all hover:bg-callout hover:text-primary active:scale-95"
             >
-              <CaretDoubleRight size={15} weight="bold" aria-hidden className="ltr:rotate-180" />
+              <CaretDoubleRight size={14} weight="bold" aria-hidden className="ltr:rotate-180" />
             </button>
           )}
 
@@ -156,53 +217,87 @@ export function AppShell({
           </button>
         </div>
 
-        {/* Navigation Items (Modern 2026 Luxury Style with Squircle Badges) */}
-        <nav aria-label="primary" className="flex flex-1 flex-col gap-1.5 overflow-y-auto px-3 py-4 no-scrollbar lg:py-5">
-          {ITEMS.map(({ href, key, testid, Icon }) => {
-            const active = isActive(href);
+        {/* Categorized 2026 SaaS Navigation Sections */}
+        <nav aria-label="primary" className="flex flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 no-scrollbar">
+          {NAV_GROUPS.map((group) => {
+            const groupItems = ITEMS.filter((item) => item.group === group.id);
             return (
-              <Link
-                key={href}
-                data-testid={testid}
-                href={`/${locale}/${href}`}
-                prefetch={false}
-                onClick={() => setMobileOpen(false)}
-                aria-current={active ? "page" : undefined}
-                title={t(key)}
-                className={`group relative flex min-h-[44px] items-center gap-3 rounded-2xl px-3 py-2 text-sm font-semibold transition-all duration-200 ${
-                  collapsed ? "lg:justify-center lg:px-0" : ""
-                } ${
-                  active
-                    ? "bg-primary text-primary-fg shadow-sm shadow-primary/30"
-                    : "text-text-muted hover:bg-callout/70 hover:text-text hover:translate-x-[-2px] rtl:hover:translate-x-[2px]"
-                }`}
-              >
-                {/* 2026 Modern Squircle Icon Badge */}
-                <span
-                  className={`flex size-9 shrink-0 items-center justify-center rounded-xl transition-all duration-200 ${
-                    active
-                      ? "bg-white/20 text-white shadow-xs"
-                      : "bg-surface-muted/60 text-text-muted group-hover:bg-primary/10 group-hover:text-primary group-hover:scale-105"
+              <div key={group.id} className="flex flex-col gap-1">
+                <div
+                  className={`px-3 pb-1 text-[11px] font-bold text-text-subtle ${
+                    collapsed ? "lg:hidden" : "block"
                   }`}
                 >
-                  <Icon size={20} weight={active ? "fill" : "duotone"} aria-hidden />
-                </span>
+                  {isEn ? group.labelEn : group.labelAr}
+                </div>
+                {groupItems.map((item) => {
+                  const { href, key, testid, Icon } = item;
+                  const active = isActive(href);
+                  const badge = "badgeAr" in item ? (isEn ? item.badgeEn : item.badgeAr) : null;
+                  return (
+                    <Link
+                      key={href}
+                      data-testid={testid}
+                      href={`/${locale}/${href}`}
+                      prefetch={false}
+                      onClick={() => setMobileOpen(false)}
+                      aria-current={active ? "page" : undefined}
+                      title={t(key)}
+                      className={`group relative flex min-h-[42px] items-center gap-3 rounded-2xl px-2.5 py-1.5 text-sm font-semibold transition-all duration-200 ${
+                        collapsed ? "lg:justify-center lg:px-0" : ""
+                      } ${
+                        active
+                          ? "bg-primary text-primary-fg shadow-xs"
+                          : "text-text-muted hover:bg-callout/65 hover:text-text"
+                      }`}
+                    >
+                      <span
+                        className={`flex size-8 shrink-0 items-center justify-center rounded-xl transition-all duration-200 ${
+                          active
+                            ? "bg-white/20 text-white"
+                            : "bg-surface-muted/70 text-text-muted group-hover:bg-primary/10 group-hover:text-primary"
+                        }`}
+                      >
+                        <Icon size={18} weight={active ? "fill" : "duotone"} aria-hidden />
+                      </span>
 
-                <span className={`truncate ${collapsed ? "lg:hidden" : "inline"}`}>{t(key)}</span>
-              </Link>
+                      <span className={`flex-1 truncate ${collapsed ? "lg:hidden" : "inline"}`}>
+                        {t(key)}
+                      </span>
+
+                      {badge && (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
+                            collapsed ? "lg:hidden" : "inline-flex"
+                          } ${
+                            active
+                              ? "bg-white/25 text-white"
+                              : "bg-callout text-primary"
+                          }`}
+                        >
+                          {badge}
+                        </span>
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
             );
           })}
         </nav>
 
-        {/* Sidebar Footer with Tenant Profile & Logout */}
-        <div className="mt-auto flex shrink-0 flex-col gap-3 p-3.5 lg:p-4">
-          <div className="flex items-center gap-3 rounded-2xl bg-surface-muted/50 p-2.5 transition-colors">
-            <InitialAvatar name={businessName} size={36} />
+        {/* Clean Minimal Workspace Footer */}
+        <div className="mt-auto flex shrink-0 flex-col gap-2.5 border-t border-border/50 p-3">
+          <div className="flex items-center gap-2.5 rounded-2xl bg-surface-muted/50 p-2">
+            <InitialAvatar name={businessName} size={34} />
             <div className={`min-w-0 flex-1 ${collapsed ? "lg:hidden" : "block"}`}>
-              <p className="truncate text-sm font-bold leading-tight">{businessName}</p>
-              <p className="truncate text-xs text-text-muted">{isEn ? "Workspace" : "مساحة العمل"}</p>
+              <p className="truncate text-xs font-bold leading-tight text-text">{businessName}</p>
+              <p className="truncate text-[11px] text-text-muted">
+                {isEn ? "Active Workspace" : "مساحة العمل النشطة"}
+              </p>
             </div>
           </div>
+
           <div className={`${collapsed ? "lg:hidden" : "block"}`}>
             <LogoutButton wide />
           </div>
@@ -214,12 +309,14 @@ export function AppShell({
         </div>
       </aside>
 
-      {/* Main Content Area: Zero offset on mobile (full width), offset on desktop */}
-      <div className={`flex min-h-dvh flex-col min-w-0 max-w-full overflow-x-hidden transition-[padding] ps-0 ${
-        collapsed ? "lg:ps-[80px]" : "lg:ps-[280px]"
-      }`}>
-        {/* Top Header Bar */}
-        <header className="sticky top-0 z-30 bg-surface/80 dark:bg-surface/70 backdrop-blur-xl shadow-xs shadow-navy-950/[0.03] dark:shadow-black/20">
+      {/* Main Content Area */}
+      <div
+        className={`flex min-h-dvh min-w-0 max-w-full flex-col overflow-x-hidden ps-0 transition-[padding] ${
+          collapsed ? "lg:ps-[82px]" : "lg:ps-[280px]"
+        }`}
+      >
+        {/* Clean, Uncluttered 2026 Top Header Bar */}
+        <header className="sticky top-0 z-30 border-b border-border/50 bg-surface/85 dark:bg-surface/80 backdrop-blur-xl">
           <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
             <div className="flex min-w-0 items-center gap-3">
               {/* Mobile Hamburger Button */}
@@ -242,13 +339,13 @@ export function AppShell({
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-[var(--brand-tile-bg)] shadow-xs">
                   <BrandMark variant="white" size={18} />
                 </span>
-                <span className="text-base font-extrabold text-text">{isEn ? "Dafqly" : "دافقلي"}</span>
+                <span className="text-base font-extrabold text-text">{isEn ? "Dafqly" : "دفقلي"}</span>
               </Link>
 
-              {/* Desktop Breadcrumb/Page Indicator */}
-              <div className="hidden lg:flex min-w-0 items-center gap-2.5">
-                <span className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <activeItem.Icon size={16} weight="fill" aria-hidden />
+              {/* Desktop Page Title & Workspace Pill */}
+              <div className="hidden min-w-0 items-center gap-2.5 lg:flex">
+                <span className="flex size-8 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <activeItem.Icon size={17} weight="fill" aria-hidden />
                 </span>
                 <span className="truncate text-base font-bold text-text">{t(activeItem.key)}</span>
                 <span className="truncate rounded-full bg-surface-muted/70 px-2.5 py-0.5 text-xs font-semibold text-text-muted">
@@ -257,42 +354,23 @@ export function AppShell({
               </div>
             </div>
 
-            {/* Header Right Controls */}
-            <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Streamlined Header Controls (Search, Notifications, Theme, Locale) */}
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 data-testid="global-search-btn"
                 onClick={() => setSearchOpen(true)}
-                className="flex items-center gap-1.5 sm:gap-2 rounded-full bg-surface-muted/60 hover:bg-surface-muted px-3 py-1.5 text-xs font-medium text-text-muted transition-all hover:text-text sm:px-3.5 shadow-2xs hover:shadow-xs"
-                title={isEn ? "Quick search (Ctrl+K)" : "بحث سريع (Ctrl+K)"}
+                className="flex items-center gap-2 rounded-full border border-border/60 bg-surface-muted/50 px-3.5 py-1.5 text-xs font-medium text-text-muted transition-all hover:border-primary/40 hover:bg-surface-muted hover:text-text"
+                title={isEn ? "Quick search & commands (Ctrl+K)" : "بحث سريع وأوامر (Ctrl+K)"}
               >
                 <MagnifyingGlass size={15} weight="bold" className="text-primary" />
-                <span className="hidden sm:inline">{isEn ? "Quick search..." : "بحث سريع..."}</span>
-                <kbd className="hidden rounded bg-surface/80 px-1.5 py-0.5 text-[10px] font-semibold text-text-subtle md:inline-block">
-                  Ctrl K
+                <span className="hidden sm:inline">{isEn ? "Search or jump..." : "بحث سريع..."}</span>
+                <kbd className="hidden rounded bg-surface px-1.5 py-0.5 text-[10px] font-semibold text-text-subtle md:inline-block">
+                  ⌘K
                 </kbd>
               </button>
 
-              <button
-                type="button"
-                data-testid="ai-copilot-trigger-btn"
-                onClick={() => {
-                  setCopilotConfig({ tab: "briefing" });
-                  setCopilotOpen(true);
-                }}
-                className="flex items-center gap-1.5 rounded-full bg-callout px-3 py-1.5 text-xs font-bold text-primary transition-all hover:bg-primary hover:text-primary-fg shadow-2xs"
-                title={isEn ? "AI Collections Copilot" : "مساعد التحصيل الذكي"}
-              >
-                <Sparkle size={15} weight="fill" aria-hidden />
-                <span className="hidden sm:inline">{isEn ? "AI Copilot" : "المساعد الذكي"}</span>
-              </button>
-
               <NotificationBell locale={locale} />
-
-              <span className="hidden items-center gap-1.5 rounded-full bg-surface-muted/60 px-3 py-1 text-xs font-bold text-text-muted md:inline-flex shadow-2xs">
-                <ShieldCheck size={15} weight="fill" aria-hidden className="text-primary" />
-                <span>{isEn ? "Encrypted & Secure" : "اتصال آمن ومشفّر"}</span>
-              </span>
               <ThemeToggle />
               <LocaleToggle currentLocale={locale} compact />
             </div>
@@ -302,10 +380,203 @@ export function AppShell({
         {/* Page Content Body */}
         <main
           data-testid={testId}
-          className="mx-auto flex w-full max-w-[1600px] min-w-0 flex-1 flex-col gap-6 px-4 pb-12 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8"
+          className="mx-auto flex w-full max-w-[1600px] min-w-0 flex-1 flex-col gap-6 px-4 pb-24 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8"
         >
           {children}
         </main>
+      </div>
+
+      {/* Floating Modern AI Assistant Menu & Launcher */}
+      <div className="fixed bottom-5 left-5 z-40 flex flex-col items-start gap-2">
+        {/* Modern 2026 Assistant Command Menu Popover */}
+        {aiMenuOpen && !copilotOpen && (
+          <div
+            data-testid="ai-assistant-menu"
+            className="panel-shadow flex w-[min(90vw,340px)] flex-col gap-2 rounded-2xl border border-border/80 bg-surface/98 p-3 shadow-2xl backdrop-blur-2xl animate-in fade-in slide-in-from-bottom-3 duration-200"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-border/60 pb-2.5 px-1">
+              <div className="flex items-center gap-2">
+                <span className="flex size-6 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <Sparkle size={14} weight="fill" />
+                </span>
+                <span className="text-xs font-extrabold text-text">
+                  {isEn ? "DAFQLY AI Copilot" : "مساعد دفقلي الذكي"}
+                </span>
+              </div>
+              <span className="rounded-full bg-callout px-2 py-0.5 text-[10px] font-bold text-primary">
+                Gemini 3.1 Live
+              </span>
+            </div>
+
+            {/* Menu Options */}
+            <div className="flex flex-col gap-1">
+              <button
+                type="button"
+                data-testid="ai-menu-briefing-btn"
+                onClick={() => {
+                  setAiMenuOpen(false);
+                  setCopilotConfig({ tab: "briefing" });
+                  setCopilotOpen(true);
+                }}
+                className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-start text-xs font-semibold text-text transition-colors hover:bg-callout hover:text-primary active:scale-[0.98]"
+              >
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-primary">
+                  <Lightning size={15} weight="fill" />
+                </span>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="font-bold">{isEn ? "Executive Briefing" : "الملخص التنفيذي للمحفظة"}</span>
+                  <span className="text-[10px] text-text-muted">{isEn ? "Liquidity & health indicators" : "مؤشرات السيولة وصحة العملاء"}</span>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                data-testid="ai-menu-assistant-btn"
+                onClick={() => {
+                  setAiMenuOpen(false);
+                  setCopilotConfig({ tab: "assistant" });
+                  setCopilotOpen(true);
+                }}
+                className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-start text-xs font-semibold text-text transition-colors hover:bg-callout hover:text-primary active:scale-[0.98]"
+              >
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-primary">
+                  <Robot size={15} weight="fill" />
+                </span>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="font-bold">{isEn ? "Ask AI Assistant" : "محادثة مباشرة مع الذكاء الاصطناعي"}</span>
+                  <span className="text-[10px] text-text-muted">{isEn ? "Instant answers & analysis" : "تحليل فوري واستفسارات عن المعاملات"}</span>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                data-testid="ai-menu-reminder-btn"
+                onClick={() => {
+                  setAiMenuOpen(false);
+                  setCopilotConfig({ tab: "composer", mode: "reminder" });
+                  setCopilotOpen(true);
+                }}
+                className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-start text-xs font-semibold text-text transition-colors hover:bg-callout hover:text-primary active:scale-[0.98]"
+              >
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-teal-600 dark:text-teal-400">
+                  <WhatsappLogo size={15} weight="fill" />
+                </span>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="font-bold">{isEn ? "Smart Reminder Draft" : "صياغة تذكير ذكي للواتساب"}</span>
+                  <span className="text-[10px] text-text-muted">{isEn ? "Personalized payment messages" : "رسائل ودية أو حازمة بنقرة زر"}</span>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                data-testid="ai-menu-installment-btn"
+                onClick={() => {
+                  setAiMenuOpen(false);
+                  setCopilotConfig({ tab: "composer", mode: "installment" });
+                  setCopilotOpen(true);
+                }}
+                className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-start text-xs font-semibold text-text transition-colors hover:bg-callout hover:text-primary active:scale-[0.98]"
+              >
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-violet-600 dark:text-violet-400">
+                  <CalendarCheck size={15} weight="fill" />
+                </span>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="font-bold">{isEn ? "Installment Settlement Plan" : "جدولة مديونية على أقساط"}</span>
+                  <span className="text-[10px] text-text-muted">{isEn ? "Structured tranches with down payment" : "تقسيط المبالغ المتأخرة باحترافية"}</span>
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
+
+        <button
+          type="button"
+          data-testid="ai-copilot-trigger-btn"
+          onClick={() => {
+            if (copilotOpen) {
+              setCopilotOpen(false);
+            } else {
+              setAiMenuOpen((v) => !v);
+            }
+          }}
+          aria-label={isEn ? "AI Assistant Menu" : "قائمة المساعد الذكي"}
+          title={
+            isEn
+              ? `AI Assistant (${priorityCount} actions, ${healthStatus})`
+              : `المساعد الذكي (${priorityCount} إجراءات، حالة ${healthStatus === "urgent" ? "عاجلة" : healthStatus === "attention" ? "متابعة" : "مستقرة"})`
+          }
+          className={`group flex items-center gap-2.5 rounded-full border px-4 py-2.5 shadow-xl transition-all duration-200 hover:scale-105 active:scale-95 ${
+            copilotOpen || aiMenuOpen
+              ? "border-border bg-surface text-primary"
+              : healthStatus === "urgent"
+                ? "border-status-overdue-border bg-primary text-primary-fg hover:bg-primary-hover shadow-status-overdue-border/30"
+                : "border-primary/30 bg-primary text-primary-fg hover:bg-primary-hover"
+          }`}
+        >
+          <span
+            className={`relative flex size-8 items-center justify-center rounded-full ${
+              copilotOpen || aiMenuOpen ? "bg-callout text-primary" : "bg-white/20 text-white"
+            }`}
+          >
+            <ChatCircleDots size={19} weight="fill" aria-hidden />
+            {healthStatus === "urgent" ? (
+              <span className="absolute -end-0.5 -top-0.5 flex size-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-status-overdue-fg opacity-75" />
+                <span className="relative inline-flex size-2.5 rounded-full border border-surface bg-status-overdue-fg" />
+              </span>
+            ) : healthStatus === "attention" ? (
+              <span
+                className="absolute -end-0.5 -top-0.5 size-2.5 rounded-full border border-surface bg-status-due-fg"
+                aria-hidden
+              />
+            ) : (
+              <span
+                className="absolute -end-0.5 -top-0.5 size-2.5 rounded-full border border-surface bg-status-paid-fg"
+                aria-hidden
+              />
+            )}
+          </span>
+          <span className="flex flex-col items-start text-start">
+            <span className="flex items-center gap-1.5 text-xs font-extrabold leading-tight">
+              <Sparkle size={12} weight="fill" aria-hidden />
+              <span>{isEn ? "AI Assistant" : "المساعد الذكي"}</span>
+              {priorityCount > 0 && (
+                <span
+                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-black ${
+                    copilotOpen || aiMenuOpen
+                      ? "bg-primary text-primary-fg"
+                      : "bg-white/25 text-white"
+                  }`}
+                >
+                  {priorityCount}
+                </span>
+              )}
+            </span>
+            <span className="hidden text-[10px] font-medium opacity-90 sm:inline">
+              {copilotOpen
+                ? isEn
+                  ? "Close window"
+                  : "إغلاق النافذة"
+                : aiMenuOpen
+                  ? isEn
+                    ? "Choose an action"
+                    : "اختر إجراءً سريعاً"
+                  : healthStatus === "urgent"
+                    ? isEn
+                      ? `${priorityCount} urgent action(s)`
+                      : `${priorityCount} إجراءات عاجلة مقترحة`
+                    : healthStatus === "attention"
+                      ? isEn
+                        ? "Follow-ups recommended"
+                        : "متابعات مقترحة للسيولة"
+                      : isEn
+                        ? "Ledger healthy & up to date"
+                        : "السيولة مستقرة ومحدثة"}
+            </span>
+          </span>
+          <CaretUp size={13} weight="bold" className={`transition-transform ${aiMenuOpen ? "rotate-180" : ""}`} />
+        </button>
       </div>
 
       <CommandPalette isOpen={searchOpen} onClose={() => setSearchOpen(false)} locale={locale} />
@@ -316,7 +587,9 @@ export function AppShell({
         initialTab={copilotConfig.tab}
         initialDebtorId={copilotConfig.debtorId}
         initialTone={copilotConfig.tone}
+        initialMode={copilotConfig.mode}
       />
     </div>
+    </CurrencyProvider>
   );
 }

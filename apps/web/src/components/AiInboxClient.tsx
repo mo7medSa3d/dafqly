@@ -8,8 +8,10 @@ import {
   Check,
   CheckCircle,
   Clock,
+  Copy,
   Robot,
   ShieldCheck,
+  Sparkle,
   UploadSimple,
   User,
   XCircle,
@@ -20,7 +22,8 @@ import { InitialAvatar, Panel, btnPrimary, inputCls, labelCls } from "./ui";
 /**
  * The AI inbox (F7/F8): reply classifications a human must review, receipt
  * claims awaiting confirm/reject (the M3 claimed-payment path settles
- * them), and a merchant receipt upload that runs the F7 pipeline.
+ * them), a merchant receipt upload that runs the F7 pipeline, and AI Smart
+ * Reply generation for 1-click contextual WhatsApp responses.
  */
 interface IntentRow {
   id: string; intent: string; confidence: number; resolvedBy: string; actionTaken: string | null;
@@ -31,6 +34,12 @@ interface ClaimRow {
   method: string; receivedOn: string; referenceNo: string | null;
 }
 interface DebtorLite { id: string; displayName: string }
+interface SuggestedReplyState {
+  replyAr: string;
+  replyEn: string;
+  recommendedActionAr: string;
+  recommendedActionEn: string;
+}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -51,6 +60,9 @@ export function AiInboxClient() {
   const [debtorId, setDebtorId] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [aiReplies, setAiReplies] = useState<Record<string, SuggestedReplyState>>({});
+  const [generatingReplyFor, setGeneratingReplyFor] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [i, c, ds] = await Promise.all([
@@ -93,6 +105,42 @@ export function AiInboxClient() {
       setMsg(t("resolved"));
       await load();
     } catch { setMsg(t("failed")); } finally { setBusy(false); }
+  }
+
+  async function onSuggestReply(item: IntentRow) {
+    setGeneratingReplyFor(item.id);
+    try {
+      const res = await trpc.aiWorkspace.suggestInboxReply.mutate({
+        intentId: item.id,
+        debtorId: item.debtorId ?? undefined,
+        intent: item.intent,
+        debtorName: item.debtorName ?? undefined,
+        customerMessage: item.text ?? undefined,
+      });
+      setAiReplies((prev) => ({
+        ...prev,
+        [item.id]: {
+          replyAr: res.replyAr,
+          replyEn: res.replyEn,
+          recommendedActionAr: res.recommendedActionAr,
+          recommendedActionEn: res.recommendedActionEn,
+        },
+      }));
+    } catch {
+      setMsg(t("failed"));
+    } finally {
+      setGeneratingReplyFor(null);
+    }
+  }
+
+  async function onCopyReply(id: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 1800);
+    } catch {
+      // Ignore clipboard failures
+    }
   }
 
   return (
@@ -177,56 +225,123 @@ export function AiInboxClient() {
           ) : (
             <div className="panel-shadow overflow-hidden rounded-2xl border border-border bg-surface">
               <ul className="flex flex-col divide-y divide-border">
-                {intents.map((i) => (
-                  <li key={i.id} data-testid={`intent-${i.id}`} className="flex flex-col gap-2 p-4 transition-colors hover:bg-callout/40 sm:p-5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 font-bold text-text">
-                        <span>{i.debtorName ?? (isAr ? "عميل غير محدد" : "Unassigned")}</span>
-                        <span className="rounded-full bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{i.intent}</span>
+                {intents.map((i) => {
+                  const suggested = aiReplies[i.id];
+                  const replyText = suggested ? (isAr ? suggested.replyAr : suggested.replyEn) : "";
+                  const waHref = i.debtorPhone
+                    ? `https://wa.me/${i.debtorPhone.replace(/\D/g, "")}${replyText ? `?text=${encodeURIComponent(replyText)}` : ""}`
+                    : null;
+
+                  return (
+                    <li key={i.id} data-testid={`intent-${i.id}`} className="flex flex-col gap-2.5 p-4 transition-colors hover:bg-callout/40 sm:p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 font-bold text-text">
+                          <span>{i.debtorName ?? (isAr ? "عميل غير محدد" : "Unassigned")}</span>
+                          <span className="rounded-full bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{i.intent}</span>
+                        </div>
+                        <span className="tnum rounded-full border border-border bg-surface-muted px-2.5 py-0.5 text-xs font-semibold text-text-muted" dir="ltr">
+                          {Math.round(i.confidence * 100)}% {isAr ? "ثقة" : "confidence"}
+                        </span>
                       </div>
-                      <span className="tnum rounded-full border border-border bg-surface-muted px-2.5 py-0.5 text-xs font-semibold text-text-muted" dir="ltr">
-                        {Math.round(i.confidence * 100)}% {isAr ? "ثقة" : "confidence"}
-                      </span>
-                    </div>
-                    {i.text && <p className="rounded-xl bg-surface-muted/60 p-3 text-sm text-text">{i.text}</p>}
-                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                      <p className="text-xs text-text-muted">
-                        {i.actionTaken ?? (isAr ? "بانتظار قرارك" : "Awaiting action")} · <span dir="ltr">{i.createdAt.slice(0, 10)}</span>
-                      </p>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {i.debtorPhone && (
-                          <a
-                            href={`https://wa.me/${i.debtorPhone.replace(/\D/g, "")}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white transition-all hover:bg-emerald-500 active:scale-95 shadow-2xs"
-                          >
-                            <ChatCircleDots size={14} weight="fill" />
-                            <span>{t("chatWhatsapp")}</span>
-                          </a>
-                        )}
-                        {i.debtorId && (
-                          <Link
-                            href={`/${locale}/debtors/${i.debtorId}`}
-                            className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-bold text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95"
-                          >
-                            <User size={13} weight="bold" />
-                            <span>{t("viewDebtor")}</span>
-                          </Link>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => void onResolveIntent(i.id, "reviewed_by_merchant")}
-                          disabled={busy}
-                          className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg bg-surface-muted px-2.5 py-1 text-xs font-bold text-text-muted transition-colors hover:bg-primary hover:text-primary-fg active:scale-95 disabled:opacity-50"
+                      {i.text && <p className="rounded-xl bg-surface-muted/60 p-3 text-sm text-text">{i.text}</p>}
+
+                      {/* AI Suggested Smart Reply Box */}
+                      {suggested && (
+                        <div
+                          data-testid={`intent-ai-reply-${i.id}`}
+                          className="flex flex-col gap-2 rounded-xl border border-primary/30 bg-callout/50 p-3.5 text-xs"
                         >
-                          <Check size={13} weight="bold" />
-                          <span>{t("resolve")}</span>
-                        </button>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="inline-flex items-center gap-1 font-bold text-primary">
+                              <Sparkle size={13} weight="fill" aria-hidden />
+                              {isAr ? "الرد الذكي المقترح:" : "AI Suggested Reply:"}
+                            </span>
+                            <span className="rounded-full bg-surface px-2.5 py-0.5 text-[11px] font-semibold text-text-muted">
+                              {isAr ? suggested.recommendedActionAr : suggested.recommendedActionEn}
+                            </span>
+                          </div>
+                          <p className="leading-relaxed text-text">{replyText}</p>
+                          <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => void onCopyReply(i.id, replyText)}
+                              className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-3 py-1 text-[11px] font-bold text-text hover:border-primary"
+                            >
+                              {copiedId === i.id ? <Check size={12} weight="bold" className="text-primary" /> : <Copy size={12} weight="fill" />}
+                              <span>{copiedId === i.id ? (isAr ? "تم النسخ" : "Copied") : (isAr ? "نسخ الرد" : "Copy Reply")}</span>
+                            </button>
+                            {waHref && (
+                              <a
+                                href={waHref}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded-full bg-status-paid-bg px-3 py-1 text-[11px] font-bold text-status-paid-fg hover:opacity-90"
+                              >
+                                <ChatCircleDots size={13} weight="fill" />
+                                <span>{isAr ? "إرسال الرد عبر واتساب" : "Send Reply on WhatsApp"}</span>
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                        <p className="text-xs text-text-muted">
+                          {i.actionTaken ?? (isAr ? "بانتظار قرارك" : "Awaiting action")} · <span dir="ltr">{i.createdAt.slice(0, 10)}</span>
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            data-testid={`intent-suggest-reply-${i.id}`}
+                            disabled={generatingReplyFor === i.id}
+                            onClick={() => void onSuggestReply(i)}
+                            className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg bg-callout px-2.5 py-1 text-xs font-bold text-primary transition-all hover:bg-primary hover:text-primary-fg active:scale-95 disabled:opacity-50"
+                          >
+                            <Sparkle size={13} weight="fill" aria-hidden />
+                            <span>
+                              {generatingReplyFor === i.id
+                                ? isAr
+                                  ? "جاري التوليد..."
+                                  : "Drafting..."
+                                : isAr
+                                  ? "اقتراح رد ذكي"
+                                  : "AI Smart Reply"}
+                            </span>
+                          </button>
+                          {waHref && (
+                            <a
+                              href={waHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg bg-status-paid-bg px-2.5 py-1 text-xs font-bold text-status-paid-fg transition-all hover:opacity-90 active:scale-95 shadow-2xs"
+                            >
+                              <ChatCircleDots size={14} weight="fill" />
+                              <span>{t("chatWhatsapp")}</span>
+                            </a>
+                          )}
+                          {i.debtorId && (
+                            <Link
+                              href={`/${locale}/debtors/${i.debtorId}`}
+                              className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-bold text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95"
+                            >
+                              <User size={13} weight="bold" />
+                              <span>{t("viewDebtor")}</span>
+                            </Link>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => void onResolveIntent(i.id, "reviewed_by_merchant")}
+                            disabled={busy}
+                            className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg bg-surface-muted px-2.5 py-1 text-xs font-bold text-text-muted transition-colors hover:bg-primary hover:text-primary-fg active:scale-95 disabled:opacity-50"
+                          >
+                            <Check size={13} weight="bold" />
+                            <span>{t("resolve")}</span>
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}
@@ -250,7 +365,7 @@ export function AiInboxClient() {
               </select>
             </label>
 
-            <label className="brand-pattern-light flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border-strong bg-surface-muted/40 p-6 text-center transition-colors hover:bg-surface-muted/70">
+            <label className="brand-pattern-light flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-border/80 bg-surface-muted/40 p-6 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/70 hover:shadow-xs">
               <UploadSimple size={28} weight="fill" aria-hidden className="text-primary" />
               <span className="font-bold text-sm text-text">{t("receiptUploadTitle")}</span>
               <span className="text-xs text-text-muted">

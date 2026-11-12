@@ -2,9 +2,13 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   buildCollectionsBriefing,
+  buildInstallmentPlan,
+  computeOptimalReminderWindow,
+  planCopilotToolCalls,
   formatEgp,
   sanitizePromptData,
   scoreDebtorIntelligence,
+  type ConcentrationLevel,
   type DebtorActionKind,
   type DebtorIntelligence,
   type NotificationTone,
@@ -21,8 +25,9 @@ import {
   messageIntents,
   optOuts,
   payments,
+  tenants,
 } from "@tahseel/db/schema";
-import { getKpis } from "./reports";
+import { getForecast, getKpis } from "./reports";
 import { getDashboardSummary } from "./services";
 import { syncWorkspaceNotifications } from "./notifications";
 
@@ -52,6 +57,19 @@ export interface DebtorIntelligenceView {
   };
 }
 
+export interface PortfolioRiskView {
+  topDebtorSharePct: number;
+  topDebtorName: string | null;
+  top3ConcentrationPct: number;
+  concentrationLevel: ConcentrationLevel;
+  overdueSeverityRatioPct: number;
+  atRiskReceivablesMinor: string;
+  expectedNext14DaysMinor: string;
+  velocityScore: number;
+  insightsAr: string[];
+  insightsEn: string[];
+}
+
 export interface WorkspaceIntelligenceView {
   todayIso: string;
   businessName: string;
@@ -72,6 +90,7 @@ export interface WorkspaceIntelligenceView {
     upcomingChequesCount: number;
     bouncedChequesCount: number;
   };
+  portfolioRisk: PortfolioRiskView;
   topActions: DebtorIntelligenceView[];
   debtorScores: DebtorIntelligenceView[];
 }
@@ -93,8 +112,9 @@ function addDaysIso(iso: string, days: number): string {
 /**
  * Loads all single-tenant debtors, open/recent invoices, cheques, disputes,
  * receipt claims, and opt-outs in a single RLS-scoped transaction (zero N+1),
- * scores every debtor deterministically, synthesizes the executive briefing,
- * and optionally triggers idempotent operational notifications.
+ * scores every debtor deterministically, synthesizes the executive briefing
+ * and portfolio risk concentration metrics, and optionally triggers idempotent
+ * operational notifications.
  */
 export async function getWorkspaceIntelligence(
   app: Db,
@@ -234,13 +254,18 @@ export async function getWorkspaceIntelligence(
       totalOutstandingMinor: briefing.metrics.totalOutstandingMinor.toString(),
       overdueMinor: briefing.metrics.overdueMinor.toString(),
       collectedThisMonthMinor: briefing.metrics.collectedThisMonthMinor.toString(),
-      collectionRate: briefing.metrics.collectionRate,
-      dsoDays: briefing.metrics.dsoDays,
+      collectionRate: Math.round(briefing.metrics.collectionRate * 100),
+      dsoDays: Math.round(briefing.metrics.dsoDays),
       pendingClaimsCount: briefing.metrics.pendingClaimsCount,
       openDisputesCount: briefing.metrics.openDisputesCount,
       humanIntentsCount: briefing.metrics.humanIntentsCount,
       upcomingChequesCount: briefing.metrics.upcomingChequesCount,
       bouncedChequesCount: briefing.metrics.bouncedChequesCount,
+    },
+    portfolioRisk: {
+      ...briefing.portfolioRisk,
+      atRiskReceivablesMinor: briefing.portfolioRisk.atRiskReceivablesMinor.toString(),
+      expectedNext14DaysMinor: briefing.portfolioRisk.expectedNext14DaysMinor.toString(),
     },
     topActions: briefing.topActions.map(toView),
     debtorScores: scored.map(toView),
@@ -289,23 +314,58 @@ export async function getDebtorIntelligence(
 }
 
 export const copilotQueryInput = z.object({
-  intent: z.enum(["daily_summary", "priority_customers", "action_plan", "inbox_triage", "custom_question"]),
+  intent: z.enum([
+    "daily_summary",
+    "priority_customers",
+    "action_plan",
+    "inbox_triage",
+    "forecast_and_risk",
+    "settlement_options",
+    "optimize_reminders",
+    "custom_question",
+  ]),
   question: z.string().trim().max(400).optional(),
   locale: z.enum(["ar", "en"]).default("ar"),
 });
 export type CopilotQueryInput = z.input<typeof copilotQueryInput>;
 
+export interface CopilotToolCallTrace {
+  toolName: string;
+  titleAr: string;
+  titleEn: string;
+  status: "completed";
+  summaryAr: string;
+  summaryEn: string;
+}
+
+export interface CopilotOptimalWindowView {
+  canSend: boolean;
+  isImmediateAllowed: boolean;
+  localDateFormatted: string;
+  localTimeFormatted: string;
+  windowLabelAr: string;
+  windowLabelEn: string;
+  recommendedTone: NotificationTone;
+  strategyReasonAr: string;
+  strategyReasonEn: string;
+  blockReasonAr: string | null;
+  blockReasonEn: string | null;
+}
+
 export interface CopilotResponse {
   answerAr: string;
   answerEn: string;
+  toolCalls: CopilotToolCallTrace[];
+  matchedDebtor: (DebtorIntelligenceView & { optimalWindow: CopilotOptimalWindowView }) | null;
   suggestedDebtors: DebtorIntelligenceView[];
   quickLinks: { labelAr: string; labelEn: string; href: string }[];
 }
 
 /**
- * Grounded AI Copilot assistant: routes allowlisted query intents over live
- * single-tenant metrics & scores (Hard Rule #4: untrusted text is sanitized data,
- * never raw SQL or instructions). Logs every execution to `audit_log`.
+ * Dynamic Agentic AI Copilot: plans and executes allowlisted function calls (`toolCalls`)
+ * over live single-tenant metrics, customer ledgers, cash-flow forecasts, concentration risk,
+ * optimal-time reminder windows, and settlement restructurings (Hard Rule #4: untrusted text
+ * is sanitized data, never raw SQL or instructions). Logs every execution to `audit_log`.
  */
 export async function askWorkspaceCopilot(
   app: Db,
@@ -318,18 +378,73 @@ export async function askWorkspaceCopilot(
   const input = copilotQueryInput.parse(rawInput);
   const safeQuestion = sanitizePromptData(input.question ?? "");
   const intel = await getWorkspaceIntelligence(app, tenantId, businessName, todayIso);
+  const now = new Date();
 
-  // Determine effective intent for custom free-text questions via deterministic keyword routing
-  let effectiveIntent = input.intent;
-  if (effectiveIntent === "custom_question" && safeQuestion) {
-    if (/متأخر|أولوية|أهم|عميل|عملاء|priority|overdue|top|who/i.test(safeQuestion)) {
-      effectiveIntent = "priority_customers";
-    } else if (/خطة|خطوات|تذكير|رسالة|plan|follow|remind|draft/i.test(safeQuestion)) {
-      effectiveIntent = "action_plan";
-    } else if (/إيصال|اعتراض|صندوق|شيك|inbox|receipt|dispute|cheque/i.test(safeQuestion)) {
-      effectiveIntent = "inbox_triage";
-    } else {
-      effectiveIntent = "daily_summary";
+  const tenantPolicy = await withTenant(app, tenantId, async (tx) => {
+    const [row] = await tx
+      .select({ timezone: tenants.timezone, settings: tenants.settings })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId));
+    return {
+      timezone: row?.timezone ?? "Africa/Cairo",
+      quietStart: row?.settings?.quietStart ?? "21:00",
+      quietEnd: row?.settings?.quietEnd ?? "09:00",
+      fridayMorningSkip: row?.settings?.fridayMorningSkip ?? false,
+    };
+  });
+
+  // 1. Dynamic Function-Calling Planner
+  const plan = planCopilotToolCalls({
+    intent: input.intent,
+    question: safeQuestion,
+    debtors: intel.debtorScores.map((d) => ({
+      debtorId: d.debtorId,
+      displayName: d.displayName,
+      phoneE164: d.phoneE164,
+    })),
+  });
+
+  const effectiveIntent = plan.effectiveIntent;
+  const toolCalls: CopilotToolCallTrace[] = [];
+  let matchedDebtor: (DebtorIntelligenceView & { optimalWindow: CopilotOptimalWindowView }) | null = null;
+
+  if (plan.matchedDebtorId) {
+    const found = intel.debtorScores.find((d) => d.debtorId === plan.matchedDebtorId);
+    if (found) {
+      const win = computeOptimalReminderWindow({
+        now,
+        policy: tenantPolicy,
+        daysOverdue: found.maxDaysOverdue,
+        riskTier: found.tier,
+        optedOut: found.optedOut,
+        openDisputesCount: found.recommendation.actionKind === "resolve_dispute" ? 1 : 0,
+        hasOpenInvoice: found.openInvoicesCount > 0 && BigInt(found.outstandingMinor) > 0n,
+      });
+      matchedDebtor = {
+        ...found,
+        optimalWindow: {
+          canSend: win.canSend,
+          isImmediateAllowed: win.isImmediateAllowed,
+          localDateFormatted: win.localDateFormatted,
+          localTimeFormatted: win.localTimeFormatted,
+          windowLabelAr: win.windowLabelAr,
+          windowLabelEn: win.windowLabelEn,
+          recommendedTone: win.recommendedTone,
+          strategyReasonAr: win.strategyReasonAr,
+          strategyReasonEn: win.strategyReasonEn,
+          blockReasonAr: win.blockReasonAr,
+          blockReasonEn: win.blockReasonEn,
+        },
+      };
+
+      toolCalls.push({
+        toolName: "lookup_customer_ledger",
+        titleAr: `استعلام سجل العميل: ${found.displayName}`,
+        titleEn: `Lookup Customer Ledger: ${found.displayName}`,
+        status: "completed",
+        summaryAr: `الرصيد المفتوح ${formatEgp(BigInt(found.outstandingMinor))} ج.م (${found.openInvoicesCount} فاتورة) · التقييم الصحي ${found.healthScore}/100`,
+        summaryEn: `Open balance ${formatEgp(BigInt(found.outstandingMinor))} EGP (${found.openInvoicesCount} inv) · Health ${found.healthScore}/100`,
+      });
     }
   }
 
@@ -337,8 +452,110 @@ export async function askWorkspaceCopilot(
   let answerEn = intel.summaryEn;
   const quickLinks: { labelAr: string; labelEn: string; href: string }[] = [];
 
-  if (effectiveIntent === "priority_customers") {
+  if (effectiveIntent === "customer_lookup" && matchedDebtor) {
+    const outStr = formatEgp(BigInt(matchedDebtor.outstandingMinor));
+    const ovStr = formatEgp(BigInt(matchedDebtor.overdueMinor));
+    toolCalls.push({
+      toolName: "optimize_reminder_schedule",
+      titleAr: "حساب التوقيت الأمثل للتذكير",
+      titleEn: "Compute Optimal Reminder Window",
+      status: "completed",
+      summaryAr: matchedDebtor.optimalWindow.windowLabelAr,
+      summaryEn: matchedDebtor.optimalWindow.windowLabelEn,
+    });
+    answerAr = [
+      `تحليل حساب العميل «${matchedDebtor.displayName}»:`,
+      `• الرصيد المفتوح: ${outStr} ج.م (منها ${ovStr} ج.م متأخرة منذ ${matchedDebtor.maxDaysOverdue} يوم).`,
+      `• المؤشر الائتماني: ${matchedDebtor.healthScore}/100 — التوصية: ${matchedDebtor.recommendation.titleAr}.`,
+      `• التوقيت الأمثل للتذكير: ${matchedDebtor.optimalWindow.windowLabelAr}.`,
+    ].join("\n");
+    answerEn = [
+      `Account analysis for "${matchedDebtor.displayName}":`,
+      `• Open balance: ${outStr} EGP (${ovStr} EGP overdue, max ${matchedDebtor.maxDaysOverdue}d).`,
+      `• Credit Health: ${matchedDebtor.healthScore}/100 — Next Best Action: ${matchedDebtor.recommendation.titleEn}.`,
+      `• Optimal Reminder Window: ${matchedDebtor.optimalWindow.windowLabelEn}.`,
+    ].join("\n");
+    quickLinks.push({
+      labelAr: `فتح ملف ${matchedDebtor.displayName}`,
+      labelEn: `Open ${matchedDebtor.displayName}`,
+      href: `/debtors/${matchedDebtor.debtorId}`,
+    });
+    quickLinks.push({
+      labelAr: "قائمة العملاء",
+      labelEn: "All Debtors",
+      href: "/debtors",
+    });
+  } else if (effectiveIntent === "optimize_reminders") {
+    const eligibleOverdue = intel.debtorScores.filter(
+      (d) => BigInt(d.overdueMinor) > 0n && !d.optedOut && d.recommendation.actionKind !== "resolve_dispute",
+    );
+    const sampleWin = computeOptimalReminderWindow({
+      now,
+      policy: tenantPolicy,
+      daysOverdue: eligibleOverdue[0]?.maxDaysOverdue ?? 7,
+      riskTier: eligibleOverdue[0]?.tier ?? "watch",
+      optedOut: false,
+      openDisputesCount: 0,
+      hasOpenInvoice: true,
+    });
+
+    toolCalls.push({
+      toolName: "optimize_reminder_schedule",
+      titleAr: "محرك جدولة التذكيرات في الوقت المناسب",
+      titleEn: "Optimal-Time Reminder Schedule Engine",
+      status: "completed",
+      summaryAr: `${eligibleOverdue.length} عميل مؤهل للتذكير · ${sampleWin.windowLabelAr}`,
+      summaryEn: `${eligibleOverdue.length} eligible overdue debtor(s) · ${sampleWin.windowLabelEn}`,
+    });
+
+    if (matchedDebtor) {
+      answerAr = [
+        `جدولة التذكير الذكي للعميل «${matchedDebtor.displayName}»:`,
+        `• الحالة: ${matchedDebtor.optimalWindow.windowLabelAr}.`,
+        `• النبرة المقترحة: ${matchedDebtor.optimalWindow.recommendedTone === "urgent" ? "عاجلة" : matchedDebtor.optimalWindow.recommendedTone === "firm" ? "حازمة" : "مهذبة"}.`,
+        `• السبب: ${matchedDebtor.optimalWindow.strategyReasonAr}`,
+        `يمكنك الضغط على زر «إرسال/جدولة تذكير ذكي» بالأسفل للتنفيذ الفوري.`,
+      ].join("\n");
+      answerEn = [
+        `Smart reminder schedule for "${matchedDebtor.displayName}":`,
+        `• Window: ${matchedDebtor.optimalWindow.windowLabelEn}.`,
+        `• Recommended Tone: ${matchedDebtor.optimalWindow.recommendedTone}.`,
+        `• Strategy: ${matchedDebtor.optimalWindow.strategyReasonEn}`,
+        `Click "Dispatch Smart Reminder" below to execute immediately.`,
+      ].join("\n");
+    } else {
+      const listAr = eligibleOverdue
+        .slice(0, 3)
+        .map((d, i) => `${i + 1}. ${d.displayName} (${formatEgp(BigInt(d.overdueMinor))} ج.م — متأخر ${d.maxDaysOverdue} يوم)`)
+        .join("\n");
+      const listEn = eligibleOverdue
+        .slice(0, 3)
+        .map((d, i) => `${i + 1}. ${d.displayName} (${formatEgp(BigInt(d.overdueMinor))} EGP — ${d.maxDaysOverdue}d overdue)`)
+        .join("\n");
+      answerAr = [
+        `تحليل أوقات الإرسال المثلى للتذكيرات (${sampleWin.windowLabelAr}):`,
+        `• عدد الحسابات المتأخرة المؤهلة للإرسال الآمن (خارج الإيقاف والاعتراضات): ${eligibleOverdue.length} عميل.`,
+        listAr ? `أهم الحسابات الجاهزة للتذكير:\n${listAr}` : "لا توجد حسابات متأخرة حالياً.",
+        `• يمكنك تشغيل «تحسين وجدولة جميع التذكيرات» بضغطة واحدة بالأسفل.`,
+      ].join("\n");
+      answerEn = [
+        `Optimal Reminder Dispatch Analysis (${sampleWin.windowLabelEn}):`,
+        `• Eligible overdue debtors (passing opt-out & dispute guards): ${eligibleOverdue.length}.`,
+        listEn ? `Top ready accounts:\n${listEn}` : "No overdue accounts right now.",
+        `• Use the 1-click "Optimize All Reminders" action below to queue/dispatch.`,
+      ].join("\n");
+    }
+    quickLinks.push({ labelAr: "العملاء المتأخرون", labelEn: "Overdue Debtors", href: "/debtors" });
+  } else if (effectiveIntent === "priority_customers") {
     const top = intel.topActions.slice(0, 3);
+    toolCalls.push({
+      toolName: "query_workspace_overview",
+      titleAr: "ترتيب أولويات التحصيل حسب التأثير النقدي",
+      titleEn: "Rank Collection Priorities by Cash Impact",
+      status: "completed",
+      summaryAr: `تم تحليل ${intel.debtorScores.length} عميل وتحديد أعلى ${top.length} أولويات`,
+      summaryEn: `Scored ${intel.debtorScores.length} debtors and ranked top ${top.length} priorities`,
+    });
     if (top.length === 0) {
       answerAr = "جميع حسابات العملاء منتظمة حالياً ولا توجد مديونيات متأخرة تتطلب متابعة عاجلة.";
       answerEn = "All customer accounts are currently in good standing with no urgent follow-ups.";
@@ -356,18 +573,112 @@ export async function askWorkspaceCopilot(
   } else if (effectiveIntent === "action_plan") {
     const overdueCount = intel.debtorScores.filter((d) => BigInt(d.overdueMinor) > 0n).length;
     const optedOutCount = intel.debtorScores.filter((d) => d.optedOut && BigInt(d.outstandingMinor) > 0n).length;
+    toolCalls.push({
+      toolName: "query_workspace_overview",
+      titleAr: "توليد خطة العمل التشغيلية اليومية",
+      titleEn: "Generate Daily Operational Action Plan",
+      status: "completed",
+      summaryAr: `${overdueCount} حساب متأخر · ${intel.metrics.pendingClaimsCount} إيصال · ${intel.metrics.openDisputesCount} اعتراض`,
+      summaryEn: `${overdueCount} overdue · ${intel.metrics.pendingClaimsCount} claim(s) · ${intel.metrics.openDisputesCount} dispute(s)`,
+    });
     answerAr = `خطة العمل المقترحة اليوم:\n• متابعة ${overdueCount} عميل لديهم مستحقات متأخرة (البدء بالأعلى تأثراً على السيولة).\n• مراجعة ${intel.metrics.pendingClaimsCount} إيصال سداد و${intel.metrics.openDisputesCount} اعتراض مفتوح.${optedOutCount > 0 ? `\n• توجد ${optedOutCount} حسابات موقوفة التذكير ولها أرصدة مفتوحة.` : ""}`;
     answerEn = `Recommended action plan today:\n• Follow up ${overdueCount} overdue customer(s) prioritized by cash impact.\n• Clear ${intel.metrics.pendingClaimsCount} receipt claim(s) and ${intel.metrics.openDisputesCount} dispute(s).${optedOutCount > 0 ? `\n• ${optedOutCount} debtor(s) have paused reminders despite open balances.` : ""}`;
     quickLinks.push({ labelAr: "صندوق المراجعة", labelEn: "Review Inbox", href: "/ai-inbox" });
   } else if (effectiveIntent === "inbox_triage") {
     const { pendingClaimsCount, openDisputesCount, humanIntentsCount, upcomingChequesCount, bouncedChequesCount } = intel.metrics;
+    toolCalls.push({
+      toolName: "triage_inbox_and_disputes",
+      titleAr: "فرز الإيصالات والاعتراضات والشيكات",
+      titleEn: "Triage Receipts, Disputes & Cheques Queue",
+      status: "completed",
+      summaryAr: `${pendingClaimsCount} إيصال · ${openDisputesCount} اعتراض · ${humanIntentsCount} رد واتساب`,
+      summaryEn: `${pendingClaimsCount} claims · ${openDisputesCount} disputes · ${humanIntentsCount} replies`,
+    });
     answerAr = `ملخص العناصر التي تتطلب مراجعة بشرية:\n• إيصالات سداد بانتظار التأكيد: ${pendingClaimsCount}\n• اعتراضات فواتير مفتوحة: ${openDisputesCount}\n• ردود واتساب للمراجعة: ${humanIntentsCount}\n• شيكات قريبة/مرتدة: ${upcomingChequesCount + bouncedChequesCount}`;
     answerEn = `Human review queue summary:\n• Pending receipt claims: ${pendingClaimsCount}\n• Open invoice disputes: ${openDisputesCount}\n• WhatsApp replies awaiting triage: ${humanIntentsCount}\n• Upcoming/bounced cheques: ${upcomingChequesCount + bouncedChequesCount}`;
     quickLinks.push(
       { labelAr: "صندوق الوارد الذكي", labelEn: "AI Inbox", href: "/ai-inbox" },
       { labelAr: "إدارة الشيكات", labelEn: "Cheques", href: "/cheques" },
     );
+  } else if (effectiveIntent === "forecast_and_risk") {
+    const fc = await getForecast(app, tenantId, todayIso).catch(() => null);
+    const totalExpected8w = fc?.enoughData
+      ? fc.weeks.reduce((acc, w) => acc + BigInt(w.expectedMinor), 0n)
+      : BigInt(intel.portfolioRisk.expectedNext14DaysMinor);
+    const risk = intel.portfolioRisk;
+    toolCalls.push({
+      toolName: "analyze_cashflow_and_risk",
+      titleAr: "تحليل التوقعات النقدية ومخاطر التركز",
+      titleEn: "Analyze Cashflow Forecast & Concentration Risk",
+      status: "completed",
+      summaryAr: `سرعة التحصيل ${risk.velocityScore}/100 · تركز أعلى 3 عملاء ${risk.top3ConcentrationPct}%`,
+      summaryEn: `Velocity ${risk.velocityScore}/100 · Top-3 concentration ${risk.top3ConcentrationPct}%`,
+    });
+    answerAr = [
+      `تحليل السيولة ومخاطر المحفظة الائتمانية:`,
+      `• مؤشر سرعة التحصيل (Velocity): ${risk.velocityScore}/100 (متوسط التحصيل ${intel.metrics.dsoDays} يوم).`,
+      `• السيولة المتوقعة قريباً: ${formatEgp(totalExpected8w)} ج.م.`,
+      ...risk.insightsAr.map((line) => `• ${line}`),
+    ].join("\n");
+    answerEn = [
+      `Liquidity & Portfolio Risk Analysis:`,
+      `• Collection Velocity Score: ${risk.velocityScore}/100 (Avg DSO ${intel.metrics.dsoDays} days).`,
+      `• Projected Inflow: ${formatEgp(totalExpected8w)} EGP.`,
+      ...risk.insightsEn.map((line) => `• ${line}`),
+    ].join("\n");
+    quickLinks.push(
+      { labelAr: "نظرة عامة والتوقعات", labelEn: "Overview & Forecast", href: "/dashboard" },
+      { labelAr: "العملاء ذوو الأولوية", labelEn: "Priority Debtors", href: "/debtors" },
+    );
+  } else if (effectiveIntent === "settlement_options") {
+    const candidate =
+      matchedDebtor ??
+      intel.topActions.find((d) => BigInt(d.outstandingMinor) > 0n) ??
+      intel.debtorScores.find((d) => BigInt(d.outstandingMinor) > 0n);
+    if (!candidate) {
+      answerAr = "لا توجد أرصدة متأخرة حالياً تتطلب جدولة أو تقسيط.";
+      answerEn = "No overdue balances currently require installment restructuring.";
+    } else {
+      const samplePlan = buildInstallmentPlan({
+        debtorName: candidate.displayName,
+        businessName,
+        totalMinor: BigInt(candidate.outstandingMinor),
+        installmentsCount: 3,
+        interval: "monthly",
+        startDateIso: todayIso,
+        downPaymentPct: 25,
+      });
+      toolCalls.push({
+        toolName: "propose_installment_plan",
+        titleAr: `بناء جدول تقسيط ذكي: ${candidate.displayName}`,
+        titleEn: `Build Installment Plan: ${candidate.displayName}`,
+        status: "completed",
+        summaryAr: `${samplePlan.installmentsCount} دفعات لإجمالي ${samplePlan.formattedTotal} ج.م (مقدم ${samplePlan.downPaymentPct}%)`,
+        summaryEn: `${samplePlan.installmentsCount} tranches for ${samplePlan.formattedTotal} EGP (${samplePlan.downPaymentPct}% down)`,
+      });
+      const linesAr = samplePlan.tranches
+        .map((t) => `• ${t.labelAr}: ${t.formattedAmount} ج.م (${t.dueDate})`)
+        .join("\n");
+      const linesEn = samplePlan.tranches
+        .map((t) => `• ${t.labelEn}: ${t.formattedAmount} EGP (${t.dueDate})`)
+        .join("\n");
+      answerAr = `مقترح جدولة ذكي للمديونية (${candidate.displayName} — ${samplePlan.formattedTotal} ج.م):\n${linesAr}\nيمكنك تخصيص عدد الأقساط وإرسال العرض مباشرة من تبويب «صياغة رسالة / جدولة».`;
+      answerEn = `Smart settlement schedule for (${candidate.displayName} — ${samplePlan.formattedTotal} EGP):\n${linesEn}\nCustomize installments and send via WhatsApp in the Smart Draft tab.`;
+      quickLinks.push({
+        labelAr: `ملف ${candidate.displayName}`,
+        labelEn: `Open ${candidate.displayName}`,
+        href: `/debtors/${candidate.debtorId}`,
+      });
+    }
   } else {
+    toolCalls.push({
+      toolName: "query_workspace_overview",
+      titleAr: "استعلام الملخص التنفيذي والمؤشرات الحية",
+      titleEn: "Query Executive Briefing & Live KPIs",
+      status: "completed",
+      summaryAr: `إجمالي المستحقات ${formatEgp(BigInt(intel.metrics.totalOutstandingMinor))} ج.م · التحصيل ${intel.metrics.collectionRate}%`,
+      summaryEn: `Open receivables ${formatEgp(BigInt(intel.metrics.totalOutstandingMinor))} EGP · Collection rate ${intel.metrics.collectionRate}%`,
+    });
     answerAr = `${intel.headlineAr}\n${intel.summaryAr}`;
     answerEn = `${intel.headlineEn}\n${intel.summaryEn}`;
     quickLinks.push({ labelAr: "الفواتير", labelEn: "Invoices", href: "/invoices" });
@@ -380,13 +691,20 @@ export async function askWorkspaceCopilot(
       action: "ai.copilot_queried",
       entity: "ai_workspace",
       entityId: tenantId,
-      after: { intent: effectiveIntent, hasQuestion: safeQuestion.length > 0 } as never,
+      after: {
+        intent: effectiveIntent,
+        hasQuestion: safeQuestion.length > 0,
+        toolsExecuted: toolCalls.map((t) => t.toolName),
+        matchedDebtorId: matchedDebtor?.debtorId ?? null,
+      } as never,
     });
   });
 
   return {
     answerAr,
     answerEn,
+    toolCalls,
+    matchedDebtor,
     suggestedDebtors: intel.topActions.slice(0, 3),
     quickLinks,
   };

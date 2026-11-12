@@ -12,6 +12,7 @@ import {
 import { trpc } from "@/lib/trpc-client";
 import type { DebtorIntelligenceView } from "@/server/intelligence";
 import { openAiCopilot } from "./AiCopilotDrawer";
+import { useCurrency } from "./CurrencyContext";
 import { EmptyState, InitialAvatar, Panel, btnPrimary, inputCls, labelCls } from "./ui";
 
 interface Debtor {
@@ -38,6 +39,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
   const t = useTranslations("debtors");
   const locale = useLocale();
   const isAr = locale === "ar";
+  const { symbol: currencySymbol } = useCurrency();
   const effectiveBusinessName = businessName || (isAr ? "منشأتك" : "Your Business");
 
   const [items, setItems] = useState<Debtor[]>([]);
@@ -53,13 +55,9 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
-  const load = useCallback(async (q: string) => {
+  const loadIntel = useCallback(async () => {
     try {
-      const [page, intelRes] = await Promise.all([
-        trpc.debtors.list.query({ search: q || undefined, limit: 200 }),
-        trpc.intelligence.overview.query({ syncNotifications: false }).catch(() => null),
-      ]);
-      setItems((page.items as unknown) as Debtor[]);
+      const intelRes = await trpc.intelligence.overview.query({ syncNotifications: false });
       if (intelRes) {
         const map: Record<string, DebtorIntelligenceView> = {};
         for (const score of intelRes.debtorScores) {
@@ -67,6 +65,19 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
         }
         setIntelById(map);
       }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadIntel();
+  }, [loadIntel]);
+
+  const load = useCallback(async (q: string) => {
+    try {
+      const page = await trpc.debtors.list.query({ search: q || undefined, limit: 200 });
+      setItems((page.items as unknown) as Debtor[]);
     } catch {
       /* ignore */
     }
@@ -88,7 +99,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
       setName("");
       setPhone("");
       setNotes("");
-      await load(search);
+      await Promise.all([load(search), loadIntel()]);
       router.refresh();
       setFeedbackMsg(isAr ? "تمت إضافة العميل بنجاح." : "Customer added successfully.");
       setTimeout(() => setFeedbackMsg(null), 3000);
@@ -182,8 +193,8 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
     const balance = BigInt(d.totalOutstandingMinor || "0");
     if (balance > 0n) {
       return isAr
-        ? `مرحباً ${d.displayName}، تحية طيبة من ${effectiveBusinessName}. نود تذكيركم بوجود مستحقات بقيمة ${fmt(d.totalOutstandingMinor)} ج.م. للتفاصيل أو السداد نسعد بتواصلكم.`
-        : `Hello ${d.displayName}, greeting from ${effectiveBusinessName}. A gentle reminder that your outstanding balance is ${fmt(d.totalOutstandingMinor)} EGP. Thank you!`;
+        ? `مرحباً ${d.displayName}، تحية طيبة من ${effectiveBusinessName}. نود تذكيركم بوجود مستحقات بقيمة ${fmt(d.totalOutstandingMinor)} ${currencySymbol}. للتفاصيل أو السداد نسعد بتواصلكم.`
+        : `Hello ${d.displayName}, greeting from ${effectiveBusinessName}. A gentle reminder that your outstanding balance is ${fmt(d.totalOutstandingMinor)} ${currencySymbol}. Thank you!`;
     }
     return isAr
       ? `مرحباً ${d.displayName}، تحية طيبة من ${effectiveBusinessName}. نود شكركم لتعاملكم الراقي، حسابكم لدينا مسدد بالكامل.`
@@ -206,7 +217,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <CurrencyCircleDollar size={18} weight="fill" className="text-primary" />
           </div>
           <span className="tnum text-xl font-black text-text" dir="ltr">
-            {formatEgp(totalOutstandingMinor)}
+            {formatEgp(totalOutstandingMinor)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span>
           </span>
           <span className="text-[11px] text-text-muted">
             {isAr ? `على ${debtCount} عميل مدين` : `Across ${debtCount} debtors`}
@@ -252,6 +263,49 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
           </span>
         </div>
       </div>
+
+      {/* Live Customer Portfolio Health & Risk Distribution Chart */}
+      {items.length > 0 && (() => {
+        const scores = Object.values(intelById);
+        const healthyCnt = scores.filter((s) => s.tier === "healthy").length || settledCount;
+        const watchCnt = scores.filter((s) => s.tier === "watch").length;
+        const atRiskCnt = scores.filter((s) => s.tier === "at_risk").length;
+        const criticalCnt = scores.filter((s) => s.tier === "critical").length;
+        const total = Math.max(1, healthyCnt + watchCnt + atRiskCnt + criticalCnt);
+        return (
+          <div data-testid="debtors-health-distribution" className="panel-shadow flex flex-col gap-2.5 rounded-2xl border border-border bg-surface p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="font-bold text-text">
+                {isAr ? "توزيع الصحة الائتمانية ومخاطر العملاء" : "Customer Credit Health & Risk Distribution"}
+              </span>
+              <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold text-text-muted">
+                <span className="inline-flex items-center gap-1">
+                  <span className="size-2 rounded-full bg-status-paid-fg" aria-hidden />
+                  {isAr ? `منتظم (${healthyCnt})` : `Healthy (${healthyCnt})`}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="size-2 rounded-full bg-primary" aria-hidden />
+                  {isAr ? `مراقبة (${watchCnt})` : `Watch (${watchCnt})`}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="size-2 rounded-full bg-yaseir-yellow" aria-hidden />
+                  {isAr ? `مخاطرة (${atRiskCnt})` : `At Risk (${atRiskCnt})`}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="size-2 rounded-full bg-status-overdue-fg" aria-hidden />
+                  {isAr ? `حرج (${criticalCnt})` : `Critical (${criticalCnt})`}
+                </span>
+              </div>
+            </div>
+            <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-surface-muted p-0.5">
+              {healthyCnt > 0 && <div style={{ width: `${Math.max(5, Math.round((healthyCnt / total) * 100))}%` }} className="h-full bg-status-paid-fg first:rounded-s-full last:rounded-e-full" />}
+              {watchCnt > 0 && <div style={{ width: `${Math.max(5, Math.round((watchCnt / total) * 100))}%` }} className="h-full bg-primary first:rounded-s-full last:rounded-e-full" />}
+              {atRiskCnt > 0 && <div style={{ width: `${Math.max(5, Math.round((atRiskCnt / total) * 100))}%` }} className="h-full bg-yaseir-yellow first:rounded-s-full last:rounded-e-full" />}
+              {criticalCnt > 0 && <div style={{ width: `${Math.max(5, Math.round((criticalCnt / total) * 100))}%` }} className="h-full bg-status-overdue-fg first:rounded-s-full last:rounded-e-full" />}
+            </div>
+          </div>
+        );
+      })()}
 
       {feedbackMsg && (
         <div
@@ -458,6 +512,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                               <span className="inline-flex items-center gap-1 rounded-full bg-status-overdue-bg px-2.5 py-0.5 text-xs font-extrabold text-status-overdue-fg">
                                 <span>{isAr ? "مستحق:" : "Due:"}</span>
                                 <span className="tnum" dir="ltr">{fmt(d.totalOutstandingMinor)}</span>
+                                <span className="text-[10px] font-bold">{currencySymbol}</span>
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
@@ -529,7 +584,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                             )}
                             {d.totalPaidMinor && BigInt(d.totalPaidMinor) > 0n && (
                               <span>
-                                • {isAr ? `مسدد: ${fmt(d.totalPaidMinor)}` : `Paid: ${fmt(d.totalPaidMinor)}`}
+                                • {isAr ? `مسدد: ${fmt(d.totalPaidMinor)} ${currencySymbol}` : `Paid: ${fmt(d.totalPaidMinor)} ${currencySymbol}`}
                               </span>
                             )}
                           </div>

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { formatEgp, canTransition, type InvoiceStatus } from "@tahseel/core";
+import { useCurrency } from "./CurrencyContext";
 import { Check, MagnifyingGlass, PencilSimple, Plus, Sparkle, WarningCircle, X } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
 import { EmptyInvoicesIllustration, ReceivablesIllustration } from "./illustrations";
@@ -33,6 +34,7 @@ export function InvoicesClient({ businessName }: { businessName?: string }) {
   const tc = useTranslations("common");
   const locale = useLocale();
   const isAr = locale === "ar";
+  const { symbol: currencySymbol } = useCurrency();
   const effectiveBusinessName = businessName || (isAr ? "منشأتك" : "Your Business");
   const [items, setItems] = useState<Invoice[]>([]);
   const [debtors, setDebtors] = useState<DebtorLite[]>([]);
@@ -252,6 +254,41 @@ export function InvoicesClient({ businessName }: { businessName?: string }) {
         </div>
       )}
 
+      {/* Live Receivables Status & Volume Distribution Visual Strip */}
+      {items.length > 0 && (() => {
+        const totalAmt = items.reduce((s, x) => s + BigInt(x.amountMinor || "0"), 0n);
+        const totalPaid = items.reduce((s, x) => s + BigInt(x.paidMinor || "0"), 0n);
+        const totalOpen = items.reduce((s, x) => s + BigInt(x.outstandingMinor || "0"), 0n);
+        const overdueItems = items.filter((x) => x.overdue);
+        const overdueAmt = overdueItems.reduce((s, x) => s + BigInt(x.outstandingMinor || "0"), 0n);
+        const paidPct = totalAmt > 0n ? Number((totalPaid * 100n) / totalAmt) : 0;
+        const overduePct = totalAmt > 0n ? Number((overdueAmt * 100n) / totalAmt) : 0;
+        const currentOpenPct = Math.max(0, 100 - paidPct - overduePct);
+        return (
+          <div data-testid="inv-visual-summary" className="panel-shadow flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4 sm:p-5">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="flex items-center justify-between rounded-xl bg-surface-muted/50 px-3.5 py-2.5">
+                <span className="text-xs font-semibold text-text-muted">{isAr ? "الرصيد المفتوح" : "Open Receivables"}</span>
+                <span className="tnum text-sm font-extrabold text-primary" dir="ltr">{formatEgp(totalOpen)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
+              </div>
+              <div className="flex items-center justify-between rounded-xl bg-surface-muted/50 px-3.5 py-2.5">
+                <span className="text-xs font-semibold text-text-muted">{isAr ? "المتأخرات" : "Overdue Amount"}</span>
+                <span className="tnum text-sm font-extrabold text-status-overdue-fg" dir="ltr">{formatEgp(overdueAmt)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
+              </div>
+              <div className="flex items-center justify-between rounded-xl bg-surface-muted/50 px-3.5 py-2.5">
+                <span className="text-xs font-semibold text-text-muted">{isAr ? "المحصّل" : "Collected Amount"}</span>
+                <span className="tnum text-sm font-extrabold text-status-paid-fg" dir="ltr">{formatEgp(totalPaid)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
+              </div>
+            </div>
+            <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-surface-muted p-0.5">
+              {paidPct > 0 && <div style={{ width: `${Math.max(4, paidPct)}%` }} className="h-full bg-status-paid-fg first:rounded-s-full last:rounded-e-full" />}
+              {currentOpenPct > 0 && <div style={{ width: `${Math.max(4, currentOpenPct)}%` }} className="h-full bg-primary first:rounded-s-full last:rounded-e-full" />}
+              {overduePct > 0 && <div style={{ width: `${Math.max(4, overduePct)}%` }} className="h-full bg-status-overdue-fg first:rounded-s-full last:rounded-e-full" />}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Filters bar */}
       <div className="panel-shadow flex flex-wrap items-center gap-4 rounded-2xl border border-border bg-surface p-4 sm:p-5">
         <label className="min-w-[200px] flex-1">
@@ -343,7 +380,7 @@ export function InvoicesClient({ businessName }: { businessName?: string }) {
                       phone={debtorPhone(i.debtorId)}
                       message={invoiceShareMessage({
                         businessName: effectiveBusinessName,
-                        amount: fmt(i.outstandingMinor),
+                        amount: `${fmt(i.outstandingMinor)} ${currencySymbol}`,
                         dueDate: i.dueOn,
                         locale,
                       })}
@@ -380,11 +417,11 @@ export function InvoicesClient({ businessName }: { businessName?: string }) {
                 {/* Sub row: Amount breakdown & Transition Actions */}
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/50 pt-2.5 text-xs sm:text-sm text-text-muted">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span>{t("amount")}: <b className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor)}</b></span>
+                    <span>{t("amount")}: <b className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
                     <span>·</span>
-                    <span>{t("paid")}: <b className="tnum font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor)}</b></span>
+                    <span>{t("paid")}: <b className="tnum font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
                     <span>·</span>
-                    <span>{t("remaining")}: <b className="tnum font-bold text-primary" dir="ltr">{fmt(i.outstandingMinor)}</b></span>
+                    <span>{t("remaining")}: <b className="tnum font-bold text-primary" dir="ltr">{fmt(i.outstandingMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
                     <span>·</span>
                     <span>{t("dueOn")}: <span className="font-semibold text-text" dir="ltr">{i.dueOn}</span></span>
                   </div>

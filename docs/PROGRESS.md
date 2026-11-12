@@ -7,6 +7,58 @@ M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checkl
 
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
+### Google Gemini 3.1 Flash Lite Engine & Sleek 2026 UI/UX Polish (2026-11-12) — **COMPLETE**
+- **1. Google Gemini 3.1 Flash Lite Setup & Native Provider (`packages/providers/src/gemini.ts`)**:
+  - Implemented `GeminiLlmProvider` implementing `OcrLlmProvider` with native Google Gemini API (`gemini-3.1-flash-lite`), supporting multimodal extraction (ledger pages, transfer receipts, cheques) and Egyptian Arabic reply classification via forced function calling (`mode: "ANY"`).
+  - Added `cleanSchemaForGemini` to normalize OpenAPI 3.0 types (converting union arrays `type: ["string", "null"]` to `type: "string", nullable: true` and sanitizing enum values).
+  - Configured `GEMINI_API_KEY` and `AI_MODEL=gemini-3.1-flash-lite` in `.env` and `.env.example`, with IPv4-first DNS order for fast, reliable undici/Node.js connections.
+  - Verified live Arabic classification with `gemini-3.1-flash-lite` ("تمام يا باشا هحولك المبلغ بكرة الصبح" -> `intent: "promise_to_pay"`, `confidence: 1`, `promised_date: "2026-11-13"`).
+- **2. Overview Screen Optimization (Removal of Billing Section)**:
+  - Completely removed `BillingClient` and pricing plans from `apps/web/app/[locale]/dashboard/page.tsx`, keeping the Overview screen focused purely on KPIs, collection progress, cash flow, and actionable debtors.
+  - Retained full billing and subscription management exclusively on the dedicated `/[locale]/billing` page.
+  - Updated `apps/web/e2e/m5.spec.ts` to navigate to `/ar/billing` before upgrading, matching clean SaaS architecture.
+- **3. Complete Elimination of Dashed Borders ("الشرطات الكتيرة")**:
+  - Replaced all 6 occurrences of `border-dashed` (`EmptyState` in `ui.tsx`, `ImportClient.tsx`, `LedgerPhotoClient.tsx`, `ChequesClient.tsx`, `AiInboxClient.tsx`, and `StatementClient.tsx`) with sleek, modern 2026 solid borders and subtle panel shadows (`border border-border/70 bg-surface shadow-xs rounded-2xl`).
+- **4. Dynamic AI Status Indicator & Accurate Briefing Logic**:
+  - Transformed the static AI launcher button in `AppShell.tsx` into a live status indicator connected to `trpc.intelligence.overview`:
+    - Shows pulsing warning badge (`animate-ping`) when critical issues exist (bounced cheques, active disputes, severe overdue).
+    - Shows amber badge for recommended follow-ups and emerald badge for healthy ledgers.
+    - Displays live action count badge (e.g. `3` actions) and dynamic subtitle reflecting workspace state.
+  - Fixed logic in `buildDailyBriefing` (`packages/core/src/intelligence.ts`) so it accurately reports the specific cause of urgency (e.g. open disputes or bounced cheques) and never claims `أولوية تحصيل عاجلة: 0.00 ج.م متأخرات` when overdue receivables are zero.
+- **5. Global Native Scrollbar Suppression**:
+  - Applied `scrollbar-width: none !important; -ms-overflow-style: none !important;` and `*::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }` in `globals.css` ensuring no native browser scrollbars ever render across any container.
+- **6. Verification Evidence**:
+  - `pnpm lint`: OK (0 errors, `check-no-hardcoded-brand` OK, `check-secrets` OK)
+  - `pnpm typecheck`: OK (all 9 workspace projects passed)
+  - `pnpm test`: OK (all unit and integration tests passed across `@tahseel/core`, `@tahseel/providers`, `@tahseel/reminders`, `@tahseel/web`)
+  - `NODE_ENV=production pnpm build`: OK (37/37 routes compiled)
+  - Playwright E2E: `m5.spec.ts` & `notifications-ai.spec.ts` passed 100%
+
+### Enterprise SaaS AI Architecture, Installment Restructuring, Portfolio Risk & Dispute Lifecycle Upgrade (2026-11-11) — **COMPLETE**
+- **1. Portfolio Concentration & Liquidity Velocity Engine (`packages/core/src/intelligence.ts`, `apps/web/src/server/intelligence.ts`)**:
+  - Implemented `analyzePortfolioRisk` computing single-tenant Top-Debtor Concentration Share (`topDebtorSharePct`), Top-3 Concentration (`top3ConcentrationPct`), Concentration Risk Level (`diversified` / `moderate` / `high_concentration`), Composite Liquidity Velocity Score (`0-100`), At-Risk Receivables (`atRiskReceivablesMinor`), and 14-Day Expected Inflow (`expectedNext14DaysMinor`).
+  - Integrated `portfolioRisk` into `buildCollectionsBriefing`, `DashboardIntelligence.tsx`, and `AiCopilotDrawer.tsx`.
+  - Expanded `askWorkspaceCopilot` with `forecast_and_risk` and `settlement_options` intents plus bilingual Arabic/English natural-language routing.
+- **2. Exact Minor-Unit Smart Installment & Settlement Engine (`buildInstallmentPlan`, `proposeWorkspaceInstallmentPlan`)**:
+  - Implemented `buildInstallmentPlan` in `@tahseel/core` using pure `bigint` minor-unit arithmetic (`totalMinor` split across 2, 3, 4, or 6 weekly/biweekly/monthly tranches with optional 0%–50% down payment and exact remainder allocation on the final tranche so `sum(tranches) === totalMinor`).
+  - Exposed `aiWorkspace.proposeInstallmentPlan` on tRPC (`apps/web/src/server/routers.ts`) with automatic open-invoice reference & active payment-link lookup and `audit_log` tracking (`ai.installment_planned`).
+  - Added interactive Installment Planner mode inside `AiCopilotDrawer.tsx` and direct trigger buttons in `DashboardIntelligence.tsx` and `DebtorDetailClient.tsx`.
+- **3. Smart AI Inbox Reply Composer & Vision Fallback (`generateSmartInboxReply`, `suggestWorkspaceInboxReply`, `analyzeWorkspaceReceipt`)**:
+  - Implemented `generateSmartInboxReply` in `@tahseel/core` and `aiWorkspace.suggestInboxReply` in `apps/web/src/server/ai-workspace.ts` to draft context-grounded, sanitized Arabic & English merchant replies for every customer reply intent (`promise_to_pay`, `already_paid`, `dispute`, `request_extension`, `partial_payment_offer`, `question`).
+  - Integrated 1-click "اقتراح رد ذكي / AI Smart Reply" with pre-filled WhatsApp dispatch and copy in `AiInboxClient.tsx`.
+  - Connected `analyzeWorkspaceReceipt` to `aiDeps().llm.extractReceipt` when `extractedData` is omitted, and enriched `generateWorkspaceNotification` with automatic debtor invoice reference and active checkout link lookup.
+- **4. End-to-End Merchant Dispute Resolution & Global Command Center (`resolveStatementDispute`, `CommandPalette.tsx`, `AuditTrail.tsx`)**:
+  - Implemented `resolveStatementDispute` in `apps/web/src/server/statements.ts` (`statements.resolveDispute` in tRPC) and added 1-click "حسم وإعادة تفعيل الفاتورة" / "قبول الاعتراض وإلغاء الفاتورة" actions in `DebtorDetailClient.tsx`.
+  - Upgraded `globalSearch` (`apps/web/src/server/search.ts`) to search `cheques` alongside `debtors` and `invoices`, and transformed `CommandPalette.tsx` (`Ctrl+K`) into a full SaaS Command Center with Quick AI Actions and navigation commands.
+  - Expanded `AuditTrail.tsx` with semantic brand tokens and human-readable badges for all AI, dispute, statement, and operational events.
+- **5. Full VM Verification Evidence**:
+  - `check-no-hardcoded-brand`: OK (0 hardcoded hex colors or font names)
+  - `check-secrets`: OK (671 files scanned)
+  - Babel TypeScript/TSX AST Compilation: 220/220 files compiled cleanly (0 errors)
+  - i18n Parity (`ar.json` vs `en.json`): 336/336 keys matched 100%
+  - Unit, Property & Golden Test Suites: 281/281 passed across 27 test suites
+  - AI & OCR Synthetic Eval (`packages/eval`): 100% targets met (`EVAL OK`)
+
 ### Persistent Notification System, AI Collections Intelligence & Copilot (2026-11-11) — **COMPLETE**
 - **1. Multi-Tenant Persistent Notifications (`packages/db`, `apps/web/src/server/notifications.ts`)**:
   - Added `notifications` table (`0009_heavy_ultron.sql`) with `tenant_id`, RLS `tenant_isolation` policy, `tahseel_app` grants, `notifications_tenant_dedupe_uniq`, and `notifications_tenant_unread_idx`. Registered in `TENANT_TABLES`, `TENANT_DATA_TABLES`, and `packages/db/src/rls.test.ts` (23/23 RLS tests pass).
@@ -860,9 +912,36 @@ Visual rebrand only (branch `rebrand/dafqly`): central `BRAND` config, navy/teal
     - Semicolon CSV upload (`temp-semicolon-test.csv`) -> 2 rows successfully parsed without `NO_HEADER_ROW`.
     - Arabic Tashkeel & Aliases CSV upload -> 1 row successfully parsed with all columns correctly mapped.
 
+- **Chart.js Modernization & Custom SVG Cleanup (`apps/web/src/components/charts.tsx`)**:
+  - Replaced over 600 lines of custom manual SVG math charts with high-performance, responsive Chart.js visual components (`chart.js` + `react-chartjs-2`).
+  - **`ForecastChart`**: Smooth bezier curve Line/Area chart (`tension: 0.35`) comparing 8-week expected collections vs. conservative baseline, with interactive tooltips and table view toggle.
+  - **`AgingBar`**: Clean Bar chart with rounded corners (`borderRadius: 8`) for aging distribution (Current, 1-7d, 8-30d, 31-60d, 60d+), with automatic >30d severe risk alerts.
+  - **`VelocityAndConcentrationChart`**: Sleek Doughnut chart displaying Collection Velocity score (0–100) alongside Near-term Liquidity (14d) vs. Exposure and debtor concentration.
+  - **`ReminderFunnelChart`**: Modern horizontal funnel Bar chart showing 4-stage WhatsApp conversion (Sent -> Delivered -> Replied -> Paid within 7d) with percentage indicators.
+- **Audit Trail Removal from Settings (`apps/web/src/components/SettingsClient.tsx`)**:
+  - Completely removed `<AuditTrail />` and its dependencies from the Settings UI per user instruction.
+- **Full Multi-Currency Propagation Across Entire App**:
+  - Built `CurrencyProvider` and `useCurrency()` hook in `apps/web/src/components/CurrencyContext.tsx`.
+  - Wired tenant currency (`tenant.settings.currency`) into `AppShell` and all app pages (`dashboard`, `invoices`, `debtors`, `debtor/[id]`, `cheques`, `ai-inbox`, `import`, `billing`, `settings`).
+  - Updated all dashboard KPI cards, top debtors, invoices table, debtors list, cheques overview, and AI Copilot drawer to dynamically display the active tenant currency symbol (e.g., `ر.س`, `ج.م`, `$`, `د.إ`, `€`, `د.ك`).
+- **Reports Export Language Execution (`apps/web/src/server/reports.ts`)**:
+  - Updated `exportInvoicesCsv`, `exportPaymentsCsv`, and `exportDebtorsCsv` to inspect `tenant.settings.exportLanguage`.
+  - Automatically exports localized Arabic CSV headers (`المعرف`, `معرف_العميل`, `رقم_الفاتورة`, etc.) when `exportLanguage === 'ar'`, and standard English headers when `'en'`.
+  - Added dual Arabic/English CSV template download buttons in `ImportClient.tsx`.
+- **AI Assistant Command Menu**:
+  - Built a sleek 2026 SaaS floating command menu popover for the AI Copilot button with 1-click access to Executive Briefing, Gemini 3.1 Live Chat, Smart WhatsApp Reminder Draft, and Installment Settlement Planner.
+- **Brand Name Cleanup**:
+  - Cleaned out old brand name references ("تحصيل") from logos (`lockup-horizontal-rtl.svg`), `manifest.ts`, and `manifest.webmanifest`, unifying under "دفّقلي" (Dafqly).
+- **Verification Evidence**:
+  - `pnpm lint`: **0 errors** (ESLint, `check-no-hardcoded-brand`, `check-secrets` - 671 files scanned).
+  - `pnpm typecheck`: **0 errors** across all 9 workspace projects.
+  - `pnpm test`: **68 integration tests passed** across all 12 test suites.
+  - `pnpm build`: **37/37 static and dynamic pages compiled successfully**.
+  - `e2e/verify-user-turn10.mts`: **100% verified** via Playwright (SAR multi-currency, Chart.js 3 canvas elements, AI assistant menu, Settings audit trail removal, Arabic CSV headers).
+
 ### Next 3 Steps
-1. Configure production environment secrets and S3-compatible storage adapter for binary uploads.
-2. Complete merchant onboarding in Meta WhatsApp Cloud API and Paymob for live production credentials.
-3. Deploy to production cluster and perform smoke verification.
+1. Finalize production deployment pipeline and credentials on cloud cluster.
+2. Conduct live merchant WhatsApp verification in production environment.
+3. Review Paymob payment webhook callbacks in live mode.
 
 

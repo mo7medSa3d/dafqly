@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
-import { formatEgp } from "@tahseel/core";
+import { formatEgp, getCurrencySymbol } from "@tahseel/core";
 import { auth } from "@/server/auth";
 import { appDb, ownerDb } from "@/server/db";
 import { getDashboardSummary, listTenantsForUser, todayInTimezone } from "@/server/services";
@@ -9,10 +9,9 @@ import { getKpis, getForecast } from "@/server/reports";
 import { getWorkspaceIntelligence } from "@/server/intelligence";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
-import { BillingClient } from "@/components/BillingClient";
 import { DashboardIntelligence } from "@/components/DashboardIntelligence";
 import { EmptyInvoicesIllustration, ForecastIllustration, HeroBandArt, SecurityLockBadge } from "@/components/illustrations";
-import { AgingBar, ForecastChart } from "@/components/charts";
+import { AgingBar, ForecastChart, ReminderFunnelChart } from "@/components/charts";
 import { EmptyState, InitialAvatar, Panel, SecurityNotice } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -35,9 +34,11 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
     getDashboardSummary(appDb(), tenant.tenantId, today),
     getKpis(appDb(), tenant.tenantId, today),
     getForecast(appDb(), tenant.tenantId, today),
-    getWorkspaceIntelligence(appDb(), tenant.tenantId, tenant.businessNameAr, today),
+    getWorkspaceIntelligence(appDb(), tenant.tenantId, tenant.businessNameAr, today, { syncNotifications: true }),
   ]);
   const isEmpty = summary.openInvoices === 0 && summary.debtors === 0;
+  const currency = tenant.settings?.currency ?? "EGP";
+  const currencySymbol = getCurrencySymbol(currency, locale);
   const fmt = (minor: string) => formatEgp(BigInt(minor));
   const fmtN = (minor: number) => formatEgp(BigInt(minor));
 
@@ -57,7 +58,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
   const perf = kpisFull.reminderPerformance;
 
   return (
-    <AppShell locale={locale} businessName={tenant.businessNameAr} testId="dashboard">
+    <AppShell locale={locale} businessName={tenant.businessNameAr} currency={currency} testId="dashboard">
       {/* Brand Signature Blue Hero Banner (Restored per user specification) */}
       <section className="hero-band panel-shadow relative overflow-hidden rounded-3xl text-white shadow-lg">
         <div className="brand-pattern absolute inset-0" aria-hidden />
@@ -116,7 +117,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             <span data-testid="kpi-outstanding" className="tnum text-3xl font-extrabold text-text" dir="ltr">
               {fmt(summary.totalOutstandingMinor)}
             </span>
-            <span className="ms-1.5 text-xs font-bold text-text-muted">{t("currency")}</span>
+            <span className="ms-1.5 text-xs font-bold text-text-muted">{currencySymbol}</span>
           </div>
           <p className="text-xs text-text-muted">
             <span data-testid="kpi-open" className="tnum font-bold text-text" dir="ltr">{summary.openInvoices}</span> {t("openInvoices")}
@@ -137,7 +138,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             <span data-testid="kpi-overdue" className="tnum text-3xl font-extrabold text-danger" dir="ltr">
               {stats[0]!.value}
             </span>
-            <span className="ms-1.5 text-xs font-bold text-text-muted">{t("currency")}</span>
+            <span className="ms-1.5 text-xs font-bold text-text-muted">{currencySymbol}</span>
           </div>
           <p className="text-xs text-text-muted">{isAr ? "تجاوزت تاريخ الاستحقاق" : "Passed due date"}</p>
         </div>
@@ -154,7 +155,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             <span data-testid="kpi-collected" className="tnum text-3xl font-extrabold text-status-paid-fg" dir="ltr">
               {stats[1]!.value}
             </span>
-            <span className="ms-1.5 text-xs font-bold text-text-muted">{t("currency")}</span>
+            <span className="ms-1.5 text-xs font-bold text-text-muted">{currencySymbol}</span>
           </div>
           <p className="text-xs text-text-muted">{isAr ? "صافي المقبوضات المسجلة" : "Total received this month"}</p>
         </div>
@@ -269,7 +270,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
                           <InitialAvatar name={d.displayName} size={34} />
                           <span className="min-w-0 flex-1 truncate text-sm font-bold">{d.displayName}</span>
                           <span className="tnum font-extrabold text-primary" dir="ltr">{fmtN(d.outstandingMinor)}</span>
-                          <span className="text-xs font-normal text-text-muted">{t("currency")}</span>
+                          <span className="text-xs font-normal text-text-muted">{currencySymbol}</span>
                         </Link>
                       </li>
                     ))}
@@ -283,25 +284,19 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
           <div className="flex flex-col gap-6 lg:col-span-4">
             {/* Reminder Performance */}
             <Panel title={tr("reminderPerfTitle")}>
-              <dl className="grid grid-cols-2 gap-2.5">
-                {[
-                  { label: tr("sent"), value: perf.sent, testid: "perf-sent" },
-                  { label: tr("delivered"), value: perf.delivered, testid: undefined },
-                  { label: tr("replied"), value: perf.replied, testid: undefined },
-                  { label: tr("paidWithin7d"), value: perf.paidWithin7d, testid: undefined },
-                ].map((x) => (
-                  <div key={x.label} className="flex flex-col gap-1 rounded-xl border border-border/60 bg-surface-muted/50 p-3">
-                    <dt className="text-xs font-medium text-text-muted">{x.label}</dt>
-                    <dd className="text-xl font-extrabold text-primary">
-                      <span data-testid={x.testid} className="tnum" dir="ltr">{x.value}</span>
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+              <ReminderFunnelChart
+                sent={perf.sent}
+                delivered={perf.delivered}
+                replied={perf.replied}
+                paidWithin7d={perf.paidWithin7d}
+                labels={{
+                  sent: tr("sent"),
+                  delivered: tr("delivered"),
+                  replied: tr("replied"),
+                  paidWithin7d: tr("paidWithin7d"),
+                }}
+              />
             </Panel>
-
-            {/* Current Plan & Subscription (Required for m5 test and executive monitoring) */}
-            <BillingClient locale={locale} compact />
           </div>
         </div>
       </section>

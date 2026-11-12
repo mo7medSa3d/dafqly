@@ -3,9 +3,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { formatEgp } from "@tahseel/core";
+import { useCurrency } from "./CurrencyContext";
 import {
-  BellRinging, BellSlash, Check, Clock, FileText, HandCoins, LinkSimple, PaperPlaneTilt, PencilSimple,
-  Receipt, Sparkle, Trash, Wallet, WarningCircle,
+  BellRinging, BellSlash, CalendarCheck, Check, CheckCircle, Clock, FileText, HandCoins, LinkSimple, PaperPlaneTilt, PencilSimple,
+  Receipt, Sparkle, Trash, Wallet, WarningCircle, XCircle,
 } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
 import type { DebtorIntelligenceView } from "@/server/intelligence";
@@ -48,6 +49,7 @@ function copyTextSafe(text: string) {
 }
 
 export function DebtorDetailClient({ debtorId, businessName }: { debtorId: string; businessName?: string }) {
+  const { symbol: currencySymbol } = useCurrency();
   const t = useTranslations("debtors");
   const tc = useTranslations("common");
   const ti = useTranslations("invoices");
@@ -181,6 +183,23 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
     await load();
   }
 
+  async function onResolveDispute(disputeId: string, resolution: "reopen_invoice" | "cancel_invoice") {
+    setBusy(true); setGwMsg(null);
+    try {
+      await trpc.statements.resolveDispute.mutate({ disputeId, resolution });
+      setGwMsg(
+        resolution === "reopen_invoice"
+          ? (isAr ? "تم حسم الاعتراض وإعادة تفعيل الفاتورة والتذكيرات." : "Dispute resolved and invoice reopened.")
+          : (isAr ? "تم قبول الاعتراض وإلغاء المطالبة." : "Dispute accepted and invoice cancelled.")
+      );
+      await load();
+    } catch {
+      setGwMsg(isAr ? "تعذّر تحديث حالة الاعتراض" : "Could not resolve dispute");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onCreateGatewayLink(invoiceId?: string) {
     setGwMsg(null);
     try {
@@ -232,6 +251,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
 
   if (!detail) return <p className="text-text-muted">…</p>;
   const openInvoices = detail.invoices.filter((i) => i.status === "open" || i.status === "partially_paid");
+  const hasBalance = BigInt(detail.totalOutstandingMinor) > 0n;
 
   return (
     <section className="flex flex-col gap-6">
@@ -267,14 +287,14 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             </div>
             <p className="text-text-muted" dir="ltr">{detail.phoneE164}</p>
             {detail.optedOut ? (
-              <div className="mt-2 flex flex-wrap items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+              <div className="mt-2 flex flex-wrap items-center gap-2.5 rounded-xl border border-status-due-fg/30 bg-status-due-bg p-3 text-xs text-status-due-fg">
                 <span className="font-bold">⚠️ {isAr ? "التذكيرات التلقائية متوقفة لهذا العميل" : "Automatic reminders are paused for this customer"}</span>
                 <button
                   type="button"
                   data-testid="debtor-resume-reminders"
                   disabled={busy}
                   onClick={() => void onToggleReminders(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 font-bold text-white shadow-xs hover:bg-emerald-700 active:scale-95 transition-all"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-status-paid-bg px-3 py-1.5 font-bold text-status-paid-fg shadow-xs hover:opacity-90 active:scale-95 transition-all"
                 >
                   <BellRinging size={14} weight="fill" />
                   <span>{isAr ? "تفعيل التذكيرات الآن" : "Re-enable Reminders Now"}</span>
@@ -282,7 +302,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               </div>
             ) : (
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-text-muted">
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 font-bold text-emerald-600 dark:text-emerald-400">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-status-paid-bg px-2.5 py-1 font-bold text-status-paid-fg">
                   <BellRinging size={13} weight="fill" />
                   <span>{isAr ? "التذكيرات التلقائية مفعلة" : "Auto Reminders Active"}</span>
                 </span>
@@ -322,6 +342,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                     tab: "composer",
                     debtorId,
                     tone: debtorIntel.recommendation.suggestedTone,
+                    mode: "reminder",
                   })
                 }
                 className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-callout px-5 text-sm font-bold text-primary transition-colors hover:bg-primary hover:text-primary-fg"
@@ -330,11 +351,28 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                 <span>{isAr ? "صياغة تذكير ذكي" : "Draft AI Reminder"}</span>
               </button>
             )}
+            {hasBalance && (
+              <button
+                type="button"
+                data-testid="debtor-ai-installment-btn"
+                onClick={() =>
+                  openAiCopilot({
+                    tab: "composer",
+                    debtorId,
+                    mode: "installment",
+                  })
+                }
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-border bg-surface-muted/60 px-4 text-sm font-bold text-text transition-colors hover:border-primary hover:text-primary"
+              >
+                <CalendarCheck size={16} weight="fill" aria-hidden />
+                <span>{isAr ? "جدولة أقساط" : "Installment Plan"}</span>
+              </button>
+            )}
             <WhatsAppShareButton
               phone={detail.phoneE164}
               message={totalShareMessage({
                 businessName: effectiveBusinessName,
-                totalAmount: fmt(detail.totalOutstandingMinor),
+                totalAmount: `${fmt(detail.totalOutstandingMinor)} ${currencySymbol}`,
                 locale,
               })}
               size="md"
@@ -381,13 +419,19 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             <dt className="flex items-center gap-2 text-sm font-semibold text-text-muted">
               <Wallet size={16} weight="fill" aria-hidden className="text-primary" /> {t("outstanding")}
             </dt>
-            <dd className="text-2xl font-extrabold text-primary"><span className="tnum" dir="ltr" data-testid="debtor-outstanding">{fmt(detail.totalOutstandingMinor)}</span></dd>
+            <dd className="text-2xl font-extrabold text-primary">
+              <span className="tnum" dir="ltr" data-testid="debtor-outstanding">{fmt(detail.totalOutstandingMinor)}</span>
+              <span className="ms-1.5 text-xs font-bold text-text-muted">{currencySymbol}</span>
+            </dd>
           </div>
           <div className="flex flex-col gap-1 bg-surface p-5 sm:p-6">
             <dt className="flex items-center gap-2 text-sm font-semibold text-text-muted">
               <HandCoins size={16} weight="fill" aria-hidden className="text-status-paid-fg" /> {t("credit")}
             </dt>
-            <dd className="text-2xl font-extrabold text-status-paid-fg"><span className="tnum" dir="ltr" data-testid="debtor-credit">{fmt(detail.creditMinor)}</span></dd>
+            <dd className="text-2xl font-extrabold text-status-paid-fg">
+              <span className="tnum" dir="ltr" data-testid="debtor-credit">{fmt(detail.creditMinor)}</span>
+              <span className="ms-1.5 text-xs font-bold text-text-muted">{currencySymbol}</span>
+            </dd>
           </div>
         </dl>
       </section>
@@ -398,7 +442,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-medium text-text">{tp("amount")}</span>
-                {BigInt(detail.totalOutstandingMinor) > 0n && (
+                {hasBalance && (
                   <button
                     type="button"
                     onClick={() => setAmount((Number(detail.totalOutstandingMinor) / 100).toFixed(2))}
@@ -522,8 +566,34 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             {disputes.length === 0 && <p className="text-sm text-text-muted">{ts("noDisputes")}</p>}
             <ul className="flex flex-col gap-2">
               {disputes.map((x) => (
-                <li key={x.id} data-testid="stmt-dispute" className="rounded-xl bg-status-disputed-bg px-4 py-3 text-sm text-status-disputed-fg">
-                  <span className="font-bold">{ts(x.status)}</span> · {x.reason} · <span dir="ltr">{x.createdAt.slice(0, 10)}</span>
+                <li key={x.id} data-testid="stmt-dispute" className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-status-disputed-bg px-4 py-3 text-sm text-status-disputed-fg">
+                  <div>
+                    <span className="font-bold">{ts(x.status)}</span> · {x.reason} · <span dir="ltr">{x.createdAt.slice(0, 10)}</span>
+                  </div>
+                  {x.status === "open" && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        data-testid={`dispute-resolve-reopen-${x.id}`}
+                        disabled={busy}
+                        onClick={() => void onResolveDispute(x.id, "reopen_invoice")}
+                        className="inline-flex items-center gap-1 rounded-full bg-surface px-3 py-1 text-xs font-bold text-primary shadow-2xs hover:bg-primary hover:text-primary-fg disabled:opacity-50"
+                      >
+                        <CheckCircle size={13} weight="fill" aria-hidden />
+                        <span>{isAr ? "حسم وإعادة تفعيل الفاتورة" : "Resolve & Reopen Invoice"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`dispute-resolve-cancel-${x.id}`}
+                        disabled={busy}
+                        onClick={() => void onResolveDispute(x.id, "cancel_invoice")}
+                        className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-3 py-1 text-xs font-bold text-text-muted hover:border-danger hover:text-danger disabled:opacity-50"
+                      >
+                        <XCircle size={13} weight="fill" aria-hidden />
+                        <span>{isAr ? "قبول الاعتراض وإلغاء الفاتورة" : "Accept & Cancel Invoice"}</span>
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

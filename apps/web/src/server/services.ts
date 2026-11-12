@@ -35,7 +35,13 @@ export type CreateTenantInput = z.infer<typeof createTenantInput>;
  */
 export async function listTenantsForUser(owner: Db, userId: string) {
   return owner
-    .select({ tenantId: memberships.tenantId, role: memberships.role, businessNameAr: tenants.businessNameAr, timezone: tenants.timezone })
+    .select({
+      tenantId: memberships.tenantId,
+      role: memberships.role,
+      businessNameAr: tenants.businessNameAr,
+      timezone: tenants.timezone,
+      settings: tenants.settings,
+    })
     .from(memberships)
     .innerJoin(tenants, eq(tenants.id, memberships.tenantId))
     .where(eq(memberships.userId, userId));
@@ -157,9 +163,14 @@ export async function getTenantSettingsAndIntegrations(app: Db, tenantId: string
       timezone: t.timezone,
       settings: t.settings,
       integrations: {
-        aiConfigured: Boolean(e.ANTHROPIC_API_KEY && e.ANTHROPIC_API_KEY.trim().length > 0),
-        llmModelFast: e.LLM_MODEL_FAST,
-        llmModelVision: e.LLM_MODEL_VISION,
+        aiConfigured: Boolean(
+          (e.GEMINI_API_KEY && e.GEMINI_API_KEY.trim().length > 0) ||
+          (e.AI_API_KEY && e.AI_API_KEY.trim().length > 0) ||
+          (e.ANTHROPIC_API_KEY && e.ANTHROPIC_API_KEY.trim().length > 0)
+        ),
+        aiProvider: (e.GEMINI_API_KEY || e.AI_MODEL.includes("gemini")) ? "gemini" : "anthropic",
+        llmModelFast: e.AI_MODEL || e.LLM_MODEL_FAST,
+        llmModelVision: e.AI_MODEL || e.LLM_MODEL_VISION,
         paymobConfigured: Boolean(e.PAYMOB_SECRET_KEY && e.PAYMOB_PUBLIC_KEY && e.PAYMOB_INTEGRATION_ID && e.PAYMOB_HMAC_SECRET),
         whatsappConfigured: Boolean(e.WHATSAPP_PHONE_NUMBER_ID && e.WHATSAPP_ACCESS_TOKEN),
         smsConfigured: Boolean(e.SMS_API_KEY && e.SMS_PROVIDER),

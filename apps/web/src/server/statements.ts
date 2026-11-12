@@ -238,3 +238,77 @@ export async function listDisputes(app: Db, tenantId: string, debtorId: string) 
     }));
   });
 }
+
+export const resolveDisputeInput = z.object({
+  disputeId: z.string().uuid(),
+  resolution: z.enum(["reopen_invoice", "cancel_invoice"]).default("reopen_invoice"),
+  note: z.string().trim().max(500).optional(),
+});
+export type ResolveDisputeInput = z.input<typeof resolveDisputeInput>;
+
+/**
+ * Merchant-side dispute resolution: marks the dispute as `resolved`, transitions
+ * the linked invoice back to active (`open` / `partially_paid`) or cancels/writes it off,
+ * writes an immutable audit log entry, and triggers reminder re-planning.
+ */
+export async function resolveStatementDispute(
+  app: Db,
+  tenantId: string,
+  actor: string,
+  rawInput: ResolveDisputeInput,
+  now = new Date(),
+): Promise<{ ok: true; disputeId: string; invoiceId: string; invoiceStatus: string }> {
+  const input = resolveDisputeInput.parse(rawInput);
+
+  const out = await withTenant(app, tenantId, async (tx) => {
+    const [disp] = await tx
+      .select()
+      .from(disputes)
+      .where(eq(disputes.id, input.disputeId));
+    if (!disp) throw new AppError("NOT_FOUND", "Dispute not found", 404);
+
+    const [inv] = await tx
+      .select()
+      .from(invoices)
+      .where(eq(invoices.id, disp.invoiceId));
+    if (!inv) throw new AppError("NOT_FOUND", "Linked invoice not found", 404);
+
+    if (disp.status !== "resolved") {
+      await tx
+        .update(disputes)
+        .set({ status: "resolved", updatedAt: now })
+        .where(eq(disputes.id, disp.id));
+    }
+
+    let nextInvoiceStatus = inv.status;
+    if (inv.status === "disputed") {
+      if (input.resolution === "cancel_invoice") {
+        nextInvoiceStatus = inv.paidMinor > 0n ? "written_off" : "cancelled";
+      } else {
+        nextInvoiceStatus = inv.paidMinor > 0n ? "partially_paid" : "open";
+      }
+      if (canTransition(inv.status, nextInvoiceStatus)) {
+        await tx
+          .update(invoices)
+          .set({ status: nextInvoiceStatus, updatedAt: now })
+          .where(eq(invoices.id, inv.id));
+        await audit(tx, tenantId, actor, "invoice.transitioned", "invoice", inv.id, {
+          from: inv.status,
+          to: nextInvoiceStatus,
+          via: "dispute_resolution",
+        });
+      }
+    }
+
+    await audit(tx, tenantId, actor, "dispute.resolved", "dispute", disp.id, {
+      invoiceId: inv.id,
+      resolution: input.resolution,
+      note: input.note ?? null,
+    });
+
+    return { ok: true as const, disputeId: disp.id, invoiceId: inv.id, invoiceStatus: nextInvoiceStatus };
+  });
+
+  replanLater(tenantId, out.invoiceId);
+  return out;
+}

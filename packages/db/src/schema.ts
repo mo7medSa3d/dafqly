@@ -192,6 +192,7 @@ export const invoices = pgTable("invoices", {
   // M6 (ADR-024): DSO invoiced-in-90-days aggregation scans issued_on per tenant.
   index("invoices_tenant_issued_idx").on(t.tenantId, t.issuedOn),
   index("invoices_debtor_idx").on(t.debtorId),
+  index("invoices_tenant_debtor_status_idx").on(t.tenantId, t.debtorId, t.status),
 ]);
 
 // ------------------------------------------------- payments (F1/F5, §5)
@@ -226,6 +227,8 @@ export const payments = pgTable("payments", {
 }, (t) => [
   index("payments_tenant_debtor_idx").on(t.tenantId, t.debtorId),
   index("payments_tenant_received_idx").on(t.tenantId, t.receivedOn),
+  index("payments_tenant_status_received_idx").on(t.tenantId, t.status, t.receivedOn),
+  index("payments_tenant_ref_idx").on(t.tenantId, t.referenceNo),
   uniqueIndex("payments_gateway_txn_uniq").on(t.gatewayTransactionId),
 ]);
 
@@ -457,7 +460,8 @@ export const disputes = pgTable("disputes", {
   reason: text("reason").notNull(),
   status: disputeStatusEnum("status").notNull().default("open"),
   createdAt: createdAt(), updatedAt: updatedAt(),
-}, (t) => [index("disputes_tenant_invoice_idx").on(t.tenantId, t.invoiceId, t.status)]);
+}, (t) => [index("disputes_tenant_invoice_idx").on(t.tenantId, t.invoiceId, t.status),
+  index("disputes_tenant_status_idx").on(t.tenantId, t.status, t.debtorId)]);
 
 // ---------------------------------------------------------------- F6/F7/F8 (M4)
 
@@ -500,6 +504,7 @@ export const messageIntents = pgTable("message_intents", {
   createdAt: createdAt(), updatedAt: updatedAt(),
 }, (t) => [
   index("message_intents_tenant_created_idx").on(t.tenantId, t.createdAt),
+  index("message_intents_tenant_triage_idx").on(t.tenantId, t.resolvedBy, t.actionTaken),
   uniqueIndex("message_intents_message_uniq").on(t.messageId),
 ]);
 

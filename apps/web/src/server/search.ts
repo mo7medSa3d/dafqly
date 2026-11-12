@@ -1,7 +1,7 @@
 import { and, desc, ilike, isNull, or } from "drizzle-orm";
 import type { Db } from "@tahseel/db";
 import { withTenant } from "@tahseel/db";
-import { auditLog, debtors, invoices } from "@tahseel/db/schema";
+import { auditLog, cheques, debtors, invoices } from "@tahseel/db/schema";
 
 export interface SearchDebtorResult {
   id: string;
@@ -19,60 +19,92 @@ export interface SearchInvoiceResult {
   description: string | null;
 }
 
+export interface SearchChequeResult {
+  id: string;
+  debtorId: string;
+  number: string;
+  bank: string;
+  amountMinor: string;
+  dueDate: string;
+  status: string;
+}
+
 export interface GlobalSearchResult {
   debtors: SearchDebtorResult[];
   invoices: SearchInvoiceResult[];
+  cheques: SearchChequeResult[];
 }
 
 export async function globalSearch(app: Db, tenantId: string, query: string): Promise<GlobalSearchResult> {
   const q = query.trim();
-  if (!q) return { debtors: [], invoices: [] };
+  if (!q) return { debtors: [], invoices: [], cheques: [] };
 
   return withTenant(app, tenantId, async (tx) => {
-    // 1. Search Debtors
-    const debtorRows = await tx
-      .select({
-        id: debtors.id,
-        displayName: debtors.displayName,
-        phoneE164: debtors.phoneE164,
-      })
-      .from(debtors)
-      .where(
-        and(
-          isNull(debtors.deletedAt),
-          or(
-            ilike(debtors.displayName, `%${q}%`),
-            ilike(debtors.phoneE164, `%${q}%`),
+    const [debtorRows, invoiceRows, chequeRows] = await Promise.all([
+      tx
+        .select({
+          id: debtors.id,
+          displayName: debtors.displayName,
+          phoneE164: debtors.phoneE164,
+        })
+        .from(debtors)
+        .where(
+          and(
+            isNull(debtors.deletedAt),
+            or(
+              ilike(debtors.displayName, `%${q}%`),
+              ilike(debtors.phoneE164, `%${q}%`),
+            ),
           ),
-        ),
-      )
-      .limit(6);
-
-    // 2. Search Invoices
-    const invoiceRows = await tx
-      .select({
-        id: invoices.id,
-        debtorId: invoices.debtorId,
-        reference: invoices.reference,
-        amountMinor: invoices.amountMinor,
-        status: invoices.status,
-        dueOn: invoices.dueOn,
-        description: invoices.description,
-      })
-      .from(invoices)
-      .where(
-        or(
-          ilike(invoices.reference, `%${q}%`),
-          ilike(invoices.description, `%${q}%`),
-        ),
-      )
-      .limit(6);
+        )
+        .limit(6),
+      tx
+        .select({
+          id: invoices.id,
+          debtorId: invoices.debtorId,
+          reference: invoices.reference,
+          amountMinor: invoices.amountMinor,
+          status: invoices.status,
+          dueOn: invoices.dueOn,
+          description: invoices.description,
+        })
+        .from(invoices)
+        .where(
+          or(
+            ilike(invoices.reference, `%${q}%`),
+            ilike(invoices.description, `%${q}%`),
+          ),
+        )
+        .limit(6),
+      tx
+        .select({
+          id: cheques.id,
+          debtorId: cheques.debtorId,
+          number: cheques.number,
+          bank: cheques.bank,
+          amountMinor: cheques.amountMinor,
+          dueDate: cheques.dueDate,
+          status: cheques.status,
+        })
+        .from(cheques)
+        .where(
+          or(
+            ilike(cheques.number, `%${q}%`),
+            ilike(cheques.bank, `%${q}%`),
+          ),
+        )
+        .limit(4),
+    ]);
 
     return {
       debtors: debtorRows,
       invoices: invoiceRows.map((inv) => ({
         ...inv,
         amountMinor: String(inv.amountMinor),
+      })),
+      cheques: chequeRows.map((chq) => ({
+        ...chq,
+        amountMinor: String(chq.amountMinor),
       })),
     };
   });

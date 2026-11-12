@@ -152,7 +152,7 @@ export function LedgerPhotoClient() {
     <section className="flex flex-col gap-6">
       <div className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-12">
         {/* Dropzone Column (7 cols) */}
-        <label className="brand-pattern-light panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border-strong bg-surface p-8 text-center transition-all hover:border-primary hover:bg-surface-muted/40 lg:col-span-7">
+        <label className="brand-pattern-light panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-border/80 bg-surface/90 p-8 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/30 hover:shadow-md lg:col-span-7">
           <div className="flex size-14 items-center justify-center rounded-2xl bg-callout text-primary">
             <Camera size={32} weight="fill" aria-hidden />
           </div>

@@ -15,7 +15,7 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
   if (!mine[0]) redirect(`/${locale}/onboarding`);
   const t = await getTranslations("debtors");
   return (
-    <AppShell locale={locale} businessName={mine[0].businessNameAr}>
+    <AppShell locale={locale} businessName={mine[0].businessNameAr} currency={mine[0].settings?.currency ?? "EGP"}>
       <PageHeader title={t("title")} />
       <DebtorsClient businessName={mine[0].businessNameAr} />
     </AppShell>

@@ -13,7 +13,10 @@ import {
   createGatewayLink, createGatewayLinkInput, listPaymentLinks, refundGatewayPayment, refundInput,
   confirmClaimedPayment, rejectClaimedPayment, getReconciliation, gatewayDeps,
 } from "./gateway";
-import { createStatementLink, listStatementLinks, revokeStatementLink, listDisputes } from "./statements";
+import {
+  createStatementLink, listStatementLinks, revokeStatementLink,
+  listDisputes, resolveStatementDispute, resolveDisputeInput,
+} from "./statements";
 import { createLedgerJob, createLedgerJobInput, runLedgerExtraction, getLedgerJob, listLedgerJobs, updateLedgerRow, updateLedgerRowInput, commitLedgerJob, deleteLedgerJob } from "./ledger-ai";
 import { processReceiptImage, listReceiptClaims } from "./receipts";
 import { listIntents, resolveMessageIntent } from "./replies";
@@ -35,6 +38,10 @@ import {
   mapWorkspaceHeaders, mapHeadersInput,
   analyzeWorkspaceReceipt, analyzeReceiptInput,
   generateWorkspaceNotification, generateNotificationInput,
+  proposeWorkspaceInstallmentPlan, proposeInstallmentInput,
+  suggestWorkspaceInboxReply, suggestInboxReplyInput,
+  dispatchSmartReminderForDebtor, dispatchSmartReminderInput,
+  optimizeWorkspaceReminders,
   AI_WORKSPACE_TOOLS,
 } from "./ai-workspace";
 import {
@@ -184,6 +191,9 @@ export const appRouter = router({
     disputes: tenantProcedure
       .input(z.object({ debtorId: z.string().uuid() }))
       .query(async ({ ctx, input }) => listDisputes(ctx.appDb, ctx.tenantId, input.debtorId)),
+    resolveDispute: tenantProcedure
+      .input(resolveDisputeInput)
+      .mutation(async ({ ctx, input }) => resolveStatementDispute(ctx.appDb, ctx.tenantId, ctx.user.id, input, new Date())),
   },
   imports: {
     preview: tenantProcedure
@@ -373,6 +383,28 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         const { businessName } = await tenantMeta(ctx);
         return generateWorkspaceNotification(ctx.appDb, ctx.tenantId, ctx.user.id, businessName, input);
+      }),
+    proposeInstallmentPlan: tenantProcedure
+      .input(proposeInstallmentInput)
+      .mutation(async ({ ctx, input }) => {
+        const { today, businessName } = await tenantMeta(ctx);
+        return proposeWorkspaceInstallmentPlan(ctx.appDb, ctx.tenantId, ctx.user.id, businessName, today, input);
+      }),
+    suggestInboxReply: tenantProcedure
+      .input(suggestInboxReplyInput)
+      .mutation(async ({ ctx, input }) => {
+        const { businessName } = await tenantMeta(ctx);
+        return suggestWorkspaceInboxReply(ctx.appDb, ctx.tenantId, ctx.user.id, businessName, input);
+      }),
+    dispatchSmartReminder: tenantProcedure
+      .input(dispatchSmartReminderInput)
+      .mutation(async ({ ctx, input }) => {
+        const { today, businessName } = await tenantMeta(ctx);
+        return dispatchSmartReminderForDebtor(ctx.appDb, ctx.tenantId, ctx.user.id, businessName, today, input);
+      }),
+    optimizeReminders: tenantProcedure
+      .mutation(async ({ ctx }) => {
+        return optimizeWorkspaceReminders(ctx.appDb, ctx.tenantId, ctx.user.id);
       }),
   },
   notifications: {

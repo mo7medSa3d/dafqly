@@ -1,10 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, ArrowLeft, Sparkle, UsersThree, WhatsappLogo } from "@phosphor-icons/react";
+import {
+  ArrowRight,
+  ArrowLeft,
+  CalendarCheck,
+  ChartLineUp,
+  Sparkle,
+  UsersThree,
+  WhatsappLogo,
+} from "@phosphor-icons/react";
 import { formatEgp } from "@tahseel/core";
+import { useCurrency } from "./CurrencyContext";
 import type { WorkspaceIntelligenceView } from "@/server/intelligence";
 import { openAiCopilot } from "./AiCopilotDrawer";
+import { VelocityAndConcentrationChart } from "./charts";
 
 function tierClasses(tier: "healthy" | "watch" | "at_risk" | "critical") {
   switch (tier) {
@@ -27,8 +37,10 @@ export function DashboardIntelligence({
   intel: WorkspaceIntelligenceView;
 }) {
   const isEn = locale === "en";
+  const { symbol: currencySymbol } = useCurrency();
   const top3 = intel.topActions.slice(0, 3);
   const DirArrow = isEn ? ArrowRight : ArrowLeft;
+  const risk = intel.portfolioRisk;
 
   const badgeTone =
     intel.healthStatus === "urgent"
@@ -68,6 +80,14 @@ export function DashboardIntelligence({
               <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${badgeTone}`}>
                 {statusLabel}
               </span>
+              {risk && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-surface-muted px-2.5 py-0.5 text-[11px] font-bold text-text-muted">
+                  <ChartLineUp size={12} weight="fill" className="text-primary" aria-hidden />
+                  {isEn
+                    ? `Velocity ${risk.velocityScore}/100`
+                    : `سرعة التحصيل ${risk.velocityScore}/100`}
+                </span>
+              )}
             </div>
             <h2 className="mt-1 text-base font-extrabold text-text sm:text-lg">
               {isEn ? intel.headlineEn : intel.headlineAr}
@@ -78,15 +98,41 @@ export function DashboardIntelligence({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => openAiCopilot({ tab: "assistant" })}
-          className="inline-flex min-h-[38px] items-center gap-1.5 rounded-full bg-callout px-4 py-1.5 text-xs font-bold text-primary transition-colors hover:bg-primary hover:text-primary-fg"
-        >
-          <Sparkle size={14} weight="fill" aria-hidden />
-          <span>{isEn ? "Ask AI Copilot" : "اسأل المساعد الذكي"}</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => openAiCopilot({ tab: "composer", mode: "installment" })}
+            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-full border border-border bg-surface-muted/60 px-3.5 py-1.5 text-xs font-bold text-text transition-colors hover:border-primary hover:text-primary"
+          >
+            <CalendarCheck size={14} weight="fill" aria-hidden />
+            <span>{isEn ? "Installment Planner" : "جدولة المديونيات"}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => openAiCopilot({ tab: "assistant" })}
+            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-full bg-callout px-4 py-1.5 text-xs font-bold text-primary transition-colors hover:bg-primary hover:text-primary-fg"
+          >
+            <Sparkle size={14} weight="fill" aria-hidden />
+            <span>{isEn ? "Open AI Window" : "فتح نافذة الذكاء الاصطناعي"}</span>
+          </button>
+        </div>
       </div>
+
+      {/* Expressive 2026 Velocity Gauge, Concentration Bar & 14-Day Cash vs Risk Chart */}
+      {risk && (
+        <VelocityAndConcentrationChart
+          velocityScore={risk.velocityScore}
+          collectionRate={intel.metrics.collectionRate}
+          dsoDays={intel.metrics.dsoDays}
+          topDebtorSharePct={risk.topDebtorSharePct}
+          top3ConcentrationPct={risk.top3ConcentrationPct}
+          expected14dFormatted={formatEgp(BigInt(risk.expectedNext14DaysMinor))}
+          atRiskFormatted={formatEgp(BigInt(risk.atRiskReceivablesMinor))}
+          expected14dMinor={BigInt(risk.expectedNext14DaysMinor)}
+          atRiskMinor={BigInt(risk.atRiskReceivablesMinor)}
+          isEn={isEn}
+        />
+      )}
 
       {top3.length > 0 && (
         <div className="mt-5 border-t border-border/60 pt-4">
@@ -126,7 +172,7 @@ export function DashboardIntelligence({
                     <span className="tnum text-text" dir="ltr">
                       {formatEgp(BigInt(d.outstandingMinor))}
                     </span>{" "}
-                    {isEn ? "EGP" : "ج.م"}
+                    {currencySymbol}
                     {d.maxDaysOverdue > 0 && (
                       <span className="text-status-overdue-fg">
                         {" "}
@@ -143,20 +189,34 @@ export function DashboardIntelligence({
                 </div>
 
                 <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/50 pt-2.5">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      openAiCopilot({
-                        tab: "composer",
-                        debtorId: d.debtorId,
-                        tone: d.recommendation.suggestedTone,
-                      })
-                    }
-                    className="inline-flex items-center gap-1 rounded-full bg-surface px-3 py-1 text-[11px] font-bold text-primary shadow-2xs transition-colors hover:bg-primary hover:text-primary-fg"
-                  >
-                    <WhatsappLogo size={13} weight="fill" aria-hidden />
-                    <span>{isEn ? "Smart Draft" : "صياغة تنبيه"}</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openAiCopilot({
+                          tab: "composer",
+                          debtorId: d.debtorId,
+                          tone: d.recommendation.suggestedTone,
+                          mode:
+                            d.recommendation.actionKind === "offer_installment_plan"
+                              ? "installment"
+                              : "reminder",
+                        })
+                      }
+                      className="inline-flex items-center gap-1 rounded-full bg-surface px-3 py-1 text-[11px] font-bold text-primary shadow-2xs transition-colors hover:bg-primary hover:text-primary-fg"
+                    >
+                      <WhatsappLogo size={13} weight="fill" aria-hidden />
+                      <span>
+                        {d.recommendation.actionKind === "offer_installment_plan"
+                          ? isEn
+                            ? "Plan Installments"
+                            : "جدولة أقساط"
+                          : isEn
+                            ? "Smart Draft"
+                            : "صياغة تنبيه"}
+                      </span>
+                    </button>
+                  </div>
                   <Link
                     href={`/${locale}/debtors/${d.debtorId}`}
                     className="text-[11px] font-semibold text-text-muted hover:text-text"

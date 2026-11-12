@@ -188,7 +188,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-extrabold">سجل المدفوعات</h2>
         {data.payments.length === 0 && (
-          <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border-strong/60 bg-surface px-5 py-8 text-center">
+          <div className="flex flex-col items-center gap-2 rounded-2xl border border-border/70 bg-surface px-5 py-8 text-center shadow-xs">
             <PaymentSuccessIllustration size={120} />
             <p className="text-sm text-text-muted">لا توجد مدفوعات مسجلة بعد.</p>
           </div>

@@ -17,7 +17,7 @@ export default async function DebtorDetailPage({ params }: { params: Promise<{ l
   const tc = await getTranslations("common");
   const t = await getTranslations("debtors");
   return (
-    <AppShell locale={locale} businessName={mine[0].businessNameAr}>
+    <AppShell locale={locale} businessName={mine[0].businessNameAr} currency={mine[0].settings?.currency ?? "EGP"}>
       <div className="flex flex-col gap-2">
         <BackLink href={`/${locale}/debtors`} label={tc("back")} />
         <h1 className="text-2xl font-extrabold leading-snug sm:text-[28px]">{t("title")}</h1>

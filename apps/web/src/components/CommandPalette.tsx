@@ -1,16 +1,25 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
+  Bank,
+  CalendarCheck,
   CaretRight,
+  CloudArrowUp,
+  Lightning,
   MagnifyingGlass,
+  Plus,
   Receipt,
+  Scan,
+  SlidersHorizontal,
+  Sparkle,
   UsersThree,
   X,
 } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
 import { formatEgp } from "@tahseel/core";
+import { openAiCopilot } from "./AiCopilotDrawer";
 
 interface SearchDebtorResult {
   id: string;
@@ -28,6 +37,16 @@ interface SearchInvoiceResult {
   description: string | null;
 }
 
+interface SearchChequeResult {
+  id: string;
+  debtorId: string;
+  number: string;
+  bank: string;
+  amountMinor: string;
+  dueDate: string;
+  status: string;
+}
+
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
@@ -36,6 +55,7 @@ interface CommandPaletteProps {
 
 export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps) {
   const t = useTranslations("search");
+  const isEn = locale === "en";
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -43,7 +63,84 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [debtors, setDebtors] = useState<SearchDebtorResult[]>([]);
   const [invoices, setInvoices] = useState<SearchInvoiceResult[]>([]);
+  const [cheques, setCheques] = useState<SearchChequeResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  const quickActions = useMemo(
+    () => [
+      {
+        id: "cmd-ai-briefing",
+        labelAr: "فتح الملخص التنفيذي والمساعد الذكي (AI Copilot)",
+        labelEn: "Open AI Executive Briefing & Copilot",
+        Icon: Sparkle,
+        run: () => {
+          onClose();
+          openAiCopilot({ tab: "briefing" });
+        },
+      },
+      {
+        id: "cmd-ai-installment",
+        labelAr: "جدولة مديونية متأخرة على أقساط (AI Installment Planner)",
+        labelEn: "Build Smart Installment Settlement Plan",
+        Icon: CalendarCheck,
+        run: () => {
+          onClose();
+          openAiCopilot({ tab: "composer", mode: "installment" });
+        },
+      },
+      {
+        id: "cmd-new-invoice",
+        labelAr: "إصدار فاتورة جديدة",
+        labelEn: "Issue New Invoice",
+        Icon: Plus,
+        run: () => {
+          router.push(`/${locale}/invoices`);
+          onClose();
+        },
+      },
+      {
+        id: "cmd-import",
+        labelAr: "استيراد فواتير من Excel أو CSV",
+        labelEn: "Import Invoices from Excel / CSV",
+        Icon: CloudArrowUp,
+        run: () => {
+          router.push(`/${locale}/import`);
+          onClose();
+        },
+      },
+      {
+        id: "cmd-scan",
+        labelAr: "المسح الضوئي الذكي لدفاتر الحسابات",
+        labelEn: "Smart AI Ledger Photo Scan",
+        Icon: Scan,
+        run: () => {
+          router.push(`/${locale}/ledger-photo`);
+          onClose();
+        },
+      },
+      {
+        id: "cmd-inbox",
+        labelAr: "صندوق الوارد الذكي ومراجعة الإيصالات",
+        labelEn: "AI Inbox & Receipt Verification",
+        Icon: Lightning,
+        run: () => {
+          router.push(`/${locale}/ai-inbox`);
+          onClose();
+        },
+      },
+      {
+        id: "cmd-settings",
+        labelAr: "إعدادات المنشأة والعملة والنسخ الاحتياطي",
+        labelEn: "Workspace Settings & Preferences",
+        Icon: SlidersHorizontal,
+        run: () => {
+          router.push(`/${locale}/settings`);
+          onClose();
+        },
+      },
+    ],
+    [locale, onClose, router],
+  );
 
   // Debounce search input by 200ms
   useEffect(() => {
@@ -59,6 +156,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
       setSelectedIndex(0);
       setDebtors([]);
       setInvoices([]);
+      setCheques([]);
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [isOpen]);
@@ -68,6 +166,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
     if (!isOpen || !debouncedQuery.trim()) {
       setDebtors([]);
       setInvoices([]);
+      setCheques([]);
       setIsLoading(false);
       return;
     }
@@ -81,12 +180,14 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         if (!active) return;
         setDebtors(res.debtors);
         setInvoices(res.invoices);
+        setCheques((res as { cheques?: SearchChequeResult[] }).cheques ?? []);
         setIsLoading(false);
       })
       .catch(() => {
         if (!active) return;
         setDebtors([]);
         setInvoices([]);
+        setCheques([]);
         setIsLoading(false);
       });
 
@@ -95,26 +196,41 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
     };
   }, [isOpen, debouncedQuery]);
 
-  const totalItems = debtors.length + invoices.length;
+  const showQuickCommands = !debouncedQuery.trim();
+  const totalItems = showQuickCommands
+    ? quickActions.length
+    : debtors.length + invoices.length + cheques.length;
 
   const navigateToItem = useCallback(
     (index: number) => {
+      if (showQuickCommands) {
+        const cmd = quickActions[index];
+        if (cmd) cmd.run();
+        return;
+      }
       if (index < debtors.length) {
         const d = debtors[index];
         if (d) {
           router.push(`/${locale}/debtors/${d.id}`);
           onClose();
         }
-      } else {
+      } else if (index < debtors.length + invoices.length) {
         const invIndex = index - debtors.length;
         const inv = invoices[invIndex];
         if (inv) {
           router.push(`/${locale}/invoices`);
           onClose();
         }
+      } else {
+        const chqIndex = index - debtors.length - invoices.length;
+        const chq = cheques[chqIndex];
+        if (chq) {
+          router.push(`/${locale}/cheques`);
+          onClose();
+        }
       }
     },
-    [debtors, invoices, locale, onClose, router],
+    [showQuickCommands, quickActions, debtors, invoices, cheques, locale, onClose, router],
   );
 
   // Keyboard navigation
@@ -207,9 +323,46 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
             </div>
           )}
 
-          {!debouncedQuery && (
-            <div className="py-8 text-center text-xs text-text-muted">
-              <p>{t("quickHint")}</p>
+          {/* Quick Actions & AI Commands when search input is empty */}
+          {showQuickCommands && (
+            <div>
+              <div className="flex items-center justify-between px-3 py-1.5 text-xs font-bold text-text-subtle">
+                <span className="flex items-center gap-1.5">
+                  <Sparkle size={14} weight="fill" className="text-primary" />
+                  <span>{isEn ? "Quick Commands & AI Actions" : "الأوامر السريعة ومهام الذكاء الاصطناعي"}</span>
+                </span>
+                <span className="text-[11px] font-medium text-text-muted">{t("quickHint")}</span>
+              </div>
+              <ul className="flex flex-col gap-1">
+                {quickActions.map((cmd, idx) => {
+                  const isSelected = selectedIndex === idx;
+                  const CmdIcon = cmd.Icon;
+                  return (
+                    <li
+                      key={cmd.id}
+                      onClick={() => cmd.run()}
+                      className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-xs sm:text-sm transition-colors ${
+                        isSelected ? "bg-primary text-primary-fg" : "hover:bg-callout text-text"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`flex size-7 items-center justify-center rounded-lg ${
+                            isSelected ? "bg-white/20 text-white" : "bg-callout text-primary"
+                          }`}
+                        >
+                          <CmdIcon size={15} weight="fill" aria-hidden />
+                        </span>
+                        <span className="font-semibold">{isEn ? cmd.labelEn : cmd.labelAr}</span>
+                      </div>
+                      <CaretRight
+                        size={15}
+                        className={`shrink-0 rtl:rotate-180 ${isSelected ? "text-white" : "text-text-subtle"}`}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           )}
 
@@ -257,7 +410,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
 
           {/* Invoices Group */}
           {invoices.length > 0 && (
-            <div>
+            <div className="mb-2">
               <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-text-subtle">
                 <Receipt size={14} weight="fill" />
                 <span>{t("invoices")}</span>
@@ -295,6 +448,54 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                       <div className="flex items-center gap-2">
                         <span className={`text-xs font-bold ${isSelected ? "text-white" : "text-primary"}`} dir="ltr">
                           {formatEgp(BigInt(inv.amountMinor))}
+                        </span>
+                        <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-white" : "text-text-subtle"}`} />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          {/* Cheques Group */}
+          {cheques.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-text-subtle">
+                <Bank size={14} weight="fill" />
+                <span>{isEn ? "Cheques" : "الشيكات"}</span>
+              </div>
+              <ul className="flex flex-col gap-1">
+                {cheques.map((chq: SearchChequeResult, idx: number) => {
+                  const globalIdx = debtors.length + invoices.length + idx;
+                  const isSelected = selectedIndex === globalIdx;
+                  return (
+                    <li
+                      key={chq.id}
+                      onClick={() => {
+                        router.push(`/${locale}/cheques`);
+                        onClose();
+                      }}
+                      className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-sm transition-colors ${
+                        isSelected ? "bg-primary text-white" : "hover:bg-callout text-text"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className={`flex size-7 items-center justify-center rounded-full text-xs font-bold ${
+                          isSelected ? "bg-white/20 text-white" : "bg-callout text-primary"
+                        }`}>
+                          <Bank size={14} weight="fill" />
+                        </span>
+                        <div className="flex flex-col">
+                          <span className="font-bold" dir="ltr">#{chq.number}</span>
+                          <span className={`truncate text-xs max-w-xs ${isSelected ? "text-white/80" : "text-text-muted"}`}>
+                            {chq.bank} · {chq.dueDate}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-bold ${isSelected ? "text-white" : "text-primary"}`} dir="ltr">
+                          {formatEgp(BigInt(chq.amountMinor))}
                         </span>
                         <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-white" : "text-text-subtle"}`} />
                       </div>

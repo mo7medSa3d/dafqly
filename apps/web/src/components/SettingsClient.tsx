@@ -7,7 +7,6 @@ import {
 import { trpc } from "@/lib/trpc-client";
 import { ExportButtons } from "./ExportButtons";
 import { DangerZone } from "./DangerZone";
-import { AuditTrail } from "./AuditTrail";
 import { SecurityLockBadge } from "./illustrations";
 import { Panel, btnPrimary, inputCls, labelCls } from "./ui";
 
@@ -131,7 +130,9 @@ export function SettingsClient({ locale }: { locale: string }) {
         exportLanguage,
       });
       setSaved(true);
-      setTimeout(() => setSaved(false), 4000);
+      setTimeout(() => {
+        window.location.reload();
+      }, 800);
       await load();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : (isAr ? "تعذّر حفظ التعديلات" : "Failed to save settings"));
@@ -158,7 +159,7 @@ export function SettingsClient({ locale }: { locale: string }) {
               <span className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
                 <GearSix size={22} weight="fill" />
               </span>
-              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-text">
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-text">
                 {isAr ? "إعدادات المنشأة والحساب" : "Business & Account Settings"}
               </h1>
             </div>
@@ -433,11 +434,6 @@ export function SettingsClient({ locale }: { locale: string }) {
           </button>
         </div>
       </form>
-
-      {/* Security & Audit Trail */}
-      <div className="mt-8">
-        <AuditTrail />
-      </div>
 
       {/* Secondary Operations: CSV Exports & Danger Zone */}
       <div className="mt-4 border-t border-border pt-8">

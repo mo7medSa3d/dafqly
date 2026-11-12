@@ -32,7 +32,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "DAFQLY",
     short_name: "DAFQLY",
-    description: "منصة إدارة المستحقات والتحصيل",
+    description: "دفّقلي — منصة إدارة المستحقات والتدفقات النقدية الذكية",
     lang: "ar",
     dir: "rtl",
     start_url: "/?source=pwa",

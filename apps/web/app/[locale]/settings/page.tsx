@@ -15,7 +15,7 @@ export default async function SettingsPage({ params }: { params: Promise<{ local
   if (!tenant) redirect(`/${locale}/onboarding`);
 
   return (
-    <AppShell locale={locale} businessName={tenant.businessNameAr} testId="settings">
+    <AppShell locale={locale} businessName={tenant.businessNameAr} currency={tenant.settings?.currency ?? "EGP"} testId="settings">
       <SettingsClient locale={locale} />
     </AppShell>
   );

@@ -5,6 +5,7 @@ export * from "./payment";
 export * from "./paymob";
 export * from "./storage";
 export * from "./llm";
+export * from "./gemini";
 export * from "./prompts/ledger";
 export * from "./prompts/receipt";
 export * from "./prompts/reply";

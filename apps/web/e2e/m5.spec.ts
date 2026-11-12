@@ -88,9 +88,11 @@ test("M5 dashboard: reports render, forecast is honestly not-enough-data, upgrad
   await expect(page.getByTestId("kpi-collection-rate")).toBeVisible();
   await expect(page.getByTestId("forecast-not-enough")).toBeVisible();
 
-  // Plans render with the placeholder-price label; upgrading via the FAKE
+  // Plans render with the placeholder-price label on the billing page; upgrading via the FAKE
   // provider takes effect immediately (the live Paymob charge is a human
   // step — prices are NOT decided).
+  await page.goto("/ar/billing");
+  await page.waitForLoadState("networkidle");
   await page.getByTestId("upgrade-starter").click();
   // The click fires an async mutation; poll the quota until it commits.
   await expect.poll(async () => {

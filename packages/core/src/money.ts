@@ -41,6 +41,35 @@ export function formatEgp(minor: bigint, opts: { digits?: "latin" | "eastern" } 
   return opts.digits === "eastern" ? toEasternDigits(latin) : latin;
 }
 
+export type SupportedCurrency = "EGP" | "SAR" | "USD" | "AED" | "EUR" | "KWD";
+
+export const CURRENCY_SYMBOLS: Record<string, { ar: string; en: string }> = {
+  EGP: { ar: "ج.م", en: "EGP" },
+  SAR: { ar: "ر.س", en: "SAR" },
+  USD: { ar: "$", en: "$" },
+  AED: { ar: "د.إ", en: "AED" },
+  EUR: { ar: "€", en: "EUR" },
+  KWD: { ar: "د.ك", en: "KWD" },
+};
+
+export function getCurrencySymbol(currency: string = "EGP", locale: string = "ar"): string {
+  const norm = (currency || "EGP").toUpperCase();
+  const entry = CURRENCY_SYMBOLS[norm];
+  if (!entry) return currency;
+  return locale === "en" ? entry.en : entry.ar;
+}
+
+export function formatMoney(
+  minor: bigint | number | string,
+  currency: string = "EGP",
+  opts: { locale?: string; digits?: "latin" | "eastern" } = {}
+): string {
+  const b = typeof minor === "bigint" ? minor : BigInt(String(minor || "0"));
+  const num = formatEgp(b, { digits: opts.digits });
+  const sym = getCurrencySymbol(currency, opts.locale ?? "ar");
+  return opts.locale === "en" ? `${sym} ${num}` : `${num} ${sym}`;
+}
+
 export function sumMoney(values: Iterable<bigint>): bigint {
   let total = 0n;
   for (const v of values) total += v;

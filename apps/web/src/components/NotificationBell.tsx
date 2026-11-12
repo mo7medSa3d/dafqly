@@ -80,8 +80,7 @@ export function NotificationBell({ locale }: { locale: string }) {
   const [urgentCount, setUrgentCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const hasSyncedOnce = useRef(false);
-
+  
   const fetchList = useCallback(async () => {
     try {
       const res = await trpc.notifications.list.query({ limit: 30 });
@@ -110,18 +109,7 @@ export function NotificationBell({ locale }: { locale: string }) {
   // Initial load + 60s refresh when visible
   useEffect(() => {
     let active = true;
-    const init = async () => {
-      if (!hasSyncedOnce.current) {
-        hasSyncedOnce.current = true;
-        try {
-          await trpc.notifications.sync.mutate();
-        } catch {
-          // Proceed to fetch whatever exists
-        }
-      }
-      if (active) await fetchList();
-    };
-    void init();
+    if (active) void fetchList();
 
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") {

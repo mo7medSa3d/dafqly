@@ -4,7 +4,7 @@ import {
   type ForecastResult, type KpiReport, type PaidHistoryRow, type ReminderPerformance,
 } from "@tahseel/core";
 import {
-  debtors, invoices, messages, paymentAllocations, payments,
+  debtors, invoices, messages, paymentAllocations, payments, tenants,
 } from "@tahseel/db/schema";
 import { withTenant, type Db } from "@tahseel/db";
 
@@ -154,33 +154,48 @@ export async function getForecast(app: Db, tenantId: string, todayIso: string): 
 /** F11 CSV exports: tenant-scoped (RLS), UTF-8 BOM via core toCsv. Amounts exported in minor units, labelled as such. */
 export async function exportInvoicesCsv(app: Db, tenantId: string): Promise<{ filename: string; csv: string }> {
   return withTenant(app, tenantId, async (tx) => {
+    const [t] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+    const isAr = t?.settings?.exportLanguage === "ar";
     const rows = await tx.select().from(invoices);
+    const headers = isAr
+      ? ["المعرف", "معرف_العميل", "رقم_الفاتورة", "المبلغ_بالقروش", "المدفوع_بالقروش", "العملة", "تاريخ_الإصدار", "تاريخ_الاستحقاق", "الحالة"]
+      : ["id", "debtor_id", "reference", "amount_minor", "paid_minor", "currency", "issued_on", "due_on", "status"];
     const csv = toCsv([
-      ["id", "debtor_id", "reference", "amount_minor", "paid_minor", "currency", "issued_on", "due_on", "status"],
+      headers,
       ...rows.map((i) => [i.id, i.debtorId, i.reference ?? "", Number(i.amountMinor), Number(i.paidMinor), i.currency, i.issuedOn, i.dueOn, i.status]),
     ]);
-    return { filename: "invoices.csv", csv };
+    return { filename: isAr ? "الفواتير.csv" : "invoices.csv", csv };
   });
 }
 
 export async function exportPaymentsCsv(app: Db, tenantId: string): Promise<{ filename: string; csv: string }> {
   return withTenant(app, tenantId, async (tx) => {
+    const [t] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+    const isAr = t?.settings?.exportLanguage === "ar";
     const rows = await tx.select().from(payments);
+    const headers = isAr
+      ? ["المعرف", "معرف_العميل", "المبلغ_بالقروش", "طريقة_الدفع", "تاريخ_الاستلام", "الرقم_المرجعي", "الحالة", "المصدر"]
+      : ["id", "debtor_id", "amount_minor", "method", "received_on", "reference_no", "status", "source"];
     const csv = toCsv([
-      ["id", "debtor_id", "amount_minor", "method", "received_on", "reference_no", "status", "source"],
+      headers,
       ...rows.map((p) => [p.id, p.debtorId, Number(p.amountMinor), p.method, p.receivedOn, p.referenceNo ?? "", p.status, p.source]),
     ]);
-    return { filename: "payments.csv", csv };
+    return { filename: isAr ? "المدفوعات.csv" : "payments.csv", csv };
   });
 }
 
 export async function exportDebtorsCsv(app: Db, tenantId: string): Promise<{ filename: string; csv: string }> {
   return withTenant(app, tenantId, async (tx) => {
+    const [t] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+    const isAr = t?.settings?.exportLanguage === "ar";
     const rows = await tx.select().from(debtors).where(and(isNull(debtors.deletedAt)));
+    const headers = isAr
+      ? ["المعرف", "اسم_العميل", "الهاتف", "حالة_الواتساب", "مؤشر_المخاطر", "إلغاء_الاشتراك"]
+      : ["id", "display_name", "phone_e164", "whatsapp_status", "risk_flag", "opted_out"];
     const csv = toCsv([
-      ["id", "display_name", "phone_e164", "whatsapp_status", "risk_flag", "opted_out"],
+      headers,
       ...rows.map((d) => [d.id, d.displayName, d.phoneE164, d.whatsappStatus, d.riskFlag ? "yes" : "no", d.optedOutAt ? "yes" : "no"]),
     ]);
-    return { filename: "debtors.csv", csv };
+    return { filename: isAr ? "العملاء.csv" : "debtors.csv", csv };
   });
 }

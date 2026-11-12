@@ -1,5 +1,6 @@
 import {
   AnthropicLlmProvider, DryRunMessagingProvider, FakeLlmProvider, FakeMessagingProvider, FakeStorageProvider,
+  GeminiLlmProvider,
   NotConfiguredSmsProvider, WhatsAppCloudProvider, type OcrLlmProvider, type StorageProvider, type TextCapableProvider,
 } from "@tahseel/providers";
 import { planForInvoice, planForTenant, quotaExceededFromDb, type EngineDeps } from "@tahseel/reminders";
@@ -57,14 +58,28 @@ export function aiDeps(): AiDeps {
   if (aiSingleton) return aiSingleton;
   const e = env();
   const storage = new FakeStorageProvider();
-  const apiKey = e.AI_API_KEY || e.ANTHROPIC_API_KEY;
-  const unifiedModel = e.AI_MODEL || e.LLM_MODEL_VISION || "claude-sonnet-5-5";
-  aiSingleton = apiKey
-    ? {
-        llm: new AnthropicLlmProvider({ apiKey, model: unifiedModel, modelFast: unifiedModel, modelVision: unifiedModel }),
-        storage, usingFakeLlm: false,
-      }
-    : { llm: new FakeLlmProvider(), storage, usingFakeLlm: true };
+
+  const geminiKey = e.GEMINI_API_KEY || (e.AI_PROVIDER === "gemini" ? e.AI_API_KEY : "");
+  const anthropicKey = e.ANTHROPIC_API_KEY || (e.AI_PROVIDER === "anthropic" ? e.AI_API_KEY : "");
+  const unifiedModel = e.AI_MODEL || (geminiKey ? "gemini-3.1-flash-lite" : "claude-sonnet-5-5");
+
+  if (geminiKey || (e.AI_API_KEY && (unifiedModel.includes("gemini") || e.AI_API_KEY.startsWith("AQ.")))) {
+    const key = geminiKey || e.AI_API_KEY;
+    aiSingleton = {
+      llm: new GeminiLlmProvider({ apiKey: key, model: unifiedModel }),
+      storage,
+      usingFakeLlm: false,
+    };
+  } else if (anthropicKey || e.AI_API_KEY) {
+    const key = anthropicKey || e.AI_API_KEY;
+    aiSingleton = {
+      llm: new AnthropicLlmProvider({ apiKey: key, model: unifiedModel, modelFast: unifiedModel, modelVision: unifiedModel }),
+      storage,
+      usingFakeLlm: false,
+    };
+  } else {
+    aiSingleton = { llm: new FakeLlmProvider(), storage, usingFakeLlm: true };
+  }
   return aiSingleton;
 }
 

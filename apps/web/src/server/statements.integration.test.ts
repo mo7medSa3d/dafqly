@@ -7,14 +7,14 @@ import { createTenantForUser } from "./services";
 import { createDebtor, createInvoice, recordPayment } from "./ledger";
 import {
   createStatementLink, listStatementLinks, revokeStatementLink,
-  getStatementData, raiseStatementDispute, listDisputes,
+  getStatementData, raiseStatementDispute, listDisputes, resolveStatementDispute,
 } from "./statements";
 
 /**
  * F10 acceptance at the service layer (real Postgres + RLS): hash-only token
  * storage, the allowlisted public payload (internal notes never leak),
  * generic not-found for unknown/expired/revoked tokens, and the dispute
- * flow pausing reminders. Rate limiting is exercised over HTTP in e2e.
+ * flow pausing reminders + merchant resolution reopening invoices.
  */
 const hasDb = Boolean(process.env.DATABASE_URL && (process.env.APP_DATABASE_URL ?? process.env.DATABASE_URL));
 if (!hasDb && process.env.REQUIRE_DB_TESTS === "1") throw new Error("REQUIRE_DB_TESTS=1 but DB env missing");
@@ -97,11 +97,9 @@ d("F10 statement links and disputes (service layer)", () => {
     expect(listed.find((l) => l.id === revoked.id)!.state).toBe("revoked");
   });
 
-  it("ACCEPTANCE: the dispute button creates a dispute, disputes the invoice, and pauses its reminders", async () => {
+  it("ACCEPTANCE: the dispute button creates a dispute, disputes the invoice, pauses its reminders, and merchant resolution reopens it", async () => {
     const debtor = await createDebtor(app(), tenantId, user.id, { displayName: "نزاع", phone: "01066664444" });
     const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "800.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
-    // Invoice creation fires the M2 re-plan hook; poll until its steps exist
-    // (the hook is fire-and-forget by design, the nightly planner backstops).
     const waitFor = async (pred: (rows: { status: string }[]) => boolean) => {
       for (let i = 0; i < 25; i++) {
         const rows = await owner().select().from(reminders).where(eq(reminders.invoiceId, inv.id));
@@ -122,8 +120,6 @@ d("F10 statement links and disputes (service layer)", () => {
     const listed = await listDisputes(app(), tenantId, debtor.id);
     expect(listed).toHaveLength(1);
 
-    // The service's re-plan hook cancels every future step of the disputed
-    // invoice: reminders are paused (poll the async hook to completion).
     const after = await waitFor((rs) => rs.every((r) => r.status === "cancelled"));
     expect(after.length).toBe(planned.length);
     expect(after.every((r) => r.status === "cancelled")).toBe(true);
@@ -131,9 +127,19 @@ d("F10 statement links and disputes (service layer)", () => {
     const data = await getStatementData(app(), owner(), link.token, new Date());
     expect(data!.invoices[0]!.status).toBe("disputed");
     expect(data!.openDisputes).toHaveLength(1);
-    // A second dispute on the same invoice is refused by the status machine.
     await expect(raiseStatementDispute(app(), owner(), link.token, { invoiceId: inv.id, reason: "مرة أخرى" }, new Date()))
       .rejects.toMatchObject({ code: "INVALID_STATE" });
+
+    // Merchant resolves the dispute and reopens the invoice
+    const resolved = await resolveStatementDispute(app(), tenantId, user.id, {
+      disputeId: out.disputeId,
+      resolution: "reopen_invoice",
+      note: "تمت مراجعة الفاتورة مع العميل",
+    });
+    expect(resolved.invoiceStatus).toBe("open");
+    const afterResolve = await getStatementData(app(), owner(), link.token, new Date());
+    expect(afterResolve!.invoices[0]!.status).toBe("open");
+    expect(afterResolve!.openDisputes).toHaveLength(0);
   });
 
   it("a token cannot dispute another debtor's invoice (generic NOT_FOUND)", async () => {

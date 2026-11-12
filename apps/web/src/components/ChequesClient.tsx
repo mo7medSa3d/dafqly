@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { formatEgp } from "@tahseel/core";
+import { useCurrency } from "./CurrencyContext";
 import { BellRinging, CalendarBlank, Camera, Checks, ShieldCheck } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
 import { ChequesIllustration } from "./illustrations";
@@ -40,6 +41,7 @@ export function ChequesClient() {
   const t = useTranslations("cheques");
   const locale = useLocale();
   const isAr = locale === "ar";
+  const { symbol: currencySymbol } = useCurrency();
   const [cheques, setCheques] = useState<ChequeRow[]>([]);
   const [calendar, setCalendar] = useState<WeekGroup[]>([]);
   const [alerts, setAlerts] = useState<AlertRow[]>([]);
@@ -136,13 +138,40 @@ export function ChequesClient() {
   }
 
   const debtorName = (id: string) => debtors.find((d) => d.id === id)?.displayName ?? id;
-  const money = (minor: string) => <span className="tnum" dir="ltr">{formatEgp(BigInt(minor))}</span>;
+  const money = (minor: string) => (
+    <span className="tnum" dir="ltr">
+      {formatEgp(BigInt(minor))} <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span>
+    </span>
+  );
 
   return (
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
       {/* Main Column: Cheques List, Alerts, Calendar (8 cols) */}
       <section className="flex flex-col gap-6 lg:col-span-8">
         {msg && <p role="status" className="rounded-xl border border-border bg-surface px-4 py-3 font-bold text-primary">{msg}</p>}
+
+        {/* Cheques Portfolio Visual Summary Strip */}
+        {cheques.length > 0 && (() => {
+          const heldAmt = cheques.filter((c) => c.status === "held" || c.status === "deposited").reduce((s, c) => s + BigInt(c.amountMinor || "0"), 0n);
+          const clearedAmt = cheques.filter((c) => c.status === "cleared").reduce((s, c) => s + BigInt(c.amountMinor || "0"), 0n);
+          const bouncedAmt = cheques.filter((c) => c.status === "bounced").reduce((s, c) => s + BigInt(c.amountMinor || "0"), 0n);
+          return (
+            <div data-testid="cheques-visual-summary" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="panel-shadow flex flex-col gap-1 rounded-2xl border border-border bg-surface p-4">
+                <span className="text-xs font-semibold text-text-muted">{isAr ? "شيكات برسم التحصيل" : "Held & Deposited"}</span>
+                <span className="tnum text-lg font-extrabold text-primary" dir="ltr">{formatEgp(heldAmt)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
+              </div>
+              <div className="panel-shadow flex flex-col gap-1 rounded-2xl border border-border bg-surface p-4">
+                <span className="text-xs font-semibold text-text-muted">{isAr ? "شيكات محصّلة" : "Cleared Cheques"}</span>
+                <span className="tnum text-lg font-extrabold text-status-paid-fg" dir="ltr">{formatEgp(clearedAmt)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
+              </div>
+              <div className="panel-shadow flex flex-col gap-1 rounded-2xl border border-border bg-surface p-4">
+                <span className="text-xs font-semibold text-text-muted">{isAr ? "شيكات مرتدة" : "Bounced Cheques"}</span>
+                <span className="tnum text-lg font-extrabold text-status-overdue-fg" dir="ltr">{formatEgp(bouncedAmt)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Due Alerts Panel */}
         <Panel
@@ -251,7 +280,7 @@ export function ChequesClient() {
       <aside className="flex flex-col gap-6 lg:col-span-4">
         <Panel title={t("registerTitle")} icon={Checks}>
           <form onSubmit={onRegister} className="flex flex-col gap-4">
-            <label className="brand-pattern-light flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border-2 border-dashed border-border-strong bg-surface-muted/40 px-4 py-5 text-center transition-colors hover:bg-surface-muted/70">
+            <label className="brand-pattern-light flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-border/80 bg-surface-muted/40 px-4 py-5 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/70 hover:shadow-xs">
               <Camera size={26} weight="fill" aria-hidden className="text-teal-600 dark:text-teal-300" />
               <span className="font-bold text-sm">{t("photoTitle")}</span>
               <span className="text-xs text-text-muted">{t("photoHint")}</span>

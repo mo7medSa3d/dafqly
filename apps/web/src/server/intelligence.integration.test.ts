@@ -23,6 +23,10 @@ import {
   getDebtorIntelligence,
   askWorkspaceCopilot,
 } from "./intelligence";
+import {
+  proposeWorkspaceInstallmentPlan,
+  suggestWorkspaceInboxReply,
+} from "./ai-workspace";
 
 const hasDb = Boolean(
   process.env.DATABASE_URL && (process.env.APP_DATABASE_URL ?? process.env.DATABASE_URL),
@@ -83,7 +87,7 @@ d("Notifications & AI Intelligence integration (service layer + RLS)", () => {
     await o.delete(userTable).where(eq(userTable.id, userB.id));
   });
 
-  it("scores debtors deterministically, syncs operational notifications idempotently, and isolates tenants", async () => {
+  it("scores debtors deterministically, computes portfolio concentration risk, syncs operational notifications idempotently, and isolates tenants", async () => {
     const app = appDb();
     const debtorA1 = await createDebtor(app, tenantA, userA.id, {
       displayName: "عميل متأخر جداً",
@@ -136,6 +140,8 @@ d("Notifications & AI Intelligence integration (service layer + RLS)", () => {
     expect(intelA.topActions[0]?.recommendation.suggestedTone).toBeTruthy();
     expect(intelA.headlineAr.length).toBeGreaterThan(5);
     expect(intelA.metrics.totalOutstandingMinor).toBe("1700000");
+    expect(intelA.portfolioRisk.topDebtorSharePct).toBeGreaterThan(80);
+    expect(intelA.portfolioRisk.concentrationLevel).toBe("high_concentration");
 
     // Cross-tenant isolation: Tenant A cannot inspect Tenant B's debtor intelligence
     const crossDebtorCheck = await getDebtorIntelligence(app, tenantA, debtorB1.id, todayIso);
@@ -147,6 +153,39 @@ d("Notifications & AI Intelligence integration (service layer + RLS)", () => {
     expect(directA1!.debtorId).toBe(debtorA1.id);
     expect(directA1!.healthScore).toBeLessThan(100);
     expect(directA1!.priorityScore).toBeGreaterThan(0);
+
+    // Propose installment plan for debtorA1
+    const instPlan = await proposeWorkspaceInstallmentPlan(
+      app,
+      tenantA,
+      userA.id,
+      "شركة الأفق للتجارة",
+      todayIso,
+      {
+        debtorId: debtorA1.id,
+        installmentsCount: 3,
+        interval: "monthly",
+        downPaymentPct: 20,
+      },
+    );
+    expect(instPlan.totalMinor).toBe("1500000");
+    expect(instPlan.tranches).toHaveLength(3);
+    expect(instPlan.proposalTextAr).toContain("INV-INT-1");
+
+    // Smart inbox reply suggestion
+    const replySug = await suggestWorkspaceInboxReply(
+      app,
+      tenantA,
+      userA.id,
+      "شركة الأفق للتجارة",
+      {
+        debtorId: debtorA1.id,
+        intent: "promise_to_pay",
+        promisedDate: "2026-11-20",
+      },
+    );
+    expect(replySug.replyAr).toContain("15,000.00");
+    expect(replySug.replyAr).toContain("2026-11-20");
 
     // Notifications materialized & idempotent on second sync
     const firstList = await listNotifications(app, tenantA);
@@ -231,7 +270,7 @@ d("Notifications & AI Intelligence integration (service layer + RLS)", () => {
     expect(raw.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("answers allowlisted Copilot queries safely and writes an audit_log entry", async () => {
+  it("answers allowlisted Copilot queries safely (including forecast_and_risk & settlement_options) and writes audit_log entries", async () => {
     const app = appDb();
     const resPriority = await askWorkspaceCopilot(
       app,
@@ -251,6 +290,32 @@ d("Notifications & AI Intelligence integration (service layer + RLS)", () => {
     expect(resPriority.quickLinks.some((l) => l.href === "/debtors")).toBe(true);
     expect(resPriority.answerAr).not.toContain("INV-B-SECRET");
 
+    const resRisk = await askWorkspaceCopilot(
+      app,
+      tenantA,
+      userA.id,
+      "شركة الأفق للتجارة",
+      todayIso,
+      {
+        intent: "forecast_and_risk",
+        locale: "ar",
+      },
+    );
+    expect(resRisk.answerAr).toContain("مؤشر سرعة التحصيل");
+
+    const resSettle = await askWorkspaceCopilot(
+      app,
+      tenantA,
+      userA.id,
+      "شركة الأفق للتجارة",
+      todayIso,
+      {
+        intent: "settlement_options",
+        locale: "ar",
+      },
+    );
+    expect(resSettle.answerAr).toContain("مقترح جدولة ذكي");
+
     const resTriage = await askWorkspaceCopilot(
       app,
       tenantA,
@@ -269,6 +334,6 @@ d("Notifications & AI Intelligence integration (service layer + RLS)", () => {
       .select()
       .from(auditLog)
       .where(eq(auditLog.tenantId, tenantA));
-    expect(logs.filter((l) => l.action === "ai.copilot_queried").length).toBeGreaterThanOrEqual(2);
+    expect(logs.filter((l) => l.action === "ai.copilot_queried").length).toBeGreaterThanOrEqual(4);
   });
 });

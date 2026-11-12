@@ -18,24 +18,52 @@ function formatAction(action: string, isAr: boolean): { label: string; color: st
   switch (action) {
     case "invoice.created":
       return { label: isAr ? "إنشاء فاتورة" : "Invoice created", color: "bg-primary/10 text-primary border-primary/20" };
+    case "invoice.updated":
+      return { label: isAr ? "تحديث فاتورة" : "Invoice updated", color: "bg-callout text-primary border-primary/20" };
     case "invoice.transitioned":
       return { label: isAr ? "تغيير حالة فاتورة" : "Invoice transitioned", color: "bg-accent/20 text-accent-fg border-accent/30" };
+    case "invoice.disputed":
+      return { label: isAr ? "تعليق فاتورة للاعتراض" : "Invoice disputed", color: "bg-status-disputed-bg text-status-disputed-fg border-border" };
     case "debtor.created":
-      return { label: isAr ? "إضافة عميل" : "Customer added", color: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" };
+      return { label: isAr ? "إضافة عميل" : "Customer added", color: "bg-status-paid-bg text-status-paid-fg border-border" };
     case "debtor.updated":
-      return { label: isAr ? "تعديل عميل" : "Customer updated", color: "bg-amber-500/10 text-amber-600 border-amber-500/20" };
+      return { label: isAr ? "تعديل عميل" : "Customer updated", color: "bg-status-due-bg text-status-due-fg border-border" };
+    case "debtor.promise_recorded":
+      return { label: isAr ? "تسجيل وعد بالسداد" : "Promise to pay logged", color: "bg-callout text-primary border-primary/20" };
     case "payment.confirmed":
-      return { label: isAr ? "تأكيد دفعة" : "Payment confirmed", color: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" };
+      return { label: isAr ? "تأكيد دفعة" : "Payment confirmed", color: "bg-status-paid-bg text-status-paid-fg border-border" };
     case "payment.recorded":
-      return { label: isAr ? "تسجيل دفعة" : "Payment recorded", color: "bg-blue-500/10 text-blue-600 border-blue-500/20" };
+      return { label: isAr ? "تسجيل دفعة" : "Payment recorded", color: "bg-callout text-primary border-primary/20" };
     case "cheque.registered":
-      return { label: isAr ? "تسجيل شيك" : "Cheque registered", color: "bg-purple-500/10 text-purple-600 border-purple-500/20" };
+      return { label: isAr ? "تسجيل شيك" : "Cheque registered", color: "bg-callout text-primary border-primary/20" };
+    case "dispute.raised":
+      return { label: isAr ? "تسجيل اعتراض عميل" : "Dispute raised", color: "bg-status-overdue-bg text-status-overdue-fg border-border" };
+    case "dispute.resolved":
+      return { label: isAr ? "حسم اعتراض فاتورة" : "Dispute resolved", color: "bg-status-paid-bg text-status-paid-fg border-border" };
+    case "statement_link.created":
+      return { label: isAr ? "إنشاء رابط كشف حساب" : "Statement link created", color: "bg-callout text-primary border-primary/20" };
+    case "statement_link.revoked":
+      return { label: isAr ? "إلغاء رابط كشف حساب" : "Statement link revoked", color: "bg-surface-muted text-text-muted border-border" };
+    case "message_intent.resolved":
+      return { label: isAr ? "مراجعة رسالة واردة" : "Inbox reply resolved", color: "bg-status-paid-bg text-status-paid-fg border-border" };
+    case "ai.copilot_queried":
+      return { label: isAr ? "استشارة المساعد الذكي" : "AI Copilot query", color: "bg-callout text-primary border-primary/20" };
+    case "ai.notification_generated":
+      return { label: isAr ? "صياغة تنبيه بالذكاء الاصطناعي" : "AI smart draft generated", color: "bg-callout text-primary border-primary/20" };
+    case "ai.installment_planned":
+      return { label: isAr ? "بناء خطة تقسيط وجدولة" : "AI installment plan built", color: "bg-callout text-primary border-primary/20" };
+    case "ai.reply_suggested":
+      return { label: isAr ? "اقتراح رد ذكي للعميل" : "AI inbox reply suggested", color: "bg-callout text-primary border-primary/20" };
+    case "ai.receipt_analyzed":
+      return { label: isAr ? "فحص إيصال بالذكاء الاصطناعي" : "AI receipt verification", color: "bg-callout text-primary border-primary/20" };
+    case "ai.headers_mapped":
+      return { label: isAr ? "مطابقة أعمدة ذكية" : "AI header mapping", color: "bg-callout text-primary border-primary/20" };
     case "settings.updated":
-      return { label: isAr ? "تحديث الإعدادات" : "Settings updated", color: "bg-neutral-500/10 text-neutral-600 border-neutral-500/20" };
+      return { label: isAr ? "تحديث الإعدادات" : "Settings updated", color: "bg-surface-muted text-text-muted border-border" };
     case "plan.changed":
       return { label: isAr ? "ترقية الباقة" : "Plan upgraded", color: "bg-primary/10 text-primary border-primary/20" };
     case "import.committed":
-      return { label: isAr ? "استيراد ملف إكسيل" : "Import committed", color: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" };
+      return { label: isAr ? "استيراد ملف فواتير" : "Import committed", color: "bg-status-paid-bg text-status-paid-fg border-border" };
     default:
       return { label: action, color: "bg-surface-muted text-text-muted border-border" };
   }
@@ -63,7 +91,7 @@ export function AuditTrail() {
   useEffect(() => {
     let active = true;
     void trpc.audit.list
-      .query({ limit: 15 })
+      .query({ limit: 20 })
       .then((items: AuditEntry[]) => {
         if (!active) return;
         setLogs(items);

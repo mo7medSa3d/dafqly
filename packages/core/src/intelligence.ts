@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { sanitizePromptData, type NotificationTone } from "./ai";
+import { sanitizePromptData, type NotificationTone, type ReplyIntent } from "./ai";
 import { formatEgp } from "./money";
+import { isInQuietHours, nextAllowedSlot, localDateOf, DEFAULT_POLICY, type SchedulePolicy } from "./time";
 
 /**
  * Pure single-tenant AI & Collections Intelligence engine.
@@ -89,6 +90,13 @@ function isoDayDiff(fromIso: string, toIso: string): number {
   const b = Date.parse(`${toIso.slice(0, 10)}T00:00:00Z`);
   if (Number.isNaN(a) || Number.isNaN(b)) return 0;
   return Math.floor((b - a) / 86_400_000);
+}
+
+function addDaysIsoPure(iso: string, days: number): string {
+  const dt = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(dt.getTime())) return iso.slice(0, 10);
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
 }
 
 function clampInt(n: number, min: number, max: number): number {
@@ -293,6 +301,393 @@ export function scoreDebtorIntelligence(input: DebtorScoreInput): DebtorIntellig
   };
 }
 
+// =============================================================================
+// Portfolio Concentration & Liquidity Risk Engine (Single-Tenant Only)
+// =============================================================================
+
+export type ConcentrationLevel = "diversified" | "moderate" | "high_concentration";
+
+export interface PortfolioRiskInput {
+  totalOutstandingMinor: bigint;
+  overdueMinor: bigint;
+  collectedThisMonthMinor: bigint;
+  collectionRate: number;
+  dsoDays: number;
+  debtors: readonly DebtorIntelligence[];
+}
+
+export interface PortfolioRiskAnalysis {
+  topDebtorSharePct: number;
+  topDebtorName: string | null;
+  top3ConcentrationPct: number;
+  concentrationLevel: ConcentrationLevel;
+  overdueSeverityRatioPct: number;
+  atRiskReceivablesMinor: bigint;
+  expectedNext14DaysMinor: bigint;
+  velocityScore: number; // 0-100 composite liquidity velocity index
+  insightsAr: string[];
+  insightsEn: string[];
+}
+
+export function analyzePortfolioRisk(input: PortfolioRiskInput): PortfolioRiskAnalysis {
+  const openDebtors = [...input.debtors]
+    .filter((d) => d.outstandingMinor > 0n)
+    .sort((a, b) => (b.outstandingMinor > a.outstandingMinor ? 1 : b.outstandingMinor < a.outstandingMinor ? -1 : 0));
+
+  const totalOut = input.totalOutstandingMinor > 0n
+    ? input.totalOutstandingMinor
+    : openDebtors.reduce((acc, d) => acc + d.outstandingMinor, 0n);
+
+  const topDebtor = openDebtors[0] ?? null;
+  const topDebtorSharePct =
+    totalOut > 0n && topDebtor
+      ? clampInt(Number((topDebtor.outstandingMinor * 100n) / totalOut), 0, 100)
+      : 0;
+
+  const top3Sum = openDebtors.slice(0, 3).reduce((acc, d) => acc + d.outstandingMinor, 0n);
+  const top3ConcentrationPct =
+    totalOut > 0n ? clampInt(Number((top3Sum * 100n) / totalOut), 0, 100) : 0;
+
+  const concentrationLevel: ConcentrationLevel =
+    openDebtors.length >= 2 && (topDebtorSharePct >= 50 || top3ConcentrationPct >= 85)
+      ? "high_concentration"
+      : topDebtorSharePct >= 35 || top3ConcentrationPct >= 70
+        ? "moderate"
+        : "diversified";
+
+  const overdueSeverityRatioPct =
+    totalOut > 0n ? clampInt(Number((input.overdueMinor * 100n) / totalOut), 0, 100) : 0;
+
+  const atRiskReceivablesMinor = openDebtors
+    .filter((d) => d.tier === "critical" || d.tier === "at_risk")
+    .reduce((acc, d) => acc + d.outstandingMinor, 0n);
+
+  const expectedNext14DaysMinor = openDebtors
+    .filter((d) => (d.tier === "healthy" || d.tier === "watch") && d.maxDaysOverdue <= 14 && !d.optedOut)
+    .reduce((acc, d) => acc + d.outstandingMinor, 0n);
+
+  const rateComponent = clampInt(input.collectionRate * 100, 0, 100);
+  const dsoPenalty = clampInt(Math.max(0, input.dsoDays - 15) * 1.2, 0, 45);
+  const overduePenalty = Math.round(overdueSeverityRatioPct * 0.35);
+  const velocityScore = clampInt(100 - dsoPenalty - overduePenalty + Math.round(rateComponent * 0.2), 10, 100);
+
+  const insightsAr: string[] = [];
+  const insightsEn: string[] = [];
+
+  if (totalOut === 0n) {
+    insightsAr.push("المحفظة الائتمانية خالية من أي متأخرات أو مخاطر تركز حالياً.");
+    insightsEn.push("Receivables portfolio currently has zero overdue exposure or concentration risk.");
+  } else {
+    if (concentrationLevel === "high_concentration" && topDebtor) {
+      insightsAr.push(
+        `تركز ائتماني مرتفع: العميل «${topDebtor.displayName}» يمثل ${topDebtorSharePct}% من إجمالي المديونية المفتوحة (${formatEgp(topDebtor.outstandingMinor)} ج.م).`,
+      );
+      insightsEn.push(
+        `High concentration risk: "${topDebtor.displayName}" accounts for ${topDebtorSharePct}% of total open receivables (${formatEgp(topDebtor.outstandingMinor)} EGP).`,
+      );
+    } else if (topDebtor) {
+      insightsAr.push(
+        `توزيع المحفظة متوازن: أعلى عميل مدين يمثل ${topDebtorSharePct}% من الإجمالي (${topDebtor.displayName}).`,
+      );
+      insightsEn.push(
+        `Balanced portfolio distribution: largest debtor represents ${topDebtorSharePct}% of total AR (${topDebtor.displayName}).`,
+      );
+    }
+
+    if (atRiskReceivablesMinor > 0n) {
+      insightsAr.push(
+        `سيولة معرضة للمخاطرة: ${formatEgp(atRiskReceivablesMinor)} ج.م ضمن فئة المخاطر المرتفعة/الحرجة يُوصى بجدولتها أو متابعتها فوراً.`,
+      );
+      insightsEn.push(
+        `Receivables at risk: ${formatEgp(atRiskReceivablesMinor)} EGP in high/critical tiers recommended for immediate follow-up or restructuring.`,
+      );
+    }
+
+    if (expectedNext14DaysMinor > 0n) {
+      insightsAr.push(
+        `تدفقات متوقعة قريباً: يُتوقع تحصيل نحو ${formatEgp(expectedNext14DaysMinor)} ج.م خلال ١٤ يوماً من الحسابات المنتظمة.`,
+      );
+      insightsEn.push(
+        `Near-term liquidity: ~${formatEgp(expectedNext14DaysMinor)} EGP projected within 14 days from healthy/watch accounts.`,
+      );
+    }
+  }
+
+  return {
+    topDebtorSharePct,
+    topDebtorName: topDebtor?.displayName ?? null,
+    top3ConcentrationPct,
+    concentrationLevel,
+    overdueSeverityRatioPct,
+    atRiskReceivablesMinor,
+    expectedNext14DaysMinor,
+    velocityScore,
+    insightsAr,
+    insightsEn,
+  };
+}
+
+// =============================================================================
+// Smart Installment / Settlement Restructuring Engine (Pure Integer Minor Units)
+// =============================================================================
+
+export type InstallmentInterval = "weekly" | "biweekly" | "monthly";
+
+export interface InstallmentTranche {
+  sequence: number;
+  labelAr: string;
+  labelEn: string;
+  dueDate: string;
+  amountMinor: bigint;
+  formattedAmount: string;
+  isDownPayment: boolean;
+}
+
+export interface InstallmentPlanInput {
+  debtorName: string;
+  businessName: string;
+  totalMinor: bigint;
+  installmentsCount: 2 | 3 | 4 | 6;
+  interval: InstallmentInterval;
+  startDateIso: string;
+  downPaymentPct?: 0 | 10 | 20 | 25 | 30 | 50;
+  reference?: string;
+  paymentLink?: string;
+}
+
+export interface InstallmentPlanResult {
+  debtorName: string;
+  businessName: string;
+  totalMinor: bigint;
+  formattedTotal: string;
+  installmentsCount: number;
+  interval: InstallmentInterval;
+  downPaymentPct: number;
+  tranches: InstallmentTranche[];
+  proposalTextAr: string;
+  proposalTextEn: string;
+}
+
+export function buildInstallmentPlan(input: InstallmentPlanInput): InstallmentPlanResult {
+  if (input.totalMinor <= 0n) {
+    throw new Error("totalMinor must be > 0n (Hard Rule #1)");
+  }
+  const safeDebtor = sanitizePromptData(input.debtorName) || "العميل";
+  const safeBiz = sanitizePromptData(input.businessName) || "دفقلي";
+  const count = input.installmentsCount;
+  const downPct = input.downPaymentPct ?? 0;
+  const stepDays = input.interval === "weekly" ? 7 : input.interval === "biweekly" ? 14 : 30;
+  const startIso = input.startDateIso.slice(0, 10);
+
+  const tranches: InstallmentTranche[] = [];
+
+  if (downPct > 0 && count >= 2) {
+    const downMinor = (input.totalMinor * BigInt(downPct)) / 100n;
+    const remainingMinor = input.totalMinor - downMinor;
+    const remCount = BigInt(count - 1);
+    const baseTranche = remainingMinor / remCount;
+    const remainder = remainingMinor % remCount;
+
+    tranches.push({
+      sequence: 1,
+      labelAr: `دفعة مقدمة (${downPct}%)`,
+      labelEn: `Upfront Down Payment (${downPct}%)`,
+      dueDate: startIso,
+      amountMinor: downMinor,
+      formattedAmount: formatEgp(downMinor),
+      isDownPayment: true,
+    });
+
+    for (let i = 1; i < count; i++) {
+      const isLast = i === count - 1;
+      const amt = isLast ? baseTranche + remainder : baseTranche;
+      tranches.push({
+        sequence: i + 1,
+        labelAr: `القسط ${i}`,
+        labelEn: `Installment #${i}`,
+        dueDate: addDaysIsoPure(startIso, i * stepDays),
+        amountMinor: amt,
+        formattedAmount: formatEgp(amt),
+        isDownPayment: false,
+      });
+    }
+  } else {
+    const countBig = BigInt(count);
+    const baseTranche = input.totalMinor / countBig;
+    const remainder = input.totalMinor % countBig;
+
+    for (let i = 0; i < count; i++) {
+      const isLast = i === count - 1;
+      const amt = isLast ? baseTranche + remainder : baseTranche;
+      tranches.push({
+        sequence: i + 1,
+        labelAr: `القسط ${i + 1}`,
+        labelEn: `Installment #${i + 1}`,
+        dueDate: addDaysIsoPure(startIso, i * stepDays),
+        amountMinor: amt,
+        formattedAmount: formatEgp(amt),
+        isDownPayment: false,
+      });
+    }
+  }
+
+  const formattedTotal = formatEgp(input.totalMinor);
+  const refNoteAr = input.reference ? ` (${sanitizePromptData(input.reference)})` : "";
+  const refNoteEn = input.reference ? ` (${sanitizePromptData(input.reference)})` : "";
+
+  const scheduleLinesAr = tranches
+    .map((t) => `• ${t.labelAr}: ${t.formattedAmount} ج.م — بتاريخ ${t.dueDate}`)
+    .join("\n");
+  const scheduleLinesEn = tranches
+    .map((t) => `• ${t.labelEn}: ${t.formattedAmount} EGP — due ${t.dueDate}`)
+    .join("\n");
+
+  const linkLineAr = input.paymentLink ? `\nرابط السداد وكشف الحساب الآمن: ${input.paymentLink}` : "";
+  const linkLineEn = input.paymentLink ? `\nSecure Payment & Statement Link: ${input.paymentLink}` : "";
+
+  const proposalTextAr = [
+    `مرحباً ${safeDebtor}، تحية طيبة من ${safeBiz}.`,
+    `حرصاً منا على تيسير سداد المستحقات المفتوحة${refNoteAr} والبالغ إجماليها ${formattedTotal} ج.م، نقترح عليكم خطة جدولة ميسّرة على ${count} دفعات كالتالي:`,
+    scheduleLinesAr,
+    `يرجى تأكيد الموافقة على الجدول المقترح لاعتماده وإيقاف التذكيرات التلقائية خلال فترة الالتزام.${linkLineAr}`,
+  ].join("\n");
+
+  const proposalTextEn = [
+    `Hello ${safeDebtor}, greetings from ${safeBiz}.`,
+    `To facilitate settling your open balance${refNoteEn} of ${formattedTotal} EGP, we propose the following ${count}-part payment schedule:`,
+    scheduleLinesEn,
+    `Please reply to confirm this schedule so we can lock it in and pause automated reminders while on track.${linkLineEn}`,
+  ].join("\n");
+
+  return {
+    debtorName: safeDebtor,
+    businessName: safeBiz,
+    totalMinor: input.totalMinor,
+    formattedTotal,
+    installmentsCount: count,
+    interval: input.interval,
+    downPaymentPct: downPct,
+    tranches,
+    proposalTextAr,
+    proposalTextEn,
+  };
+}
+
+// =============================================================================
+// Smart AI Inbox Reply Composer (Context-Grounded Response to Customer Intents)
+// =============================================================================
+
+export interface SmartInboxReplyInput {
+  intent: ReplyIntent | "unclassified" | "receipt_image_pending" | string;
+  debtorName: string;
+  businessName: string;
+  outstandingMinor: bigint;
+  customerMessage?: string | null;
+  promisedDate?: string | null;
+  offeredAmountMinor?: bigint | null;
+  paymentLink?: string;
+  statementLink?: string;
+}
+
+export interface SmartInboxReplyResult {
+  intent: string;
+  replyAr: string;
+  replyEn: string;
+  recommendedActionAr: string;
+  recommendedActionEn: string;
+  followUpDays: number;
+}
+
+export function generateSmartInboxReply(input: SmartInboxReplyInput): SmartInboxReplyResult {
+  const safeDebtor = sanitizePromptData(input.debtorName) || "عميلنا العزيز";
+  const safeBiz = sanitizePromptData(input.businessName) || "دفقلي";
+  const totalStr = formatEgp(input.outstandingMinor > 0n ? input.outstandingMinor : 0n);
+  const promised = input.promisedDate ? sanitizePromptData(input.promisedDate) : null;
+  const offeredStr =
+    input.offeredAmountMinor && input.offeredAmountMinor > 0n
+      ? formatEgp(input.offeredAmountMinor)
+      : null;
+
+  let replyAr = "";
+  let replyEn = "";
+  let recommendedActionAr = "";
+  let recommendedActionEn = "";
+  let followUpDays = 3;
+
+  switch (input.intent) {
+    case "promise_to_pay":
+      replyAr = promised
+        ? `شكراً لتواصلكم أستاذ/ة ${safeDebtor}. تم تسجيل وعد السداد بتاريخ ${promised} لمبلغ ${totalStr} ج.م لدى ${safeBiz}، وتأجيل التذكيرات التلقائية حتى ذلك الموعد.${input.paymentLink ? `\nرابط الدفع المباشر: ${input.paymentLink}` : ""}`
+        : `شكراً لتواصلكم أستاذ/ة ${safeDebtor} مع ${safeBiz}. نرجو تحديد اليوم المتوقع للسداد لتسجيله في الحساب وتعليق التذكيرات التلقائية مؤقتاً.`;
+      replyEn = promised
+        ? `Thank you ${safeDebtor}. We have logged your promise to pay ${totalStr} EGP on ${promised} at ${safeBiz} and paused reminders until then.${input.paymentLink ? `\nDirect payment link: ${input.paymentLink}` : ""}`
+        : `Thank you for reaching out to ${safeBiz}, ${safeDebtor}. Please confirm the exact date you plan to settle ${totalStr} EGP so we can schedule accordingly.`;
+      recommendedActionAr = promised ? `تأكيد جدولة المتابعة بعد ${promised}` : "طلب تحديد تاريخ سداد محدد";
+      recommendedActionEn = promised ? `Confirm follow-up after ${promised}` : "Ask customer for specific payment date";
+      followUpDays = 5;
+      break;
+
+    case "already_paid":
+    case "receipt_image_pending":
+      replyAr = `شكراً لك أستاذ/ة ${safeDebtor}. لتأكيد التسوية وإغلاق الرصيد المفتوح (${totalStr} ج.م) لدى ${safeBiz}، نرجو إرسال صورة إيصال التحويل أو رقم العملية المرجعي لمطابقته مع البنك فوراً.`;
+      replyEn = `Thank you ${safeDebtor}. To reconcile and close your open balance (${totalStr} EGP) at ${safeBiz}, please share a screenshot of the transfer receipt or the reference number.`;
+      recommendedActionAr = "طلب صورة إيصال التحويل أو رقم المرجع للمطابقة";
+      recommendedActionEn = "Request receipt screenshot or transfer reference number";
+      followUpDays = 1;
+      break;
+
+    case "dispute":
+      replyAr = `نشكركم على الملاحظة أستاذ/ة ${safeDebtor}. تم إيقاف التذكيرات التلقائية فوراً ووضع الفاتورة قيد المراجعة المحاسبية في ${safeBiz}. سنتواصل معكم بتفاصيل المطابقة خلال ساعات العمل.${input.statementLink ? `\nرابط كشف الحساب التفصيلي: ${input.statementLink}` : ""}`;
+      replyEn = `Thank you for flagging this, ${safeDebtor}. We have paused automated reminders and placed your invoice under accounting review at ${safeBiz}. We will follow up shortly with the reconciliation details.${input.statementLink ? `\nDetailed statement link: ${input.statementLink}` : ""}`;
+      recommendedActionAr = "مراجعة بنود الفاتورة وكشف الحساب وحسم الاعتراض";
+      recommendedActionEn = "Audit invoice line items and resolve dispute";
+      followUpDays = 1;
+      break;
+
+    case "request_extension":
+      replyAr = promised
+        ? `أهلاً بك أستاذ/ة ${safeDebtor}. تمت الموافقة على تمديد مهلة السداد لرصيد ${totalStr} ج.م لدى ${safeBiz} حتى تاريخ ${promised}. نقدر التزامكم وتعاونكم الدائم.`
+        : `أهلاً بك أستاذ/ة ${safeDebtor}. يسعدنا في ${safeBiz} التيسير عليكم؛ يرجى إفادتنا بالموعد المقترح للسداد أو إمكانية تقسيم المبلغ (${totalStr} ج.م) على دفعتين لاعتماده.`;
+      replyEn = promised
+        ? `Hello ${safeDebtor}. We have approved your extension request for ${totalStr} EGP at ${safeBiz} until ${promised}. Thank you for your cooperation.`
+        : `Hello ${safeDebtor}. We are happy to accommodate a short extension at ${safeBiz}; please share your target payment date or let us know if a 2-part installment plan for ${totalStr} EGP works best.`;
+      recommendedActionAr = "اعتماد المهلة الإضافية أو عرض خطة تقسيط";
+      recommendedActionEn = "Approve extension or offer a 2-part installment schedule";
+      followUpDays = 7;
+      break;
+
+    case "partial_payment_offer":
+      replyAr = offeredStr
+        ? `مرحباً ${safeDebtor}، نرحب باستلام دفعة جزئية بقيمة ${offeredStr} ج.م تحت الحساب لدى ${safeBiz}، على أن يتم جدولة المتبقي من إجمالي ${totalStr} ج.م في موعد محدد.${input.paymentLink ? `\nرابط السداد: ${input.paymentLink}` : ""}`
+        : `مرحباً ${safeDebtor}، لا مانع لدى ${safeBiz} من سداد دفعة جزئية الآن من إجمالي المستحق (${totalStr} ج.م) وجدولة المتبقي. يرجى إرسال إيصال الدفعة الأولى فور التحويل.`;
+      replyEn = offeredStr
+        ? `Hello ${safeDebtor}, we gladly accept a partial payment of ${offeredStr} EGP toward your ${totalStr} EGP balance at ${safeBiz}, with the remainder scheduled on an agreed date.${input.paymentLink ? `\nPayment link: ${input.paymentLink}` : ""}`
+        : `Hello ${safeDebtor}, ${safeBiz} can accept a partial payment now toward your ${totalStr} EGP balance and schedule the rest. Please share the receipt once transferred.`;
+      recommendedActionAr = "قبول الدفعة الجزئية وجدولة الرصيد المتبقي";
+      recommendedActionEn = "Accept partial payment and schedule remaining balance";
+      followUpDays = 3;
+      break;
+
+    case "question":
+    default:
+      replyAr = `مرحباً ${safeDebtor}، بخصوص استفساركم لدى ${safeBiz}: إجمالي الرصيد المفتوح حالياً هو ${totalStr} ج.م.${input.statementLink ? ` يمكنكم الاطلاع على كشف الحساب الكامل والفواتير عبر الرابط: ${input.statementLink}` : " يسعدنا توضيح أي تفاصيل إضافية عبر هذه المحادثة."}`;
+      replyEn = `Hello ${safeDebtor}, regarding your inquiry with ${safeBiz}: your current open balance is ${totalStr} EGP.${input.statementLink ? ` You can view your full itemized statement here: ${input.statementLink}` : " Please let us know if you need any invoice details."}`;
+      recommendedActionAr = "إرسال كشف الحساب التفصيلي والرد على استفسار العميل";
+      recommendedActionEn = "Share itemized statement link and answer customer inquiry";
+      followUpDays = 2;
+      break;
+  }
+
+  return {
+    intent: input.intent,
+    replyAr,
+    replyEn,
+    recommendedActionAr,
+    recommendedActionEn,
+    followUpDays,
+  };
+}
+
 export const BriefingNarrationSchema = z.object({
   headlineAr: z.string().trim().min(4).max(160),
   headlineEn: z.string().trim().min(4).max(160),
@@ -338,6 +733,7 @@ export interface CollectionsBriefing {
     upcomingChequesCount: number;
     bouncedChequesCount: number;
   };
+  portfolioRisk: PortfolioRiskAnalysis;
   topActions: DebtorIntelligence[];
 }
 
@@ -350,6 +746,15 @@ export function buildCollectionsBriefing(input: CollectionsBriefingInput): Colle
       return b.outstandingMinor > a.outstandingMinor ? 1 : b.outstandingMinor < a.outstandingMinor ? -1 : 0;
     });
   const topActions = actionable.slice(0, 5);
+
+  const portfolioRisk = analyzePortfolioRisk({
+    totalOutstandingMinor: input.totalOutstandingMinor,
+    overdueMinor: input.overdueMinor,
+    collectedThisMonthMinor: input.collectedThisMonthMinor,
+    collectionRate: input.collectionRate,
+    dsoDays: input.dsoDays,
+    debtors: input.debtors,
+  });
 
   const attentionCount =
     input.pendingClaimsCount + input.openDisputesCount + input.humanIntentsCount + input.bouncedChequesCount;
@@ -380,14 +785,28 @@ export function buildCollectionsBriefing(input: CollectionsBriefingInput): Colle
     summaryAr = `تم تحصيل ${colStr} ج.م هذا الشهر بنجاح في ${safeBiz}. يمكنك إضافة فواتير جديدة أو استيراد كشوف الحسابات لجدولة المتابعة التلقائية.`;
     summaryEn = `${colStr} EGP collected this month at ${safeBiz}. Add new invoices or import ledgers to automate follow-ups.`;
   } else {
-    headlineAr =
-      healthStatus === "urgent"
-        ? `أولوية تحصيل عاجلة: ${ovStr} ج.م متأخرات تتطلب متابعة اليوم`
-        : `ملخص التحصيل اليومي: ${outStr} ج.م إجمالي المستحقات النشطة`;
-    headlineEn =
-      healthStatus === "urgent"
-        ? `Urgent focus: ${ovStr} EGP overdue requires action today`
-        : `Daily Collections Briefing: ${outStr} EGP active receivables`;
+    if (input.bouncedChequesCount > 0) {
+      headlineAr = `تنبيه مصرفي عاجل: ${input.bouncedChequesCount} شيك مرتد يتطلب متابعة فورية`;
+      headlineEn = `Urgent Banking Alert: ${input.bouncedChequesCount} bounced cheque(s) require action`;
+    } else if (input.overdueMinor > 0n) {
+      headlineAr = `أولوية تحصيل عاجلة: ${ovStr} ج.م متأخرات تتطلب متابعة اليوم`;
+      headlineEn = `Urgent Collections Priority: ${ovStr} EGP overdue requires action today`;
+    } else if (input.openDisputesCount > 0) {
+      headlineAr = `أولوية متابعة: ${input.openDisputesCount} اعتراض مفتوح على فاتورة يتطلب الحسم`;
+      headlineEn = `Action Required: ${input.openDisputesCount} open invoice dispute(s) require resolution`;
+    } else if (input.pendingClaimsCount > 0) {
+      headlineAr = `مراجعة إيصالات: ${input.pendingClaimsCount} إيصال سداد بانتظار الاعتماد`;
+      headlineEn = `Receipt Review: ${input.pendingClaimsCount} payment claim(s) awaiting confirmation`;
+    } else if (healthStatus === "urgent") {
+      headlineAr = `أولوية تحصيل عاجلة: متابعة حسابات العملاء الحرجة اليوم`;
+      headlineEn = `Urgent Collections Priority: follow up high-risk accounts today`;
+    } else if (attentionCount > 0) {
+      headlineAr = `متابعة تشغيلية: توجد إجراءات مقترحة لتحسين التدفقات النقدية`;
+      headlineEn = `Operational Briefing: proactive actions recommended to protect cash flow`;
+    } else {
+      headlineAr = `ملخص التحصيل اليومي: ${outStr} ج.م إجمالي المستحقات النشطة`;
+      headlineEn = `Daily Collections Briefing: ${outStr} EGP active receivables`;
+    }
 
     const partsAr: string[] = [
       `إجمالي المستحقات الحالية ${outStr} ج.م (منها ${ovStr} ج.م متأخرة السداد)، بينما بلغ المحصّل هذا الشهر ${colStr} ج.م.`,
@@ -456,6 +875,7 @@ export function buildCollectionsBriefing(input: CollectionsBriefingInput): Colle
       upcomingChequesCount: input.upcomingChequesCount,
       bouncedChequesCount: input.bouncedChequesCount,
     },
+    portfolioRisk,
     topActions,
   };
 }
@@ -616,4 +1036,361 @@ export function buildOperationalNotificationCandidates(input: OperationalSignals
   }
 
   return out;
+}
+
+
+// =============================================================================
+// Optimal-Time Reminder Window Calculator (Hard Rule #3 + Quiet Hours + Friday Skip)
+// =============================================================================
+
+export interface OptimalReminderWindowInput {
+  now: Date;
+  policy?: Partial<SchedulePolicy>;
+  daysOverdue: number;
+  riskTier: RiskTier;
+  optedOut: boolean;
+  openDisputesCount: number;
+  hasOpenInvoice: boolean;
+}
+
+export interface OptimalReminderWindowResult {
+  canSend: boolean;
+  blockReasonAr: string | null;
+  blockReasonEn: string | null;
+  inQuietHoursNow: boolean;
+  isImmediateAllowed: boolean;
+  optimalSlotUtc: Date;
+  optimalSlotIso: string;
+  localDateFormatted: string;
+  localTimeFormatted: string;
+  recommendedTone: NotificationTone;
+  windowLabelAr: string;
+  windowLabelEn: string;
+  strategyReasonAr: string;
+  strategyReasonEn: string;
+}
+
+function formatLocalTimeHHMM(at: Date, timezone: string): string {
+  const fmt = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  return fmt.format(at);
+}
+
+/**
+ * Computes the optimal reminder dispatch window for a debtor, enforcing Hard Rule #3:
+ * - Never send to an opted-out debtor.
+ * - Never send when an open dispute is active.
+ * - Never send when no open/partially_paid invoice exists.
+ * - Never send during quiet hours or Friday morning skip; automatically shifts to nextAllowedSlot.
+ */
+export function computeOptimalReminderWindow(input: OptimalReminderWindowInput): OptimalReminderWindowResult {
+  const policy: SchedulePolicy = {
+    timezone: input.policy?.timezone ?? DEFAULT_POLICY.timezone,
+    quietStart: input.policy?.quietStart ?? DEFAULT_POLICY.quietStart,
+    quietEnd: input.policy?.quietEnd ?? DEFAULT_POLICY.quietEnd,
+    fridayMorningSkip: input.policy?.fridayMorningSkip ?? DEFAULT_POLICY.fridayMorningSkip,
+  };
+
+  const recommendedTone: NotificationTone =
+    input.daysOverdue > 30 || input.riskTier === "critical"
+      ? "urgent"
+      : input.daysOverdue > 14 || input.riskTier === "at_risk"
+        ? "firm"
+        : input.daysOverdue > 0
+          ? "polite"
+          : "friendly";
+
+  if (input.optedOut) {
+    const slot = nextAllowedSlot(input.now, policy);
+    return {
+      canSend: false,
+      blockReasonAr: "العميل أوقف استلام التذكيرات (Opt-out) — يُمنع الإرسال الآلي ويلزم تفعيل التذكيرات أولاً.",
+      blockReasonEn: "Debtor opted out of automated reminders (Hard Rule #3) — re-enable reminders first.",
+      inQuietHoursNow: isInQuietHours(input.now, policy),
+      isImmediateAllowed: false,
+      optimalSlotUtc: slot,
+      optimalSlotIso: slot.toISOString(),
+      localDateFormatted: localDateOf(slot, policy.timezone),
+      localTimeFormatted: formatLocalTimeHHMM(slot, policy.timezone),
+      recommendedTone,
+      windowLabelAr: "موقوف — العميل طلب إيقاف التذكيرات",
+      windowLabelEn: "Blocked — Customer opted out",
+      strategyReasonAr: "احترام رغبة العميل في عدم الإزعاج وفق قواعد الحوكمة.",
+      strategyReasonEn: "Respects customer opt-out guard (Hard Rule #3).",
+    };
+  }
+
+  if (input.openDisputesCount > 0) {
+    const slot = nextAllowedSlot(input.now, policy);
+    return {
+      canSend: false,
+      blockReasonAr: "يوجد اعتراض مفتوح على الحساب — التذكيرات متوقفة تلقائياً لحين حسم الاعتراض.",
+      blockReasonEn: "Open invoice dispute active — automated reminders are paused until resolved.",
+      inQuietHoursNow: isInQuietHours(input.now, policy),
+      isImmediateAllowed: false,
+      optimalSlotUtc: slot,
+      optimalSlotIso: slot.toISOString(),
+      localDateFormatted: localDateOf(slot, policy.timezone),
+      localTimeFormatted: formatLocalTimeHHMM(slot, policy.timezone),
+      recommendedTone,
+      windowLabelAr: "معلّق — يوجد اعتراض مفتوح قيد المراجعة",
+      windowLabelEn: "Paused — Open dispute under review",
+      strategyReasonAr: "إيقاف التذكير أثناء وجود نزاع محاسبي يحمي علاقة التاجر بالعميل.",
+      strategyReasonEn: "Pausing reminders during an active dispute protects merchant-customer trust.",
+    };
+  }
+
+  if (!input.hasOpenInvoice) {
+    const slot = nextAllowedSlot(input.now, policy);
+    return {
+      canSend: false,
+      blockReasonAr: "لا توجد فواتير مفتوحة أو متأخرة على هذا العميل حالياً.",
+      blockReasonEn: "No open or partially paid invoices exist for this customer.",
+      inQuietHoursNow: isInQuietHours(input.now, policy),
+      isImmediateAllowed: false,
+      optimalSlotUtc: slot,
+      optimalSlotIso: slot.toISOString(),
+      localDateFormatted: localDateOf(slot, policy.timezone),
+      localTimeFormatted: formatLocalTimeHHMM(slot, policy.timezone),
+      recommendedTone,
+      windowLabelAr: "غير مطلوب — الحساب مسدد بالكامل",
+      windowLabelEn: "Not needed — Account is fully settled",
+      strategyReasonAr: "يُمنع إرسال تذكيرات لفواتير مسددة أو ملغاة.",
+      strategyReasonEn: "Hard Rule #3: never send reminders for settled invoices.",
+    };
+  }
+
+  const inQuiet = isInQuietHours(input.now, policy);
+  const optimalSlotUtc = nextAllowedSlot(input.now, policy);
+  const localDateFormatted = localDateOf(optimalSlotUtc, policy.timezone);
+  const localTimeFormatted = formatLocalTimeHHMM(optimalSlotUtc, policy.timezone);
+
+  const windowLabelAr = inQuiet
+    ? `مجدول لأول وقت مسموح (${localDateFormatted} الساعة ${localTimeFormatted} — بعد ساعات الهدوء)`
+    : `متاح للإرسال الذكي الآن (${localTimeFormatted} — ضمن ساعات العمل النشطة)`;
+  const windowLabelEn = inQuiet
+    ? `Scheduled for next allowed window (${localDateFormatted} at ${localTimeFormatted} — post quiet hours)`
+    : `Ready for immediate smart dispatch (${localTimeFormatted} — active business hours)`;
+
+  const strategyReasonAr =
+    input.daysOverdue > 14
+      ? `تأخر ${input.daysOverdue} يوماً يستدعي نبرة «${recommendedTone === "urgent" ? "عاجلة" : "حازمة"}» مع رابط سداد مباشر في ذروة ساعات العمل.`
+      : input.daysOverdue > 0
+        ? `تأخر ${input.daysOverdue} يوم — إرسال تذكير مهذب مع رابط الدفع يرفع احتمالية التحصيل السريع.`
+        : "الفاتورة ضمن فترة السماح؛ تذكير ودي استباقي يضمن السداد في الموعد.";
+
+  const strategyReasonEn =
+    input.daysOverdue > 14
+      ? `${input.daysOverdue} days overdue warrants a ${recommendedTone} tone with a direct payment link during business hours.`
+      : input.daysOverdue > 0
+        ? `${input.daysOverdue}d overdue — a polite reminder with checkout link maximizes same-day settlement.`
+        : "Invoice is upcoming/current; a friendly heads-up keeps cashflow on schedule.";
+
+  return {
+    canSend: true,
+    blockReasonAr: null,
+    blockReasonEn: null,
+    inQuietHoursNow: inQuiet,
+    isImmediateAllowed: !inQuiet,
+    optimalSlotUtc,
+    optimalSlotIso: optimalSlotUtc.toISOString(),
+    localDateFormatted,
+    localTimeFormatted,
+    recommendedTone,
+    windowLabelAr,
+    windowLabelEn,
+    strategyReasonAr,
+    strategyReasonEn,
+  };
+}
+
+// =============================================================================
+// Dynamic AI Copilot Function-Calling Planner (Agentic Tool Router)
+// =============================================================================
+
+export type CopilotToolName =
+  | "query_workspace_overview"
+  | "lookup_customer_ledger"
+  | "analyze_cashflow_and_risk"
+  | "propose_installment_plan"
+  | "optimize_reminder_schedule"
+  | "triage_inbox_and_disputes";
+
+export interface PlannedCopilotToolCall {
+  toolName: CopilotToolName;
+  titleAr: string;
+  titleEn: string;
+  args: Record<string, string | number | boolean | null>;
+}
+
+export interface CopilotToolPlanInput {
+  intent:
+    | "daily_summary"
+    | "priority_customers"
+    | "action_plan"
+    | "inbox_triage"
+    | "forecast_and_risk"
+    | "settlement_options"
+    | "optimize_reminders"
+    | "custom_question";
+  question?: string | null;
+  debtors: readonly {
+    debtorId: string;
+    displayName: string;
+    phoneE164?: string | null;
+  }[];
+}
+
+export interface CopilotToolPlanResult {
+  effectiveIntent: CopilotToolPlanInput["intent"] | "customer_lookup";
+  matchedDebtorId: string | null;
+  matchedDebtorName: string | null;
+  plannedTools: PlannedCopilotToolCall[];
+}
+
+function normalizeArabicSearch(text: string): string {
+  return text
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/[ً-ٰٟ]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Determines which dynamic backend tools the AI Copilot should invoke for a user turn,
+ * extracting customer entities by name or phone and chaining relevant analysis/action tools.
+ */
+export function planCopilotToolCalls(input: CopilotToolPlanInput): CopilotToolPlanResult {
+  const safeQ = sanitizePromptData(input.question ?? "");
+  const normQ = normalizeArabicSearch(safeQ);
+
+  // 1. Check if the user query mentions a specific customer in the tenant ledger
+  let matchedDebtor: { debtorId: string; displayName: string } | null = null;
+  if (normQ.length >= 2) {
+    const digitsInQ = safeQ.replace(/\D+/g, "");
+    for (const d of input.debtors) {
+      const normName = normalizeArabicSearch(d.displayName);
+      if (!normName) continue;
+      if (normQ.includes(normName)) {
+        matchedDebtor = { debtorId: d.debtorId, displayName: d.displayName };
+        break;
+      }
+      // Also match significant multi-character tokens (e.g. "الأمل" from "شركة الأمل للتجارة")
+      const stopWords = new Set(["شركه", "مؤسسه", "مكتب", "عميل", "عملاء", "حساب", "فاتوره", "فواتير", "مديونيه", "مديونيات", "متاخر", "متاخرين", "متأخر", "متأخرين", "للتجاره", "والتوزيع", "المتحده"]);
+      const tokens = normName.split(/\s+/).filter((t) => t.length >= 3 && !stopWords.has(t));
+      if (tokens.some((tok) => normQ.includes(tok))) {
+        matchedDebtor = { debtorId: d.debtorId, displayName: d.displayName };
+        break;
+      }
+      if (digitsInQ.length >= 6 && d.phoneE164 && d.phoneE164.replace(/\D+/g, "").includes(digitsInQ)) {
+        matchedDebtor = { debtorId: d.debtorId, displayName: d.displayName };
+        break;
+      }
+    }
+  }
+
+  let effectiveIntent: CopilotToolPlanResult["effectiveIntent"] = input.intent;
+
+  if (input.intent === "custom_question" && safeQ) {
+    if (/تذكير|ابعت|أرسل|ارسال|وقت|مواعيد|جدول.*تذكير|remind|dispatch|send.*message|optimal.*time|schedule.*reminder/i.test(safeQ)) {
+      effectiveIntent = "optimize_reminders";
+    } else if (/تقسيط|أقساط|اقساط|دفعات|تسوية|installment|settle|restructur/i.test(safeQ)) {
+      effectiveIntent = "settlement_options";
+    } else if (/سيولة|توقعات|تدفق|تركز|مخاطر|forecast|cash|liquidity|risk|concentration|dso/i.test(safeQ)) {
+      effectiveIntent = "forecast_and_risk";
+    } else if (/إيصال|ايصال|اعتراض|صندوق|شيك|inbox|receipt|dispute|cheque/i.test(safeQ)) {
+      effectiveIntent = "inbox_triage";
+    } else if (matchedDebtor) {
+      effectiveIntent = "customer_lookup";
+    } else if (/متأخر|أولوية|اولويه|أهم|عميل|عملاء|priority|overdue|top|who/i.test(safeQ)) {
+      effectiveIntent = "priority_customers";
+    } else if (/خطة|خطوات|ماذا أفعل|عمل|plan|follow|action/i.test(safeQ)) {
+      effectiveIntent = "action_plan";
+    } else {
+      effectiveIntent = "daily_summary";
+    }
+  }
+
+  const plannedTools: PlannedCopilotToolCall[] = [];
+
+  if (matchedDebtor) {
+    plannedTools.push({
+      toolName: "lookup_customer_ledger",
+      titleAr: `فحص سجل العميل: ${matchedDebtor.displayName}`,
+      titleEn: `Lookup Customer Ledger: ${matchedDebtor.displayName}`,
+      args: { debtorId: matchedDebtor.debtorId, debtorName: matchedDebtor.displayName },
+    });
+  }
+
+  switch (effectiveIntent) {
+    case "customer_lookup":
+      plannedTools.push({
+        toolName: "optimize_reminder_schedule",
+        titleAr: "حساب التوقيت الأمثل للتذكير والتحقق من ساعات الهدوء",
+        titleEn: "Compute Optimal Reminder Window & Quiet-Hours Guard",
+        args: { debtorId: matchedDebtor?.debtorId ?? null },
+      });
+      break;
+
+    case "optimize_reminders":
+      plannedTools.push({
+        toolName: "optimize_reminder_schedule",
+        titleAr: "تحليل وجدولة التذكيرات في أفضل وقت للعملاء المتأخرين",
+        titleEn: "Optimize & Schedule Overdue Reminders in Allowed Windows",
+        args: { debtorId: matchedDebtor?.debtorId ?? null, respectQuietHours: true },
+      });
+      break;
+
+    case "settlement_options":
+      plannedTools.push({
+        toolName: "propose_installment_plan",
+        titleAr: "بناء خطة تقسيط وتسوية ذكية بالوحدات الصغرى (قرش)",
+        titleEn: "Build Minor-Unit Installment Settlement Schedule",
+        args: { debtorId: matchedDebtor?.debtorId ?? null, installmentsCount: 3, interval: "monthly" },
+      });
+      break;
+
+    case "forecast_and_risk":
+      plannedTools.push({
+        toolName: "analyze_cashflow_and_risk",
+        titleAr: "تحليل التوقعات النقدية ومخاطر تركز المحفظة وسرعة التحصيل",
+        titleEn: "Analyze 8-Week Cashflow Forecast & Portfolio Concentration Risk",
+        args: { horizonWeeks: 8 },
+      });
+      break;
+
+    case "inbox_triage":
+      plannedTools.push({
+        toolName: "triage_inbox_and_disputes",
+        titleAr: "فرز صندوق الوارد الذكي والاعتراضات والشيكات",
+        titleEn: "Triage AI Inbox Claims, Disputes & Cheques",
+        args: { includeCheques: true },
+      });
+      break;
+
+    case "priority_customers":
+    case "action_plan":
+    case "daily_summary":
+    default:
+      plannedTools.push({
+        toolName: "query_workspace_overview",
+        titleAr: "استعلام مؤشرات الأداء والأولويات الحية للمنشأة",
+        titleEn: "Query Live Workspace KPIs & Priority Queue",
+        args: { intent: effectiveIntent },
+      });
+      break;
+  }
+
+  return {
+    effectiveIntent,
+    matchedDebtorId: matchedDebtor?.debtorId ?? null,
+    matchedDebtorName: matchedDebtor?.displayName ?? null,
+    plannedTools,
+  };
 }
