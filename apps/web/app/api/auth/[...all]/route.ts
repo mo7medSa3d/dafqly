@@ -1,6 +1,6 @@
 import { auth } from "@/server/auth";
 import { toNextJsHandler } from "better-auth/next-js";
-import { rateLimit } from "@/server/rate-limit";
+import { clientIp, rateLimit } from "@/server/rate-limit";
 import { toApiErrorBody, AppError } from "@tahseel/core";
 
 const handlers = toNextJsHandler(auth.handler);
@@ -10,7 +10,7 @@ export const GET = handlers.GET;
 /** Auth POSTs are rate-limited (BUILD_PLAN §8): 10 attempts / minute / IP+route. */
 export async function POST(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const ip = clientIp(req.headers);
   const result = rateLimit(`${ip}:${url.pathname}`, { limit: 10, windowSeconds: 60 });
   if (!result.allowed) {
     return Response.json(

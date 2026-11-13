@@ -4,10 +4,12 @@ import {
   AppError, decodeCsvBuffer, dedupeImportRows, detectHeaderRow, parseCsvText, parseImportGrid,
   readWorkbookGrid, resolveDueOn, type ColumnMapping, type Grid, type ParsedImportRow,
 } from "@tahseel/core";
+import { decodeBase64Upload, MAX_UPLOAD_BASE64_CHARS } from "@tahseel/core/files-crypto";
 import { auditLog, debtors, importJobs, importRows, invoices, paymentAllocations, reminders, tenants } from "@tahseel/db/schema";
 import { withTenant, type Db } from "@tahseel/db";
 import { replanTenantLater } from "./engine";
 import { hashPhone } from "./services";
+import { nextInvoiceReference } from "./ledger";
 
 /**
  * F2 import service. Preview persists the parsed grid + one import_rows row
@@ -41,7 +43,7 @@ function statsOf(rows: readonly ParsedImportRow[]) {
 }
 
 async function gridFromUpload(fileName: string, contentBase64: string): Promise<Grid> {
-  const bytes = Buffer.from(contentBase64, "base64");
+  const bytes = decodeBase64Upload(contentBase64);
   if (bytes.length === 0) throw new AppError("EMPTY_FILE", "The uploaded file is empty", 400);
   if (bytes.length > MAX_IMPORT_BYTES) throw new AppError("FILE_TOO_LARGE", "Import file exceeds 8 MB", 400);
   if (/\.csv$/i.test(fileName)) return parseCsvText(decodeCsvBuffer(bytes));
@@ -86,7 +88,7 @@ async function parseAndStore(tx: Db, tenantId: string, jobId: string, grid: Grid
 
 export const createImportPreviewInput = z.object({
   fileName: z.string().trim().min(1).max(200),
-  contentBase64: z.string().min(4),
+  contentBase64: z.string().min(4).max(MAX_UPLOAD_BASE64_CHARS),
 });
 
 export async function createImportPreview(app: Db, tenantId: string, actor: string,
@@ -224,8 +226,11 @@ export async function commitImport(app: Db, tenantId: string, actor: string, job
       debtorByRow.set(row.rowNumber, debtorId);
       debtorByPhone.set(data.phoneE164, debtorId);
       const issuedOn = data.issuedOn ?? today;
+      // H05: generated references come from the single per-tenant sequence —
+      // a per-job 1001+ counter collided with invoices created elsewhere.
+      const reference = data.reference?.trim() || (await nextInvoiceReference(tx, tenantId, issuedOn.slice(0, 4)));
       const [invoice] = await tx.insert(invoices).values({
-        tenantId, debtorId, reference: data.reference?.trim() || `INV-${issuedOn.slice(0, 4)}-${1001 + createdInvoices}`, description: data.description,
+        tenantId, debtorId, reference, description: data.description,
         amountMinor: BigInt(data.amountMinor), currency: "EGP", issuedOn,
         dueOn: resolveDueOn(issuedOn, data.dueOn, terms),
         status: "open", source: "import", importJobId: jobId,

@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { formatEgp } from "@tahseel/core";
+import { formatEgp, formatMoney } from "@tahseel/core";
 import {
   ArrowUp,
   Buildings,
@@ -57,7 +57,6 @@ export function BillingClient({
   const [subInvoices, setSubInvoices] = useState<SubInvoice[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [isAnnual, setIsAnnual] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -157,12 +156,13 @@ export function BillingClient({
                     {!isCurrent ? (
                       <button
                         data-testid={`upgrade-${p.key}`}
-                        disabled={busy}
+                        disabled={busy || BigInt(p.priceMinor) > 0n}
+                        title={BigInt(p.priceMinor) > 0n ? (isAr ? "الأسعار النهائية لم تُعتمد بعد" : "Final pricing has not been decided yet") : undefined}
                         onClick={() => void upgrade(p.key)}
                         className="inline-flex min-h-[34px] items-center gap-1.5 rounded-xl bg-primary px-3 py-1 text-xs font-bold text-white shadow-xs transition-all hover:bg-primary-hover active:scale-95 disabled:opacity-50"
                       >
                         <ArrowUp size={13} weight="bold" aria-hidden />
-                        <span>{t("upgrade")}</span>
+                        <span>{BigInt(p.priceMinor) > 0n ? (isAr ? "قريباً" : "Soon") : t("upgrade")}</span>
                       </button>
                     ) : (
                       <span className="rounded-lg bg-surface-muted px-2.5 py-1 text-[11px] font-semibold text-text-muted">
@@ -179,20 +179,22 @@ export function BillingClient({
     );
   }
 
-  // FULL MODE: 2026 World-Class 3-Tier Luxury Pricing Grid (`/billing`)
+  // FULL MODE: plan cards for the three real plans in PLANS_SEED.
+  // Prices are PLACEHOLDERS (HUMAN_INPUTS #10, undecided): no price or
+  // discount is shown as decided, paid upgrades are disabled, and no
+  // feature is claimed that the plan does not have (no unlimited quota,
+  // no ERP integration, no 99.9% SLA — none of those exist).
   const starterPlan = plans.find((p) => p.key === "starter") ?? plans[1];
   const trialPlan = plans.find((p) => p.key === "trial") ?? plans[0];
   const growthPlan = plans.find((p) => p.key === "growth") ?? plans[2];
 
-  const discountMultiplier = isAnnual ? 0.8 : 1.0;
-
   const tiers = [
     {
       key: "trial",
-      titleAr: "الباقة الأساسية",
-      titleEn: "Starter",
-      subtitleAr: "للمتاجر والشركات الناشئة لتتبع المستحقات وتنظيم التحصيل",
-      subtitleEn: "For small merchants and startups organizing receivables",
+      titleAr: "التجريبية",
+      titleEn: "Trial",
+      subtitleAr: "للتجربة الأولى وتتبع المستحقات الأساسية",
+      subtitleEn: "For trying out receivables tracking",
       planKey: "trial",
       planObj: trialPlan,
       icon: Lightning,
@@ -200,14 +202,14 @@ export function BillingClient({
       highlighted: false,
       featuresAr: [
         "١٠٠ تذكير واتساب ورسائل شهرياً",
-        "استيراد ملفات الإكسل وCSV تلقائياً",
+        "استيراد ملفات الإكسل وCSV",
         "متابعة أرصدة المدينين والتحصيل",
         "لوحة متابعة مالية أساسية",
         "دعم فني عبر البريد الإلكتروني",
       ],
       featuresEn: [
         "100 WhatsApp reminders / month",
-        "Smart Excel & CSV ledger imports",
+        "Excel & CSV ledger imports",
         "Debtors receivables ledger tracking",
         "Essential financial analytics",
         "Standard email support",
@@ -215,18 +217,18 @@ export function BillingClient({
     },
     {
       key: "starter",
-      titleAr: "النمو الذكي",
-      titleEn: "Growth Pro",
-      subtitleAr: "للشركات المتوسطة والتجار الذين يريدون أتمتة كاملة",
-      subtitleEn: "For growing businesses automating receivables",
+      titleAr: "الأساسية",
+      titleEn: "Starter",
+      subtitleAr: "للمتاجر والشركات الناشئة لتنظيم التحصيل",
+      subtitleEn: "For small merchants and startups organizing receivables",
       planKey: "starter",
-      planObj: starterPlan ?? growthPlan,
+      planObj: starterPlan,
       icon: Sparkle,
       badge: isAr ? "الأكثر طلباً" : "Most Popular",
       highlighted: true,
       featuresAr: [
-        "٥٠٠ إلى ٢,٠٠٠ تذكير ذكي شهرياً",
-        "فحص ومطابقة إيصالات الدفع بالذكاء الاصطناعي (OCR)",
+        "٥٠٠ تذكير ذكي شهرياً",
+        "استخراج بيانات الإيصالات بالـAI مع فحوصات تكرار بقواعد واضحة",
         "روابط دفع إلكتروني آمنة ومباشرة (Paymob)",
         "جدولة ذكية للتذكيرات مع مراعاة ساعات الهدوء",
         "كشوف حساب إلكترونية مؤمنة ومشاركة واتساب فورية",
@@ -234,8 +236,8 @@ export function BillingClient({
         "أولوية دعم فني عبر واتساب",
       ],
       featuresEn: [
-        "500 to 2,000 smart reminders / month",
-        "AI-powered payment receipt OCR & anti-fraud",
+        "500 smart reminders / month",
+        "AI-assisted receipt OCR with deterministic duplicate checks",
         "Direct Paymob instant payment links",
         "Quiet-hours compliant automated scheduling",
         "Secure interactive debtor statements",
@@ -244,31 +246,33 @@ export function BillingClient({
       ],
     },
     {
-      key: "enterprise",
-      titleAr: "المؤسسات الكبرى",
-      titleEn: "Enterprise",
-      subtitleAr: "للشركات الكبرى والمصانع ذات الحجم المالي الكبير",
-      subtitleEn: "For large companies, factories & distributors",
+      key: "growth",
+      titleAr: "النمو",
+      titleEn: "Growth",
+      subtitleAr: "للشركات المتوسطة التي تريد أتمتة كاملة",
+      subtitleEn: "For growing businesses automating receivables",
       planKey: "growth",
       planObj: growthPlan,
       icon: Buildings,
-      badge: isAr ? "مخصصة للمؤسسات" : "Custom Scale",
+      badge: null,
       highlighted: false,
       featuresAr: [
-        "رسائل وتذكيرات غير محدودة (حسب الاستهلاك)",
-        "ربط مباشر مع برامج المحاسبة وERP (API خاص)",
+        "٢,٠٠٠ تذكير ذكي شهرياً",
+        "استخراج بيانات الإيصالات بالـAI مع فحوصات تكرار واحتيال بقواعد واضحة",
+        "روابط دفع إلكتروني آمنة ومباشرة (Paymob)",
         "فحص تلقائي للشيكات البنكية وإشعارات الارتجاع",
         "إدارة متعددة الصلاحيات لفريق الحسابات",
-        "مدير حساب شخصي ومتابعة مخصصة",
-        "اتفاقية مستوى خدمة وضمان استقرار 99.9%",
+        "تقارير التنبؤ بالسيولة النقدية لـ ٨ أسابيع",
+        "دعم فني ذو أولوية عبر واتساب",
       ],
       featuresEn: [
-        "Unlimited custom monthly reminder quota",
-        "Full ERP & accounting software integration",
+        "2,000 smart reminders / month",
+        "AI-assisted receipt OCR with deterministic duplicate and fraud checks",
+        "Direct Paymob instant payment links",
         "Automated cheque registry & bounce alerts",
-        "Granular RBAC multi-user finance team access",
-        "Dedicated account manager & phone support",
-        "99.9% uptime SLA guarantee",
+        "Multi-user finance team access",
+        "8-week predictive cash-flow forecasting",
+        "Priority WhatsApp support",
       ],
     },
   ];
@@ -286,34 +290,10 @@ export function BillingClient({
         </h1>
         <p className="max-w-2xl text-sm text-text-muted sm:text-base">
           {isAr
-            ? "نظام تسعير شفاف بدون رسوم خفية. احصل على أسرع معدل تحصيل لمستحقاتك وزد من سيولتك النقدية."
-            : "Transparent pricing without hidden fees. Accelerate receivables collection and protect your cash flow."}
+            ? "الأسعار النهائية لم تُعتمد بعد — الأرقام المعروضة استرشادية فقط ولا يمكن الشراء بها حالياً. يمكنك استخدام الخطة التجريبية المجانية."
+            : "Final pricing is not set yet — any amounts shown are indicative only and cannot be purchased right now. You can use the free Trial plan."}
         </p>
 
-        {/* Monthly vs Annual Toggle */}
-        <div className="mt-4 flex items-center gap-3 rounded-2xl bg-surface-muted/60 p-1.5 shadow-2xs">
-          <button
-            type="button"
-            onClick={() => setIsAnnual(false)}
-            className={`rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-              !isAnnual ? "bg-surface text-text shadow-xs" : "text-text-muted hover:text-text"
-            }`}
-          >
-            {isAr ? "الدفع الشهري" : "Monthly Billing"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setIsAnnual(true)}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-              isAnnual ? "bg-primary text-white shadow-xs" : "text-text-muted hover:text-text"
-            }`}
-          >
-            <span>{isAr ? "الدفع السنوي" : "Annual Billing"}</span>
-            <span className="rounded-full bg-emerald-400/20 px-2 py-0.5 text-[10px] font-extrabold text-emerald-600 dark:text-emerald-300">
-              {isAr ? "وفّر ٢٠٪" : "Save 20%"}
-            </span>
-          </button>
-        </div>
       </div>
 
       {/* Quota Banner if Warning/Exceeded */}
@@ -346,7 +326,7 @@ export function BillingClient({
           const planKey = tier.planKey;
           const isCurrent = quota?.planKey === planKey;
           const rawPrice = tier.planObj ? Number(tier.planObj.priceMinor) : 0;
-          const calculatedPriceMinor = Math.round(rawPrice * discountMultiplier);
+          const isPaidPlan = rawPrice > 0;
 
           return (
             <div
@@ -388,24 +368,25 @@ export function BillingClient({
                   </p>
                 </div>
 
-                {/* Price Display */}
+                {/* Price Display — prices are undecided placeholders: never
+                    show a number as a decided price. Trial is free; paid
+                    plans show "pricing coming soon". */}
                 <div className="my-2 rounded-2xl bg-surface-muted/40 p-4">
-                  {tier.planObj ? (
+                  {rawPrice === 0 ? (
                     <div className="flex items-baseline gap-1.5">
-                      <span className="tnum text-3xl sm:text-4xl font-black text-text" dir="ltr">
-                        {formatEgp(BigInt(calculatedPriceMinor))}
-                      </span>
-                      <span className="text-xs font-semibold text-text-muted">
-                        /{isAr ? "شهرياً" : "month"}
+                      <span className="text-3xl sm:text-4xl font-black text-text" dir="ltr">
+                        {isAr ? "مجاناً" : "Free"}
                       </span>
                     </div>
                   ) : (
-                    <span className="text-2xl font-black text-text">{isAr ? "مخصص" : "Custom"}</span>
-                  )}
-                  {isAnnual && tier.planObj && rawPrice > 0 && (
-                    <p className="mt-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                      {isAr ? "يتم احتساب الخصم السنوي ٢٠٪" : "Billed annually (20% saved)"}
-                    </p>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-2xl font-black text-text">
+                        {isAr ? "السعر يُحدد قريباً" : "Pricing coming soon"}
+                      </span>
+                      <span className="text-[11px] font-medium text-text-muted">
+                        {isAr ? "الأسعار النهائية لم تُعتمد بعد" : "Final pricing has not been decided yet"}
+                      </span>
+                    </div>
                   )}
                 </div>
 
@@ -427,12 +408,15 @@ export function BillingClient({
                 </div>
               </div>
 
-              {/* Action Button */}
+              {/* Action Button — paid upgrades are disabled while prices
+                  are undecided placeholders (the server refuses them too);
+                  the free Trial plan can still be selected. */}
               <div className="mt-8 pt-4">
                 {!isCurrent ? (
                   <button
                     data-testid={`upgrade-${planKey}`}
-                    disabled={busy}
+                    disabled={busy || isPaidPlan}
+                    title={isPaidPlan ? (isAr ? "الأسعار النهائية لم تُعتمد بعد" : "Final pricing has not been decided yet") : undefined}
                     onClick={() => void upgrade(planKey)}
                     className={`w-full min-h-[46px] flex items-center justify-center gap-2 rounded-2xl text-xs font-extrabold transition-all duration-200 active:scale-98 disabled:opacity-50 ${
                       tier.highlighted
@@ -441,7 +425,11 @@ export function BillingClient({
                     }`}
                   >
                     <ArrowUp size={15} weight="bold" aria-hidden />
-                    <span>{isAr ? `الترقية إلى ${tier.titleAr}` : `Upgrade to ${tier.titleEn}`}</span>
+                    <span>
+                      {isPaidPlan
+                        ? (isAr ? "متاح قريباً بعد اعتماد الأسعار" : "Available once pricing is decided")
+                        : (isAr ? `الترقية إلى ${tier.titleAr}` : `Upgrade to ${tier.titleEn}`)}
+                    </span>
                   </button>
                 ) : (
                   <div className="w-full min-h-[46px] flex items-center justify-center rounded-2xl bg-surface-muted/80 text-xs font-bold text-text-muted">
@@ -485,8 +473,8 @@ export function BillingClient({
                     : (normPlan === "trial" ? "Trial Period" : normPlan === "starter" ? "Starter Plan" : normPlan === "growth" ? "Growth Plan" : normPlan === "pro" ? "Pro Plan" : inv.planKey);
                   const isFree = BigInt(inv.amountMinor) === 0n;
                   const formattedAmt = isFree
-                    ? (isAr ? "0.00 ج.م (مجاناً)" : "0.00 EGP (Free)")
-                    : `${formatEgp(BigInt(inv.amountMinor))} ${isAr ? "ج.م" : "EGP"}`;
+                    ? (isAr ? "مجاناً" : "Free")
+                    : formatMoney(BigInt(inv.amountMinor), "EGP", { locale });
                   const normStatus = (inv.status || "").toLowerCase();
                   const statusLabel = isAr
                     ? (normStatus === "paid" ? "تم السداد" : normStatus === "open" ? "معلقة" : inv.status)

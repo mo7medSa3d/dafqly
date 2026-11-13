@@ -312,6 +312,27 @@ describe("AI Workspace Engine", () => {
     expect(res4.recommendedAction).toBe("reject");
     expect(res4.antiFraud.isDuplicateReference).toBe(true);
     expect(res4.summaryAr).toContain("رقم العملية أو المرجع مسجل مسبقاً");
+
+    // An unavailable extractor must not invent a positive receipt classification
+    // or reject the merchant's upload as a proven non-receipt.
+    const unavailable = parseReceiptScreenshotAnalysis({
+      extraction: {
+        is_receipt: false, amount_minor: null, currency: "EGP", datetime: null,
+        sender_name: null, sender_account_tail: null, reference_no: null,
+        method: null, status_text: null, confidence: 0.1,
+        tamper_signals: ["extraction_unavailable"],
+      },
+      sha256: "hash-unavailable",
+      seenHashes: new Set(),
+      seenReferences: new Set(),
+      now,
+      autoCloseOptIn: true,
+    });
+    expect(unavailable.recommendedAction).toBe("merchant_review");
+    expect(unavailable.isReceipt).toBe(false);
+    expect(unavailable.confidence).toBe(0.1);
+    expect(unavailable.summaryAr).toContain("تعذر استخراج بيانات الإيصال");
+    expect(unavailable.antiFraud.isSuspicious).toBe(false);
   });
 
   it("sanitizePromptData strips Arabic and English prompt injections", () => {
@@ -435,6 +456,31 @@ describe("AI Workspace Engine", () => {
     expect(enRes.toneApplied).toBe("friendly");
     expect(enRes.notificationText).toContain("Hi Tarek");
     expect(enRes.notificationText).toContain("Delta Supplies");
+  });
+
+  it("generateSmartNotification respects currency minor-unit exponents (KWD 3 decimals, JPY 0 decimals)", () => {
+    const kwdRes = generateSmartNotification({
+      debtorName: "فهد",
+      amountMinor: 12345, // 12.345 KWD
+      currency: "KWD",
+      daysOverdue: 3,
+      dueDate: "2026-11-05",
+      tenantBusinessName: "شركة الخليج",
+      locale: "en",
+    });
+    expect(kwdRes.notificationText).toContain("12.345 KWD");
+
+    const jpyRes = generateSmartNotification({
+      debtorName: "Kenji",
+      amountMinor: 1500, // 1,500 JPY
+      currency: "JPY",
+      daysOverdue: 0,
+      dueDate: "2026-11-15",
+      tenantBusinessName: "Tokyo Co",
+      locale: "en",
+    });
+    expect(jpyRes.notificationText).toContain("1,500 ¥");
+    expect(jpyRes.notificationText).not.toContain("15.00");
   });
 });
 

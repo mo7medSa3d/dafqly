@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
-  bigint, boolean, date, doublePrecision, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid, varchar,
+  bigint, boolean, check, date, doublePrecision, foreignKey, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid, varchar,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { v7 as uuidv7 } from "uuid";
@@ -30,7 +30,7 @@ export interface TenantSettings {
   /** Merchant Profile & Localization */
   businessNameEn?: string;
   taxId?: string;
-  currency?: "EGP" | "SAR" | "USD" | "AED" | "EUR" | "KWD";
+  currency?: "EGP" | "SAR" | "USD" | "AED" | "EUR" | "KWD" | "JPY";
   exportLanguage?: "ar" | "en";
   /** F4: kill switch (manual, or quality-guard auto-pause with qualityPausedReason). */
   sendingPaused?: boolean;
@@ -157,6 +157,13 @@ export const debtors = pgTable("debtors", {
   // F14 groundwork ONLY (ADR-006): HMAC-SHA256 of the phone with the server
   // pepper, for a future feature that stays disabled. No read path exists.
   phoneHash: text("phone_hash").notNull(),
+  /** Overpayment credit, persisted (migration 0014): confirmed payments
+   * minus confirmed allocations, recomputed after every money mutation.
+   * May go negative — that is the over-reversal signal, never clamped. */
+  creditMinor: bigint("credit_minor", { mode: "bigint" }).notNull().default(sql`0`),
+  /** Currency the stored credit belongs to: credit is consumed only by
+   * payments in the same currency (no FX conversion exists). */
+  creditCurrency: text("credit_currency").notNull().default("EGP"),
   importJobId: uuid("import_job_id"),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
   createdAt: createdAt(),
@@ -193,6 +200,12 @@ export const invoices = pgTable("invoices", {
   index("invoices_tenant_issued_idx").on(t.tenantId, t.issuedOn),
   index("invoices_debtor_idx").on(t.debtorId),
   index("invoices_tenant_debtor_status_idx").on(t.tenantId, t.debtorId, t.status),
+  // Migration 0014: references are unique per tenant (the counter in
+  // invoice_sequences is the atomic source; this is the backstop).
+  uniqueIndex("invoices_tenant_reference_uniq").on(t.tenantId, t.reference),
+  check("invoices_currency_supported", sql`${t.currency} IN ('EGP','SAR','USD','AED','EUR','KWD','JPY')`),
+  check("invoices_amount_positive", sql`${t.amountMinor} > 0`),
+  check("invoices_paid_range", sql`${t.paidMinor} >= 0 AND ${t.paidMinor} <= ${t.amountMinor}`),
 ]);
 
 // ------------------------------------------------- payments (F1/F5, §5)
@@ -207,6 +220,12 @@ export const payments = pgTable("payments", {
   invoiceId: uuid("invoice_id").references(() => invoices.id, { onDelete: "restrict" }),
   debtorId: uuid("debtor_id").notNull().references(() => debtors.id, { onDelete: "restrict" }),
   amountMinor: bigint("amount_minor", { mode: "bigint" }).notNull(),
+  /** Currency of the payment (migration 0014). Reversals copy the
+   * original payment's currency; gateway payments are EGP-only. */
+  currency: text("currency").notNull().default("EGP"),
+  /** Client idempotency key (migration 0014): a retried recordPayment
+   * with the same key returns the original row instead of recording twice. */
+  idempotencyKey: text("idempotency_key"),
   method: paymentMethodEnum("method").notNull().default("cash"),
   receivedOn: date("received_on").notNull(),
   referenceNo: text("reference_no"),
@@ -229,7 +248,14 @@ export const payments = pgTable("payments", {
   index("payments_tenant_received_idx").on(t.tenantId, t.receivedOn),
   index("payments_tenant_status_received_idx").on(t.tenantId, t.status, t.receivedOn),
   index("payments_tenant_ref_idx").on(t.tenantId, t.referenceNo),
-  uniqueIndex("payments_gateway_txn_uniq").on(t.gatewayTransactionId),
+  // Migration 0015 (M07): gateway transaction ids are unique PER TENANT,
+  // not globally — a callback for tenant A must never collide with tenant B.
+  uniqueIndex("payments_tenant_gateway_txn_uniq").on(t.tenantId, t.gatewayTransactionId),
+  // Migration 0014: retried money mutations dedupe per tenant.
+  uniqueIndex("payments_tenant_idempotency_uniq").on(t.tenantId, t.idempotencyKey),
+  check("payments_currency_supported", sql`${t.currency} IN ('EGP','SAR','USD','AED','EUR','KWD','JPY')`),
+  // Reversals are negative rows; zero-amount rows are never valid.
+  check("payments_amount_nonzero", sql`${t.amountMinor} <> 0`),
 ]);
 
 export const paymentAllocations = pgTable("payment_allocations", {
@@ -243,6 +269,8 @@ export const paymentAllocations = pgTable("payment_allocations", {
 }, (t) => [
   uniqueIndex("payment_allocations_payment_invoice_unique").on(t.paymentId, t.invoiceId),
   index("payment_allocations_invoice_idx").on(t.invoiceId),
+  // Reversal allocations are negative by design; zero rows are never valid.
+  check("payment_allocations_amount_nonzero", sql`${t.amountMinor} <> 0`),
 ]);
 
 // ------------------------------------------------------------ import (F2)
@@ -412,6 +440,9 @@ export const paymentLinks = pgTable("payment_links", {
   currency: text("currency").notNull().default("EGP"),
   provider: varchar("provider", { length: 32 }).notNull().default("paymob"),
   specialReference: varchar("special_reference", { length: 80 }).notNull(),
+  /** Client idempotency key (migration 0015): a retried createGatewayLink
+   * with the same key returns the original link instead of minting twice. */
+  idempotencyKey: text("idempotency_key"),
   providerIntentionId: varchar("provider_intention_id", { length: 128 }),
   checkoutUrl: text("checkout_url").notNull(),
   status: paymentLinkStatusEnum("status").notNull().default("pending"),
@@ -420,7 +451,10 @@ export const paymentLinks = pgTable("payment_links", {
   createdAt: createdAt(), updatedAt: updatedAt(),
 }, (t) => [
   uniqueIndex("payment_links_reference_uniq").on(t.specialReference),
+  // Migration 0015: retried link creation dedupes per tenant.
+  uniqueIndex("payment_links_tenant_idempotency_uniq").on(t.tenantId, t.idempotencyKey),
   index("payment_links_tenant_debtor_idx").on(t.tenantId, t.debtorId, t.status),
+  check("payment_links_amount_positive", sql`${t.amountMinor} > 0`),
 ]);
 
 /**
@@ -459,6 +493,10 @@ export const disputes = pgTable("disputes", {
   raisedBy: disputeRaisedByEnum("raised_by").notNull(),
   reason: text("reason").notNull(),
   status: disputeStatusEnum("status").notNull().default("open"),
+  /** M09: the resolution that closed this dispute ("reopen_invoice" |
+   * "cancel_invoice"); null while open. A retried resolution replays when
+   * it matches this value and is rejected (409) when it differs. */
+  resolution: text("resolution"),
   createdAt: createdAt(), updatedAt: updatedAt(),
 }, (t) => [index("disputes_tenant_invoice_idx").on(t.tenantId, t.invoiceId, t.status),
   index("disputes_tenant_status_idx").on(t.tenantId, t.status, t.debtorId)]);
@@ -481,7 +519,10 @@ export const files = pgTable("files", {
   kind: text("kind").notNull().default("other"),
   createdAt: createdAt(), updatedAt: updatedAt(),
 }, (t) => [
-  index("files_tenant_sha_idx").on(t.tenantId, t.sha256),
+  // M06: the receipt duplicate detector is atomic — (tenant, sha256) is
+  // unique, so two concurrent uploads of the same image cannot both
+  // create a file row; the loser dedupes in storeUpload (files.ts).
+  uniqueIndex("files_tenant_sha256_uniq").on(t.tenantId, t.sha256),
   index("files_tenant_kind_idx").on(t.tenantId, t.kind),
 ]);
 
@@ -539,6 +580,23 @@ export const cheques = pgTable("cheques", {
 }, (t) => [
   index("cheques_tenant_due_idx").on(t.tenantId, t.dueDate, t.status),
   index("cheques_tenant_debtor_idx").on(t.tenantId, t.debtorId),
+  check("cheques_amount_positive", sql`${t.amountMinor} > 0`),
+]);
+
+/**
+ * invoice_sequences (migration 0014): per-tenant atomic counter for
+ * invoice references. The old count()+1001 generation raced under
+ * concurrency; the counter row is incremented atomically (single
+ * INSERT ... ON CONFLICT DO UPDATE ... RETURNING) inside the invoice
+ * creation transaction, and UNIQUE(tenant_id, reference) is the backstop.
+ */
+export const invoiceSequences = pgTable("invoice_sequences", {
+  tenantId: uuid("tenant_id").primaryKey().references(() => tenants.id, { onDelete: "cascade" }),
+  nextVal: bigint("next_val", { mode: "bigint" }).notNull().default(sql`1001`),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  check("invoice_sequences_next_val_positive", sql`${t.nextVal} > 0`),
 ]);
 
 /** cheque_alerts (F9): one row per (cheque, alert kind) — the unique key is what makes the alert job idempotent. */
@@ -616,6 +674,144 @@ export const notifications = pgTable("notifications", {
   index("notifications_tenant_unread_idx").on(t.tenantId, t.dismissedAt, t.readAt, t.createdAt),
 ]);
 
+/** Persisted AI workspace threads. Both tables are tenant-scoped and RLS protected. */
+export const aiConversations = pgTable("ai_conversations", {
+  id: id(),
+  tenantId: tenantId(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  title: varchar("title", { length: 180 }).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("ai_conversations_id_tenant_uniq").on(t.id, t.tenantId),
+  index("ai_conversations_tenant_user_updated_idx").on(t.tenantId, t.userId, t.updatedAt),
+]);
+
+export const aiMessages = pgTable("ai_messages", {
+  id: id(),
+  tenantId: tenantId(),
+  conversationId: uuid("conversation_id").notNull(),
+  role: varchar("role", { length: 16 }).notNull(),
+  content: text("content").notNull(),
+  model: varchar("model", { length: 120 }),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  metadata: jsonb("metadata"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  foreignKey({
+    name: "ai_messages_conversation_tenant_fk",
+    columns: [t.conversationId, t.tenantId],
+    foreignColumns: [aiConversations.id, aiConversations.tenantId],
+  }).onDelete("cascade"),
+  index("ai_messages_tenant_conversation_created_idx").on(t.tenantId, t.conversationId, t.createdAt),
+  index("ai_messages_tenant_created_idx").on(t.tenantId, t.createdAt),
+]);
+
+// ------------------------------------------------------ collections workflows
+export const promiseStatusEnum = pgEnum("promise_status", ["pending", "accepted", "kept", "broken", "rejected", "cancelled"]);
+export const promiseSourceEnum = pgEnum("promise_source", ["manual", "customer_portal", "ai"]);
+export const promisesToPay = pgTable("promises_to_pay", {
+  id: id(),
+  tenantId: tenantId(),
+  debtorId: uuid("debtor_id").notNull().references(() => debtors.id, { onDelete: "cascade" }),
+  invoiceId: uuid("invoice_id").references(() => invoices.id, { onDelete: "set null" }),
+  amountMinor: bigint("amount_minor", { mode: "bigint" }).notNull(),
+  promisedOn: date("promised_on").notNull(),
+  status: promiseStatusEnum("status").notNull().default("pending"),
+  source: promiseSourceEnum("source").notNull().default("manual"),
+  note: text("note"),
+  requestedBy: text("requested_by").references(() => user.id, { onDelete: "set null" }),
+  reviewedBy: text("reviewed_by").references(() => user.id, { onDelete: "set null" }),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  fulfilledAt: timestamp("fulfilled_at", { withTimezone: true }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  check("promises_amount_positive", sql`${t.amountMinor} > 0`),
+  check("promises_kept_requires_fulfilled_at", sql`${t.status} <> 'kept' OR ${t.fulfilledAt} IS NOT NULL`),
+  index("promises_tenant_status_date_idx").on(t.tenantId, t.status, t.promisedOn),
+  index("promises_debtor_date_idx").on(t.tenantId, t.debtorId, t.promisedOn),
+  index("promises_invoice_idx").on(t.invoiceId),
+]);
+
+export const collectionTaskStatusEnum = pgEnum("collection_task_status", ["open", "in_progress", "done", "cancelled"]);
+export const collectionTaskPriorityEnum = pgEnum("collection_task_priority", ["low", "normal", "high", "urgent"]);
+export const collectionTasks = pgTable("collection_tasks", {
+  id: id(),
+  tenantId: tenantId(),
+  debtorId: uuid("debtor_id").notNull().references(() => debtors.id, { onDelete: "cascade" }),
+  invoiceId: uuid("invoice_id").references(() => invoices.id, { onDelete: "set null" }),
+  title: varchar("title", { length: 180 }).notNull(),
+  description: text("description"),
+  priority: collectionTaskPriorityEnum("priority").notNull().default("normal"),
+  status: collectionTaskStatusEnum("status").notNull().default("open"),
+  assignedToUserId: text("assigned_to_user_id").references(() => user.id, { onDelete: "set null" }),
+  dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+  createdBy: text("created_by").notNull().references(() => user.id, { onDelete: "restrict" }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  check("collection_tasks_title_not_blank", sql`length(trim(${t.title})) >= 3`),
+  index("collection_tasks_tenant_status_due_idx").on(t.tenantId, t.status, t.dueAt),
+  index("collection_tasks_tenant_assignee_idx").on(t.tenantId, t.assignedToUserId, t.status),
+  index("collection_tasks_debtor_idx").on(t.debtorId),
+]);
+
+export const aiActionTypeEnum = pgEnum("ai_action_type", ["create_collection_task", "schedule_reminder"]);
+export const aiActionStatusEnum = pgEnum("ai_action_status", ["pending", "approved", "rejected", "executed", "failed"]);
+export const aiActionApprovals = pgTable("ai_action_approvals", {
+  id: id(),
+  tenantId: tenantId(),
+  requestedBy: text("requested_by").notNull().references(() => user.id, { onDelete: "restrict" }),
+  actionType: aiActionTypeEnum("action_type").notNull(),
+  status: aiActionStatusEnum("status").notNull().default("pending"),
+  title: varchar("title", { length: 180 }).notNull(),
+  rationale: text("rationale").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+  approvedBy: text("approved_by").references(() => user.id, { onDelete: "set null" }),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  executedAt: timestamp("executed_at", { withTimezone: true }),
+  result: jsonb("result"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  index("ai_action_approvals_tenant_status_created_idx").on(t.tenantId, t.status, t.createdAt),
+]);
+
+// Platform-level AI cost guard. These tables deliberately have no tenant RLS
+// and are accessed only through the server's owner connection, never via tRPC.
+export const aiGlobalBudget = pgTable("ai_global_budget", {
+  singletonId: integer("singleton_id").primaryKey().default(1),
+  periodStart: date("period_start").notNull(),
+  capUsdMicros: bigint("cap_usd_micros", { mode: "bigint" }).notNull(),
+  spentUsdMicros: bigint("spent_usd_micros", { mode: "bigint" }).notNull().default(sql`0`),
+  reservedUsdMicros: bigint("reserved_usd_micros", { mode: "bigint" }).notNull().default(sql`0`),
+  updatedAt: updatedAt(),
+}, (t) => [
+  check("ai_global_budget_amounts_nonnegative", sql`${t.capUsdMicros} > 0 AND ${t.spentUsdMicros} >= 0 AND ${t.reservedUsdMicros} >= 0`),
+]);
+export const aiGlobalUsage = pgTable("ai_global_usage", {
+  id: id(),
+  requestKey: varchar("request_key", { length: 96 }).notNull().unique(),
+  tenantId: uuid("tenant_id").notNull(),
+  model: varchar("model", { length: 120 }).notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("reserved"),
+  reservedUsdMicros: bigint("reserved_usd_micros", { mode: "bigint" }).notNull(),
+  actualUsdMicros: bigint("actual_usd_micros", { mode: "bigint" }).notNull().default(sql`0`),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  check("ai_global_usage_amounts_nonnegative", sql`${t.reservedUsdMicros} >= 0 AND ${t.actualUsdMicros} >= 0`),
+  check("ai_global_usage_tokens_nonnegative", sql`${t.inputTokens} >= 0 AND ${t.outputTokens} >= 0`),
+  check("ai_global_usage_status_valid", sql`${t.status} IN ('reserved','settled','released')`),
+  index("ai_global_usage_period_idx").on(t.createdAt, t.status),
+]);
+
 /**
  * tenant_deletions (M6, ADR-024): the platform-level TOMBSTONE left behind
  * when a tenant deletes all its data (§8 delete-tenant-data). Deliberately
@@ -663,5 +859,13 @@ export const TENANT_TABLES = [
   { name: "cheque_alerts", table: chequeAlerts, probeColumn: "alert_kind", probeValue: "due_today" },
   { name: "subscription_invoices", table: subscriptionInvoices, probeColumn: "plan_key", probeValue: "probe" },
   { name: "notifications", table: notifications, probeColumn: "severity", probeValue: "warning" },
+  { name: "ai_conversations", table: aiConversations, probeColumn: "title", probeValue: "probe" },
+  { name: "ai_messages", table: aiMessages, probeColumn: "content", probeValue: "probe" },
+  { name: "promises_to_pay", table: promisesToPay, probeColumn: "note", probeValue: "probe" },
+  { name: "collection_tasks", table: collectionTasks, probeColumn: "description", probeValue: "probe" },
+  { name: "ai_action_approvals", table: aiActionApprovals, probeColumn: "rationale", probeValue: "probe" },
+  // keyColumn: invoice_sequences is keyed by tenant_id, not an id column —
+  // the generic RLS test probes by the table's key column.
+  { name: "invoice_sequences", table: invoiceSequences, probeColumn: "next_val", probeValue: 1002, keyColumn: "tenant_id" },
 ] as const;
 export type TenantTableName = (typeof TENANT_TABLES)[number]["name"];

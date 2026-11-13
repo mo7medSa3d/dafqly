@@ -218,11 +218,13 @@ async function runDeepAttack() {
   const upgradePro = page.locator("[data-testid=\"upgrade-pro\"]");
   const upgradeStarter = page.locator("[data-testid=\"upgrade-starter\"]");
   const targetUpgrade = (await upgradePro.isVisible()) ? upgradePro : upgradeStarter;
-  if (await targetUpgrade.isVisible()) {
+  if ((await targetUpgrade.isVisible()) && (await targetUpgrade.isEnabled())) {
     console.log("   Clicking plan upgrade...");
     await targetUpgrade.click();
     await page.waitForTimeout(1500);
     console.log("   ✅ Plan change triggered!");
+  } else {
+    console.log("   ℹ️ Paid upgrades disabled (pricing not final) — no upgrade click attempted.");
   }
 
   // ATTACK 9: Test ALL English routes for 500s, page errors, missing messages

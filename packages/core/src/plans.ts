@@ -13,7 +13,9 @@ export interface PlanDef {
   key: string;
   nameAr: string;
   nameEn: string;
-  /** Monthly message quota in usage_ledger units (whatsapp_utility + sms); null = unlimited. */
+  /** Monthly message quota in usage_ledger units (whatsapp_utility; the sms
+   * kind counts only if an SMS adapter ever ships — none is shipped, F-09);
+   * null = unlimited. */
   monthlyMessageQuota: number | null;
   /** PLACEHOLDER price in integer minor units — see the header comment. */
   priceMinor: number;

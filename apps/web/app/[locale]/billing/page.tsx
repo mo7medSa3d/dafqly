@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/server/auth";
+import { runtimeModeFlags } from "@/server/env";
 import { ownerDb } from "@/server/db";
 import { listTenantsForUser } from "@/server/services";
 import { AppShell } from "@/components/AppShell";
@@ -15,7 +16,7 @@ export default async function BillingPage({ params }: { params: Promise<{ locale
   if (!tenant) redirect(`/${locale}/onboarding`);
 
   return (
-    <AppShell locale={locale} businessName={tenant.businessNameAr} currency={tenant.settings?.currency ?? "EGP"} testId="billing-page">
+    <AppShell locale={locale} demoMode={runtimeModeFlags()} digits={tenant.settings?.easternDigits ? "eastern" : "latin"} businessName={tenant.businessNameAr} currency={tenant.settings?.currency ?? "EGP"} testId="billing-page">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
         <BillingClient locale={locale} />
       </div>

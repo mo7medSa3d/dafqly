@@ -1,10 +1,13 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { webhookEvents } from "@tahseel/db/schema";
 import { persistWebhookEvents, processWebhookEvents, verifyWebhookSignature } from "@tahseel/reminders";
 import { aiDeps, engineDeps } from "@/server/engine";
 import { env } from "@/server/env";
+import { clientIp, rateLimit, rateLimitPeek } from "@/server/rate-limit";
 import { appDb, ownerDb } from "@/server/db";
 import { processInboundReply, recordPendingReceiptIntent } from "@/server/replies";
+import { withAiTenantContext } from "@/server/ai-budget";
 
 /**
  * WhatsApp webhook (BUILD_PLAN F3, ADR-015):
@@ -18,26 +21,50 @@ import { processInboundReply, recordPendingReceiptIntent } from "@/server/replie
  *   inbox rows for replay.
  */
 
+/** H2/M4: webhook floods are throttled per client IP (never the spoofable leftmost XFF entry). */
+function webhook429(retryAfterSeconds: number): Response {
+  return Response.json({ error: { code: "RATE_LIMITED", message: "Too many requests" } }, { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } });
+}
+
 export async function GET(req: Request): Promise<Response> {
+  const verifyLimit = rateLimit(`webhook:whatsapp:verify:${clientIp(req.headers)}`, { limit: 30, windowSeconds: 60 });
+  if (!verifyLimit.allowed) return webhook429(verifyLimit.retryAfterSeconds);
   const url = new URL(req.url);
   const mode = url.searchParams.get("hub.mode");
   const token = url.searchParams.get("hub.verify_token");
   const challenge = url.searchParams.get("hub.challenge");
   const expected = env().WHATSAPP_WEBHOOK_VERIFY_TOKEN;
-  if (mode === "subscribe" && expected && token === expected && challenge) {
+  // M4: constant-time comparison (hash both sides first so lengths match).
+  const matches = Boolean(expected && token) && timingSafeEqual(
+    createHash("sha256").update(token ?? "").digest(),
+    createHash("sha256").update(expected ?? "").digest(),
+  );
+  if (mode === "subscribe" && matches && challenge) {
     return new Response(challenge, { status: 200, headers: { "Content-Type": "text/plain" } });
   }
   return new Response("forbidden", { status: 403 });
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const ip = clientIp(req.headers);
+  const flood = rateLimit(`webhook:whatsapp:${ip}`, { limit: 120, windowSeconds: 60 });
+  if (!flood.allowed) return webhook429(flood.retryAfterSeconds);
+  // The bad-signature bucket only fills on failures (peek: no consumption).
+  const badSig = rateLimitPeek(`webhook:whatsapp:bad-sig:${ip}`, { limit: 10, windowSeconds: 60 });
+  if (!badSig.allowed) return webhook429(badSig.retryAfterSeconds);
   const secret = env().WHATSAPP_APP_SECRET;
   if (!secret) {
     return Response.json({ error: { code: "WEBHOOK_NOT_CONFIGURED", message: "WHATSAPP_APP_SECRET is not set" } }, { status: 503 });
   }
+  // M4: cap the raw body before buffering it (Meta payloads are small).
   const raw = await req.text();
+  if (raw.length > 1_000_000) {
+    return Response.json({ error: { code: "BODY_TOO_LARGE", message: "webhook body exceeds 1 MB" } }, { status: 413 });
+  }
   const signature = req.headers.get("x-hub-signature-256");
   if (!verifyWebhookSignature(raw, signature, secret)) {
+    // Consume one token from the bad-signature bucket on every failure.
+    rateLimit(`webhook:whatsapp:bad-sig:${ip}`, { limit: 10, windowSeconds: 60 });
     return Response.json({ error: { code: "BAD_SIGNATURE", message: "signature verification failed" } }, { status: 401 });
   }
   let payload: unknown;
@@ -53,7 +80,7 @@ export async function POST(req: Request): Promise<Response> {
   // record a pending receipt intent (media bytes are media_pending — the
   // download itself needs the Meta token, see RUNBOOK M4).
   deps.onInboundReply = async (info) => {
-    await processInboundReply(appDb(), info.tenantId, { llm: aiDeps().llm, engine: deps }, info);
+    await withAiTenantContext(info.tenantId, () => processInboundReply(appDb(), info.tenantId, { llm: aiDeps().llm, engine: deps }, info));
   };
   deps.onInboundImage = async (info) => {
     await recordPendingReceiptIntent(appDb(), info.tenantId, info);

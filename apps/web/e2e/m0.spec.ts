@@ -23,7 +23,9 @@ test("M0 exit: sign up → onboarding → empty dashboard in Arabic RTL", async 
 
   await expect(page).toHaveURL(/\/ar\/dashboard/);
   await expect(page.getByTestId("dashboard")).toBeVisible();
-  await expect(page.getByTestId("empty-state")).toBeVisible();
+  // Prompt 07: no `empty-state` testid exists in the app — the fresh-tenant
+  // empty workspace renders the "لا توجد فواتير بعد" heading instead.
+  await expect(page.getByText("لا توجد فواتير بعد")).toBeVisible();
   await expect(page.getByTestId("kpi-outstanding")).toContainText("0.00");
   await page.screenshot({ path: `${shotsDir}/dashboard-empty-ar-light.png` });
 });

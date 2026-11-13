@@ -1,10 +1,10 @@
 import { eq, sql } from "drizzle-orm";
 import { AppError } from "@tahseel/core";
 import {
-  auditLog, chequeAlerts, cheques, debtors, disputes, files, importJobs, importRows,
+  aiConversations, aiMessages, auditLog, chequeAlerts, cheques, debtors, disputes, files, importJobs, importRows,
   invoices, memberships, messageIntents, messages, notifications, optOuts, paymentAllocations,
   paymentLinks, payments, reminders, statementLinks, subscriptionInvoices,
-  tenantDeletions, tenants, usageLedger, withTenant, type Db,
+  tenantDeletions, tenants, usageLedger, promisesToPay, collectionTasks, aiActionApprovals, withTenant, type Db,
 } from "@tahseel/db";
 
 /**
@@ -30,6 +30,11 @@ interface TenantTableSpec {
 
 /** FK-safe order matters for `remove` (children before parents). */
 export const TENANT_DATA_TABLES: TenantTableSpec[] = [
+  { name: "ai_action_approvals", read: (tx, id) => tx.select().from(aiActionApprovals).where(eq(aiActionApprovals.tenantId, id)), remove: async (tx, id) => { await tx.delete(aiActionApprovals).where(eq(aiActionApprovals.tenantId, id)); } },
+  { name: "collection_tasks", read: (tx, id) => tx.select().from(collectionTasks).where(eq(collectionTasks.tenantId, id)), remove: async (tx, id) => { await tx.delete(collectionTasks).where(eq(collectionTasks.tenantId, id)); } },
+  { name: "promises_to_pay", read: (tx, id) => tx.select().from(promisesToPay).where(eq(promisesToPay.tenantId, id)), remove: async (tx, id) => { await tx.delete(promisesToPay).where(eq(promisesToPay.tenantId, id)); } },
+  { name: "ai_messages", read: (tx, id) => tx.select().from(aiMessages).where(eq(aiMessages.tenantId, id)), remove: async (tx, id) => { await tx.delete(aiMessages).where(eq(aiMessages.tenantId, id)); } },
+  { name: "ai_conversations", read: (tx, id) => tx.select().from(aiConversations).where(eq(aiConversations.tenantId, id)), remove: async (tx, id) => { await tx.delete(aiConversations).where(eq(aiConversations.tenantId, id)); } },
   { name: "message_intents", read: (tx, id) => tx.select().from(messageIntents).where(eq(messageIntents.tenantId, id)), remove: async (tx, id) => { await tx.delete(messageIntents).where(eq(messageIntents.tenantId, id)); } },
   { name: "payment_allocations", read: (tx, id) => tx.select().from(paymentAllocations).where(eq(paymentAllocations.tenantId, id)), remove: async (tx, id) => { await tx.delete(paymentAllocations).where(eq(paymentAllocations.tenantId, id)); } },
   { name: "payment_links", read: (tx, id) => tx.select().from(paymentLinks).where(eq(paymentLinks.tenantId, id)), remove: async (tx, id) => { await tx.delete(paymentLinks).where(eq(paymentLinks.tenantId, id)); } },

@@ -52,17 +52,37 @@ export function deriveStatusFromPaid(amountMinor: bigint, paidMinor: bigint): In
 
 /**
  * Status after paid_minor is recomputed from confirmed allocations.
- * Terminal invoices never move; disputed invoices resolve to the derived
- * status once money fully settles them, otherwise keep their derived state.
+ * Terminal invoices never move; a disputed invoice stays disputed on a
+ * PARTIAL payment (reminders stay paused and the dispute stays open) and
+ * only resolves to the derived status once money fully settles it.
  */
 export function resolveStatusAfterPayment(current: InvoiceStatus, amountMinor: bigint, paidMinor: bigint): InvoiceStatus {
   if (isTerminalStatus(current)) return current;
+  if (current === "disputed" && paidMinor < amountMinor) return "disputed";
   return deriveStatusFromPaid(amountMinor, paidMinor);
 }
 
 export function outstandingMinor(amountMinor: bigint, paidMinor: bigint): bigint {
   const due = amountMinor - paidMinor;
   return due > 0n ? due : 0n;
+}
+
+/**
+ * H09 — the ONE definition of "outstanding", used by every surface that
+ * reports money owed (debtor list + detail, KPIs, statement, pay link).
+ * A disputed invoice is FROZEN: its remainder is not collectible anywhere
+ * — it is shown as a separate disputed subtotal instead — so the same
+ * debtor can never show two different balances on two screens.
+ */
+export const COLLECTIBLE_STATUSES: readonly InvoiceStatus[] = ["open", "partially_paid"];
+export function isCollectibleStatus(status: string): boolean {
+  return status === "open" || status === "partially_paid";
+}
+export function outstandingFor(invoice: { amountMinor: bigint; paidMinor: bigint; status: string }): bigint {
+  return isCollectibleStatus(invoice.status) ? outstandingMinor(invoice.amountMinor, invoice.paidMinor) : 0n;
+}
+export function disputedFor(invoice: { amountMinor: bigint; paidMinor: bigint; status: string }): bigint {
+  return invoice.status === "disputed" ? outstandingMinor(invoice.amountMinor, invoice.paidMinor) : 0n;
 }
 
 // --------------------------------------------------------------------- dates
@@ -98,8 +118,11 @@ export type AgingBucket = "current" | "0-7" | "8-30" | "31-60" | "60+";
 export const AGING_BUCKETS: readonly AgingBucket[] = ["current", "0-7", "8-30", "31-60", "60+"];
 
 export function agingBucket(dueOn: string, today: string): AgingBucket {
+  // Due today is "current" (not yet overdue) — same boundary as
+  // reports.agingBucketFor and the SQL KPI path; a due-today invoice used
+  // to land in "0-7" here and "current" on the dashboard.
   const days = daysOverdue(dueOn, today);
-  if (days < 0) return "current";
+  if (days <= 0) return "current";
   if (days <= 7) return "0-7";
   if (days <= 30) return "8-30";
   if (days <= 60) return "31-60";

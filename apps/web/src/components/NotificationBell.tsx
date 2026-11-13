@@ -307,7 +307,7 @@ export function NotificationBell({ locale }: { locale: string }) {
           </div>
 
           {/* Notification Items */}
-          <div className="max-h-[380px] overflow-y-auto divide-y divide-border/50">
+          <div className="max-h-[380px] overflow-y-auto divide-y divide-border/50 no-scrollbar" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
             {loading ? (
               <div className="px-4 py-8 text-center text-xs text-text-muted">
                 {isEn ? "Loading notifications..." : "جاري تحميل الإشعارات..."}

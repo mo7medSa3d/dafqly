@@ -1,17 +1,17 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
-import { AppError, assertChequeTransition, canTransitionCheque, dueAlertKind, formatEgp, groupChequesByWeek,
-  localDateOf, parseEgp, planReversalAllocations, suggestDebtorByName,
+import { AppError, assertChequeTransition, canTransitionCheque, dueAlertKind, formatMoney, groupChequesByWeek,
+  localDateOf, normalizeCurrencyCode, parseMoney, planReversalAllocations, suggestDebtorByName,
   type ChequeAlertKind, type ChequeStatus, type ChequeExtraction,
 } from "@tahseel/core";
 import {
-  auditLog, chequeAlerts, cheques, debtors, invoices, paymentAllocations, payments, usageLedger,
+  auditLog, chequeAlerts, cheques, debtors, invoices, paymentAllocations, payments, tenants, usageLedger,
 } from "@tahseel/db/schema";
 import { withTenant, type Db } from "@tahseel/db";
 import type { OcrLlmProvider, StorageProvider } from "@tahseel/providers";
-import { confirmClaimedPayment, rejectClaimedPayment } from "./gateway";
-import { recomputeInvoicePaid } from "./ledger";
+import { confirmClaimedPaymentInTx, rejectClaimedPaymentInTx } from "./gateway";
+import { lockInvoicesById, recomputeInvoicePaid } from "./ledger";
 import { replanLater } from "./engine";
 import { storeUpload, getFileBytes } from "./files";
 import { upsertNotificationInTx } from "./notifications";
@@ -33,7 +33,9 @@ import { upsertNotificationInTx } from "./notifications";
  * Photo extraction is a pre-fill CLAIM only (see extractChequePhoto).
  */
 
-const moneyString = z.string().trim().min(1).refine((s) => { try { return parseEgp(s) > 0n; } catch { return false; } }, "INVALID_AMOUNT");
+// F-06: same permissive pre-check as ledger.ts — KWD (3 decimals) is the
+// most permissive exponent; the currency-aware parse happens at the site.
+const moneyString = z.string().trim().min(1).refine((s) => { try { return parseMoney(s, "KWD") > 0n; } catch { return false; } }, "INVALID_AMOUNT");
 const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE");
 
 export const registerChequeInput = z.object({
@@ -69,14 +71,23 @@ async function audit(tx: Db, tenantId: string, actor: string | null, action: str
 }
 
 export async function registerCheque(app: Db, tenantId: string, actor: string, input: RegisterChequeInput): Promise<ChequeView> {
-  const amountMinor = parseEgp(input.amount);
   return withTenant(app, tenantId, async (tx) => {
     const [debtor] = await tx.select().from(debtors).where(and(eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
     if (!debtor) throw new AppError("NOT_FOUND", "Debtor not found", 404);
+    // F-06: the cheque amount is parsed in the linked invoice's currency
+    // when one is given, else the tenant default — the old pre-tx parse
+    // could only assume EGP (a KWD cheque was 10× wrong).
+    let currency: string | undefined;
     if (input.invoiceId) {
       const [inv] = await tx.select().from(invoices).where(eq(invoices.id, input.invoiceId));
       if (!inv || inv.debtorId !== input.debtorId) throw new AppError("NOT_FOUND", "Invoice not found for this debtor", 404);
+      currency = inv.currency;
     }
+    if (!currency) {
+      const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+      currency = tenant?.settings.currency ?? "EGP";
+    }
+    const amountMinor = parseMoney(input.amount, currency);
     const [row] = await tx.insert(cheques).values({
       tenantId, debtorId: input.debtorId, direction: input.direction, number: input.number, bank: input.bank,
       amountMinor, issueDate: input.issueDate, dueDate: input.dueDate,
@@ -108,6 +119,8 @@ export async function getChequeCalendar(app: Db, tenantId: string) {
 /** Reverse a CONFIRMED cheque payment with a negative payment (bounce after clear). Returns affected invoice ids. */
 async function reverseConfirmedPayment(tx: Db, tenantId: string, actor: string, payment: typeof payments.$inferSelect, reason: string): Promise<string[]> {
   const allocs = await tx.select().from(paymentAllocations).where(eq(paymentAllocations.paymentId, payment.id));
+  // F01: lock the affected invoices before planning the reversal.
+  await lockInvoicesById(tx, allocs.map((a) => a.invoiceId));
   const plan = planReversalAllocations(
     allocs.map((a) => ({ invoiceId: a.invoiceId, amountMinor: a.amountMinor })),
     payment.amountMinor,
@@ -116,7 +129,7 @@ async function reverseConfirmedPayment(tx: Db, tenantId: string, actor: string, 
   const reversalId = uuidv7();
   await tx.insert(payments).values({
     id: reversalId, tenantId, debtorId: payment.debtorId, invoiceId: payment.invoiceId,
-    amountMinor: -plan.reversedMinor, method: "cheque",
+    amountMinor: -plan.reversedMinor, currency: payment.currency, method: "cheque",
     receivedOn: payment.receivedOn, referenceNo: `reversal:${reason}`,
     status: "confirmed", source: "manual", reversalOf: payment.id, confirmedBy: actor,
   });
@@ -133,8 +146,11 @@ async function reverseConfirmedPayment(tx: Db, tenantId: string, actor: string, 
 export async function transitionCheque(
   app: Db, tenantId: string, actor: string, chequeId: string, to: ChequeStatus, todayIso: string,
 ): Promise<ChequeView> {
-  // Phase 1 (one tx): validate + apply the transition and any payment rows
-  // that can be written atomically (deposit claim, bounce/return reversal).
+  // F06: ONE transaction for the whole transition. The old code set the
+  // cheque status in tx 1 and confirmed/rejected the linked payment in a
+  // separate tx 2 — a failure between them left a cleared cheque with an
+  // unconfirmed payment (or vice versa). The claim lifecycle now runs
+  // inline (confirmClaimedPaymentInTx / rejectClaimedPaymentInTx).
   const prepared = await withTenant(app, tenantId, async (tx) => {
     const [cheque] = await tx.select().from(cheques).where(eq(cheques.id, chequeId));
     if (!cheque) throw new AppError("NOT_FOUND", "Cheque not found", 404);
@@ -150,21 +166,28 @@ export async function transitionCheque(
     if (to === "deposited" && cheque.direction === "receivable") {
       // F9 acceptance: depositing creates a PENDING (claimed) payment.
       const paymentId = uuidv7();
+      let chequeCurrency = "EGP";
+      let allocAmount = 0n;
+      if (cheque.invoiceId) {
+        // F01: lock the linked invoice before capping the allocation.
+        const [inv] = await lockInvoicesById(tx, [cheque.invoiceId]);
+        if (inv) {
+          chequeCurrency = inv.currency;
+          const outstanding = inv.amountMinor - inv.paidMinor;
+          allocAmount = cheque.amountMinor < outstanding ? cheque.amountMinor : outstanding;
+        }
+      } else {
+        const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+        chequeCurrency = tenant?.settings.currency ?? "EGP";
+      }
       await tx.insert(payments).values({
         id: paymentId, tenantId, debtorId: cheque.debtorId, invoiceId: cheque.invoiceId,
-        amountMinor: cheque.amountMinor, method: "cheque", receivedOn: todayIso,
+        amountMinor: cheque.amountMinor, currency: chequeCurrency, method: "cheque", receivedOn: todayIso,
         referenceNo: `cheque:${cheque.number}`, status: "claimed", source: "manual",
         evidenceFileId: cheque.imageFileId,
       });
-      if (cheque.invoiceId) {
-        const [inv] = await tx.select().from(invoices).where(eq(invoices.id, cheque.invoiceId));
-        if (inv) {
-          const outstanding = inv.amountMinor - inv.paidMinor;
-          const allocAmount = cheque.amountMinor < outstanding ? cheque.amountMinor : outstanding;
-          if (allocAmount > 0n) {
-            await tx.insert(paymentAllocations).values({ tenantId, paymentId, invoiceId: inv.id, amountMinor: allocAmount });
-          }
-        }
+      if (cheque.invoiceId && allocAmount > 0n) {
+        await tx.insert(paymentAllocations).values({ tenantId, paymentId, invoiceId: cheque.invoiceId, amountMinor: allocAmount });
       }
       await tx.update(cheques).set({ paymentId, updatedAt: new Date() }).where(eq(cheques.id, chequeId));
     }
@@ -179,6 +202,13 @@ export async function transitionCheque(
 
     if (to === "cleared" && cheque.paymentId) action = "confirm";
 
+    // Settle the linked payment inline, in this same transaction (F06).
+    if (action === "confirm" && cheque.paymentId) {
+      affectedInvoices = await confirmClaimedPaymentInTx(tx, tenantId, actor, cheque.paymentId);
+    } else if (action === "reject" && cheque.paymentId) {
+      await rejectClaimedPaymentInTx(tx, tenantId, actor, cheque.paymentId);
+    }
+
     const [row] = await tx.update(cheques).set({ status: to, updatedAt: new Date() })
       .where(eq(cheques.id, chequeId)).returning();
     await audit(tx, tenantId, actor, `cheque.${to}`, "cheque", chequeId, {
@@ -189,13 +219,19 @@ export async function transitionCheque(
       // the merchant notification record surfaced in the UI/audit views.
       await tx.update(debtors).set({ riskFlag: true, updatedAt: new Date() }).where(eq(debtors.id, cheque.debtorId));
       await audit(tx, tenantId, actor, "cheque.bounced_notify", "cheque", chequeId, { debtorId: cheque.debtorId, riskFlag: true });
+      // F-06: the bounced cheque's currency is its linked invoice's, else the tenant default.
+      const [bounceInv] = cheque.invoiceId
+        ? await tx.select({ currency: invoices.currency }).from(invoices).where(eq(invoices.id, cheque.invoiceId)).limit(1)
+        : [];
+      const [bounceTenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+      const bounceCurrency = normalizeCurrencyCode(bounceInv?.currency ?? bounceTenant?.settings?.currency);
       await upsertNotificationInTx(tx, tenantId, {
         kind: "cheque_alert",
         severity: "urgent",
         titleAr: `تنبيه: ارتداد شيك #${cheque.number}`,
         titleEn: `Alert: Cheque #${cheque.number} bounced`,
-        bodyAr: `ارتد شيك بقيمة ${formatEgp(cheque.amountMinor)} ج.م (${cheque.bank}) وتم تفعيل مؤشر المخاطر للعميل.`,
-        bodyEn: `Cheque of ${formatEgp(cheque.amountMinor)} EGP (${cheque.bank}) bounced; debtor flagged at risk.`,
+        bodyAr: `ارتد شيك بقيمة ${formatMoney(cheque.amountMinor, bounceCurrency, { locale: "ar" })} (${cheque.bank}) وتم تفعيل مؤشر المخاطر للعميل.`,
+        bodyEn: `Cheque of ${formatMoney(cheque.amountMinor, bounceCurrency, { locale: "en" })} (${cheque.bank}) bounced; debtor flagged at risk.`,
         actionUrl: `/debtors/${cheque.debtorId}`,
         entityType: "cheque",
         entityId: chequeId,
@@ -205,13 +241,8 @@ export async function transitionCheque(
     return { view: toView(row!), action, paymentId: cheque.paymentId, affectedInvoices };
   });
 
-  // Phase 2: settle the linked payment through the M3 claim lifecycle
-  // (its own transaction, like the gateway flows compose these services).
-  if (prepared.action === "confirm" && prepared.paymentId) {
-    await confirmClaimedPayment(app, tenantId, actor, prepared.paymentId);
-  } else if (prepared.action === "reject" && prepared.paymentId) {
-    await rejectClaimedPayment(app, tenantId, actor, prepared.paymentId);
-  }
+  // The payment was already settled inline (F06); only the reminder
+  // re-planning happens outside the transaction.
   const touched = new Set(prepared.affectedInvoices);
   if (prepared.view.invoiceId) touched.add(prepared.view.invoiceId);
   for (const id of touched) replanLater(tenantId, id);

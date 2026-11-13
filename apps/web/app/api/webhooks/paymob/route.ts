@@ -1,5 +1,6 @@
 import { AppError, toApiErrorBody } from "@tahseel/core";
 import { gatewayDeps, handlePaymobCallback } from "@/server/gateway";
+import { clientIp, rateLimit, rateLimitPeek } from "@/server/rate-limit";
 
 /**
  * Paymob webhook (BUILD_PLAN F5, ADR-019): the HMAC-verified POST callback
@@ -10,6 +11,16 @@ import { gatewayDeps, handlePaymobCallback } from "@/server/gateway";
  * unauthenticated by design and NEVER fulfils anything (UX only).
  */
 export async function POST(req: Request): Promise<Response> {
+  // H2/M3: per-IP flood throttle + a failure bucket that only fills on bad HMACs.
+  const ip = clientIp(req.headers);
+  const flood = rateLimit(`webhook:paymob:${ip}`, { limit: 120, windowSeconds: 60 });
+  if (!flood.allowed) {
+    return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), { status: 429, headers: { "Retry-After": String(flood.retryAfterSeconds) } });
+  }
+  const badHmac = rateLimitPeek(`webhook:paymob:bad-hmac:${ip}`, { limit: 10, windowSeconds: 60 });
+  if (!badHmac.allowed) {
+    return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), { status: 429, headers: { "Retry-After": String(badHmac.retryAfterSeconds) } });
+  }
   const hmac = new URL(req.url).searchParams.get("hmac") ?? undefined;
   let payload: unknown;
   try {
@@ -23,6 +34,7 @@ export async function POST(req: Request): Promise<Response> {
   } catch (err) {
     const body = toApiErrorBody(err);
     const status = err instanceof AppError ? err.status : 500;
+    if (status === 401) rateLimit(`webhook:paymob:bad-hmac:${ip}`, { limit: 10, windowSeconds: 60 });
     return Response.json(body, { status });
   }
 }

@@ -1,11 +1,12 @@
 import {
-  AnthropicLlmProvider, DryRunMessagingProvider, FakeLlmProvider, FakeMessagingProvider, FakeStorageProvider,
-  GeminiLlmProvider,
-  NotConfiguredSmsProvider, WhatsAppCloudProvider, type OcrLlmProvider, type StorageProvider, type TextCapableProvider,
+  AnthropicLlmProvider, DryRunMessagingProvider, FakeLlmProvider, FakeStorageProvider,
+  GeminiLlmProvider, NotConfiguredMessagingProvider, NotConfiguredSmsProvider, S3CompatibleStorageProvider,
+  WhatsAppCloudProvider, type OcrLlmProvider, type StorageProvider, type TextCapableProvider,
 } from "@tahseel/providers";
 import { planForInvoice, planForTenant, quotaExceededFromDb, type EngineDeps } from "@tahseel/reminders";
 import { appDb, ownerDb } from "./db";
 import { env } from "./env";
+import { budgetedLlmProvider } from "./ai-budget";
 
 /**
  * Engine wiring for the web process (ADR-016): the same engine the worker
@@ -21,9 +22,9 @@ export function engineDeps(): EngineDeps {
         apiVersion: e.WHATSAPP_API_VERSION, phoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID,
         accessToken: e.WHATSAPP_ACCESS_TOKEN,
       })
-    : new FakeMessagingProvider();
+    : new NotConfiguredMessagingProvider("whatsapp");
   const whatsapp = e.DRY_RUN_MESSAGING ? new DryRunMessagingProvider(realWhatsapp) : realWhatsapp;
-  const smsBase: TextCapableProvider = e.SMS_API_KEY ? new FakeMessagingProvider() : new NotConfiguredSmsProvider();
+  const smsBase: TextCapableProvider = new NotConfiguredSmsProvider(); // SMS vendor is deliberately not guessed; configure a verified adapter first.
   const sms = e.DRY_RUN_MESSAGING ? new DryRunMessagingProvider(smsBase) : smsBase;
   const app = appDb();
   return {
@@ -46,39 +47,63 @@ export function replanLater(tenantId: string, invoiceId: string): void {
 }
 
 /**
- * AI provider seam (F6/F7/F8, ADR-022): the real Anthropic adapter ONLY when
- * ANTHROPIC_API_KEY is configured; otherwise the deterministic FAKE provider
- * (labelled as such everywhere its results surface). Storage is the
- * in-process FAKE until an S3/MinIO adapter lands — one shared instance so
- * uploads stored by one request can be read by the next in dev/tests.
+ * AI provider seam (F6/F7/F8, ADR-022): real Gemini/Anthropic when configured;
+ * otherwise a clearly marked deterministic FAKE for dev/test. Uploaded bytes use
+ * private S3-compatible storage (MinIO locally, S3-compatible in production).
  */
 export interface AiDeps { llm: OcrLlmProvider; storage: StorageProvider; usingFakeLlm: boolean }
 let aiSingleton: AiDeps | null = null;
 export function aiDeps(): AiDeps {
   if (aiSingleton) return aiSingleton;
   const e = env();
-  const storage = new FakeStorageProvider();
+  // Never make real provider calls from unit/integration tests unless an
+  // explicitly enabled sandbox suite opts in. Test storage remains isolated.
+  // ADR-033: the e2e server runs production-mode with E2E_FAKE_PROVIDERS —
+  // same fake LLM + fake storage, because the sandbox has no MinIO and no
+  // AI key (the e2e specs depend on the deterministic fake, e.g. m4's
+  // synthetic ledger-photo extraction).
+  if ((e.NODE_ENV === "test" || e.E2E_FAKE_PROVIDERS) && !e.RUN_SANDBOX_TESTS) {
+    aiSingleton = { llm: new FakeLlmProvider(), storage: new FakeStorageProvider(), usingFakeLlm: true };
+    return aiSingleton;
+  }
+  const storage = new S3CompatibleStorageProvider({
+    endpoint: e.S3_ENDPOINT, region: e.S3_REGION, bucket: e.S3_BUCKET,
+    accessKey: e.S3_ACCESS_KEY, secretKey: e.S3_SECRET_KEY, forcePathStyle: e.S3_FORCE_PATH_STYLE,
+  });
 
-  const geminiKey = e.GEMINI_API_KEY || (e.AI_PROVIDER === "gemini" ? e.AI_API_KEY : "");
-  const anthropicKey = e.ANTHROPIC_API_KEY || (e.AI_PROVIDER === "anthropic" ? e.AI_API_KEY : "");
-  const unifiedModel = e.AI_MODEL || (geminiKey ? "gemini-3.1-flash-lite" : "claude-sonnet-5-5");
+  const hasBothDedicatedKeys = Boolean(e.GEMINI_API_KEY && e.ANTHROPIC_API_KEY);
+  const selectedProvider = hasBothDedicatedKeys
+    ? e.AI_PROVIDER
+    : e.GEMINI_API_KEY ? "gemini" : e.ANTHROPIC_API_KEY ? "anthropic" : e.AI_PROVIDER;
+  const selectedKey = selectedProvider === "gemini"
+    ? (e.GEMINI_API_KEY || e.AI_API_KEY)
+    : (e.ANTHROPIC_API_KEY || e.AI_API_KEY);
 
-  if (geminiKey || (e.AI_API_KEY && (unifiedModel.includes("gemini") || e.AI_API_KEY.startsWith("AQ.")))) {
-    const key = geminiKey || e.AI_API_KEY;
+  if (selectedKey && selectedProvider === "gemini") {
     aiSingleton = {
-      llm: new GeminiLlmProvider({ apiKey: key, model: unifiedModel }),
+      llm: new GeminiLlmProvider({
+        apiKey: selectedKey, model: e.AI_MODEL,
+        modelFast: e.GEMINI_MODEL_FAST, modelVision: e.GEMINI_MODEL_VISION,
+      }),
       storage,
       usingFakeLlm: false,
     };
-  } else if (anthropicKey || e.AI_API_KEY) {
-    const key = anthropicKey || e.AI_API_KEY;
+  } else if (selectedKey && selectedProvider === "anthropic") {
     aiSingleton = {
-      llm: new AnthropicLlmProvider({ apiKey: key, model: unifiedModel, modelFast: unifiedModel, modelVision: unifiedModel }),
+      llm: new AnthropicLlmProvider({
+        apiKey: selectedKey,
+        modelAgent: e.LLM_MODEL_AGENT,
+        modelFast: e.LLM_MODEL_FAST,
+        modelVision: e.LLM_MODEL_VISION,
+      }),
       storage,
       usingFakeLlm: false,
     };
   } else {
     aiSingleton = { llm: new FakeLlmProvider(), storage, usingFakeLlm: true };
+  }
+  if (!aiSingleton.usingFakeLlm) {
+    aiSingleton = { ...aiSingleton, llm: budgetedLlmProvider(aiSingleton.llm) };
   }
   return aiSingleton;
 }

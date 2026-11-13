@@ -7,8 +7,8 @@ import { trpc } from "@/lib/trpc-client";
 import { BrandLockup } from "./BrandMark";
 import { ThemeToggle } from "./ThemeToggle";
 import { LocaleToggle } from "./LocaleToggle";
-import { OnboardingIllustration } from "./illustrations";
 import { btnGhost, btnPrimary, inputCls, labelCls } from "./ui";
+import { OnboardingIllustration } from "./illustrations";
 
 /** Tenant onboarding wizard (BUILD_PLAN F0): business → schedule policy → tone + consent. */
 export function OnboardingWizard() {
@@ -60,7 +60,7 @@ export function OnboardingWizard() {
           <LocaleToggle currentLocale={locale} />
         </div>
       </div>
-      <h1 className="text-xl font-extrabold">{t("title")}</h1>
+      <div className="flex flex-col items-center gap-2 text-center sm:flex-row sm:text-start"><OnboardingIllustration size={150} /><div><h1 className="text-xl font-extrabold">{t("title")}</h1><p className="mt-1 text-sm text-text-muted">{locale === "ar" ? "جهّز مساحة عملك لإدارة الفواتير والتحصيل والمتابعة." : "Set up your workspace for invoices, collections and follow-ups."}</p></div></div>
 
       {/* Stepper: numbered/filled nodes joined by a progress track */}
       <ol className="flex items-center gap-2" aria-label="steps">
@@ -82,17 +82,32 @@ export function OnboardingWizard() {
       <section className="panel-shadow rounded-2xl border border-border bg-surface p-5 sm:p-7">
         {step === 0 && (
           <div className="flex flex-col gap-4">
-            <div className="flex justify-center"><OnboardingIllustration size={110} /></div>
             <label className={labelCls}><span>{t("businessNameAr")}</span>
               <input data-testid="ob-name-ar" className={inputCls} value={businessNameAr} onChange={(e) => setBusinessNameAr(e.target.value)} required /></label>
             <label className={labelCls}><span>{t("businessNameEn")}</span>
               <input data-testid="ob-name-en" className={inputCls} dir="ltr" value={businessNameEn} onChange={(e) => setBusinessNameEn(e.target.value)} /></label>
             <label className={labelCls}><span>{t("timezone")}</span>
               <select data-testid="ob-timezone" className={inputCls} value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-                <option value="Africa/Cairo">Africa/Cairo</option>
-                <option value="Africa/Alexandria">Africa/Alexandria</option>
-                <option value="Asia/Riyadh">Asia/Riyadh</option>
-                <option value="Asia/Dubai">Asia/Dubai</option>
+                <option value="Africa/Cairo">القاهرة — Africa/Cairo</option>
+                <option value="Africa/Casablanca">الدار البيضاء — Africa/Casablanca</option>
+                <option value="Africa/Johannesburg">جوهانسبرغ — Africa/Johannesburg</option>
+                <option value="Europe/London">London — Europe/London</option>
+                <option value="Europe/Paris">Paris — Europe/Paris</option>
+                <option value="Europe/Berlin">Berlin — Europe/Berlin</option>
+                <option value="Europe/Istanbul">Istanbul — Europe/Istanbul</option>
+                <option value="Asia/Riyadh">الرياض — Asia/Riyadh</option>
+                <option value="Asia/Dubai">دبي — Asia/Dubai</option>
+                <option value="Asia/Kuwait">الكويت — Asia/Kuwait</option>
+                <option value="Asia/Amman">عمّان — Asia/Amman</option>
+                <option value="Asia/Karachi">Karachi — Asia/Karachi</option>
+                <option value="Asia/Kolkata">Kolkata — Asia/Kolkata</option>
+                <option value="Asia/Singapore">Singapore — Asia/Singapore</option>
+                <option value="Asia/Tokyo">Tokyo — Asia/Tokyo</option>
+                <option value="Australia/Sydney">Sydney — Australia/Sydney</option>
+                <option value="America/New_York">New York — America/New_York</option>
+                <option value="America/Chicago">Chicago — America/Chicago</option>
+                <option value="America/Los_Angeles">Los Angeles — America/Los_Angeles</option>
+                <option value="UTC">UTC</option>
               </select></label>
             <div>
               <button data-testid="ob-next" className={btnPrimary} disabled={businessNameAr.trim().length < 2} onClick={() => setStep(1)}>{tc("continue")}</button>

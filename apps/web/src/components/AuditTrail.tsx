@@ -49,15 +49,15 @@ function formatAction(action: string, isAr: boolean): { label: string; color: st
     case "ai.copilot_queried":
       return { label: isAr ? "استشارة المساعد الذكي" : "AI Copilot query", color: "bg-callout text-primary border-primary/20" };
     case "ai.notification_generated":
-      return { label: isAr ? "صياغة تنبيه بالذكاء الاصطناعي" : "AI smart draft generated", color: "bg-callout text-primary border-primary/20" };
+      return { label: isAr ? "إنشاء مسودة تذكير" : "Reminder draft generated", color: "bg-callout text-primary border-primary/20" };
     case "ai.installment_planned":
-      return { label: isAr ? "بناء خطة تقسيط وجدولة" : "AI installment plan built", color: "bg-callout text-primary border-primary/20" };
+      return { label: isAr ? "حساب خطة تقسيط وجدولة" : "Installment schedule calculated", color: "bg-callout text-primary border-primary/20" };
     case "ai.reply_suggested":
-      return { label: isAr ? "اقتراح رد ذكي للعميل" : "AI inbox reply suggested", color: "bg-callout text-primary border-primary/20" };
+      return { label: isAr ? "اقتراح رد على العميل" : "Customer reply suggested", color: "bg-callout text-primary border-primary/20" };
     case "ai.receipt_analyzed":
-      return { label: isAr ? "فحص إيصال بالذكاء الاصطناعي" : "AI receipt verification", color: "bg-callout text-primary border-primary/20" };
+      return { label: isAr ? "استخراج بيانات إيصال ومراجعتها" : "Receipt data extracted for review", color: "bg-callout text-primary border-primary/20" };
     case "ai.headers_mapped":
-      return { label: isAr ? "مطابقة أعمدة ذكية" : "AI header mapping", color: "bg-callout text-primary border-primary/20" };
+      return { label: isAr ? "مطابقة أعمدة ملف الاستيراد" : "Import columns mapped", color: "bg-callout text-primary border-primary/20" };
     case "settings.updated":
       return { label: isAr ? "تحديث الإعدادات" : "Settings updated", color: "bg-surface-muted text-text-muted border-border" };
     case "plan.changed":

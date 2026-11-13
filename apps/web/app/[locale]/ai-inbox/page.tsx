@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { auth } from "@/server/auth";
+import { runtimeModeFlags } from "@/server/env";
 import { ownerDb } from "@/server/db";
 import { listTenantsForUser } from "@/server/services";
 import { AppShell } from "@/components/AppShell";
@@ -15,7 +16,7 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
   if (!mine[0]) redirect(`/${locale}/onboarding`);
   const t = await getTranslations("aiInbox");
   return (
-    <AppShell locale={locale} businessName={mine[0].businessNameAr} currency={mine[0].settings?.currency ?? "EGP"}>
+    <AppShell locale={locale} demoMode={runtimeModeFlags()} digits={mine[0].settings?.easternDigits ? "eastern" : "latin"} businessName={mine[0].businessNameAr} currency={mine[0].settings?.currency ?? "EGP"}>
       <PageHeader title={t("title")} />
       <AiInboxClient />
     </AppShell>

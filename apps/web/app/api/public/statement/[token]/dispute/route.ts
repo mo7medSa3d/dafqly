@@ -1,6 +1,6 @@
 import { AppError, toApiErrorBody } from "@tahseel/core";
 import { appDb, ownerDb } from "@/server/db";
-import { rateLimit } from "@/server/rate-limit";
+import { clientIp, rateLimit, tokenBucketKey } from "@/server/rate-limit";
 import { raiseDisputeInput, raiseStatementDispute } from "@/server/statements";
 
 /**
@@ -10,11 +10,14 @@ import { raiseDisputeInput, raiseStatementDispute } from "@/server/statements";
  */
 export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }): Promise<Response> {
   const { token } = await params;
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+  const ip = clientIp(req.headers);
   const limit = rateLimit(`statement:dispute:${ip}`, { limit: 10, windowSeconds: 60 });
-  if (!limit.allowed) {
+  // M9: per-token bucket too, so one link cannot be hammered from many IPs.
+  const tokenLimit = rateLimit(`statement:dispute:token:${tokenBucketKey(token)}`, { limit: 5, windowSeconds: 60 });
+  if (!limit.allowed || !tokenLimit.allowed) {
+    const retryAfter = Math.max(limit.retryAfterSeconds, tokenLimit.retryAfterSeconds);
     return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), {
-      status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds), "X-Robots-Tag": "noindex, nofollow" },
+      status: 429, headers: { "Retry-After": String(retryAfter), "X-Robots-Tag": "noindex, nofollow" },
     });
   }
   let body: unknown;

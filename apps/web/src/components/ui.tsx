@@ -1,11 +1,11 @@
 "use client";
 import type { ComponentType, ReactNode } from "react";
 import Link from "next/link";
+import { SecurityLockBadge } from "./illustrations";
 import {
   ArrowLeft, CheckCircle, Clock, Coins, LockKey, Prohibit, ShieldCheck, WarningCircle, XCircle,
   type IconProps,
 } from "@phosphor-icons/react";
-import { SecurityLockBadge } from "./illustrations";
 
 /**
  * Shared design-system primitives implementing Yaseir Design Guide v2.1
@@ -18,22 +18,22 @@ import { SecurityLockBadge } from "./illustrations";
  */
 
 export const inputCls =
-  "w-full min-h-[44px] rounded-[10px] border border-border-strong/60 bg-surface px-3.5 text-[14px] text-text placeholder:text-text-subtle transition-colors focus:border-primary focus:outline-none";
+  "w-full min-h-[44px] rounded-2xl border border-border/80 bg-surface/80 backdrop-blur-sm px-4 text-[14px] text-text placeholder:text-text-subtle shadow-2xs transition-[border-color,box-shadow,background-color] focus:border-primary focus:bg-surface focus:ring-2 focus:ring-focus/20 focus:outline-none";
 export const labelCls = "flex flex-col gap-1.5 text-[14px] font-medium";
 export const labelTextCls = "text-text-muted";
 
 export const btnPrimary =
-  "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-primary px-6 py-2.5 text-[14px] font-medium text-primary-fg transition-colors hover:bg-primary-hover disabled:opacity-50";
+  "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-primary px-6 py-2.5 text-[14px] font-semibold text-primary-fg shadow-xs transition-all hover:bg-primary-hover active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40 focus-visible:ring-offset-2 disabled:opacity-50 disabled:active:scale-100";
 export const btnInverse =
   "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-navy-700 px-6 py-2.5 text-[14px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50";
 export const btnAccent =
   "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-accent px-6 py-2.5 text-[14px] font-bold text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-50";
 export const btnGhost =
-  "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full border border-border-strong/70 bg-surface px-6 py-2.5 text-[14px] font-medium text-text transition-colors hover:border-primary hover:bg-callout disabled:opacity-50";
+  "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full border border-border-strong/60 bg-surface px-6 py-2.5 text-[14px] font-medium text-text transition-all hover:border-primary/60 hover:bg-callout active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40 disabled:opacity-50 disabled:active:scale-100";
 export const btnDanger =
   "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-danger px-6 py-2.5 text-[14px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50";
 export const btnSmall =
-  "inline-flex min-h-[36px] items-center justify-center gap-1.5 rounded-full border border-border-strong/60 bg-surface px-4 py-1 text-xs font-medium text-text transition-colors hover:border-primary hover:bg-callout disabled:opacity-50";
+  "inline-flex min-h-[36px] items-center justify-center gap-1.5 rounded-full border border-border-strong/60 bg-surface px-4 py-1 text-xs font-semibold text-text transition-all hover:border-primary/60 hover:bg-callout active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40 disabled:opacity-50";
 export const linkAction = "inline-flex items-center gap-1 text-[14px] font-medium text-link underline-offset-4 hover:underline";
 
 type IconType = ComponentType<IconProps>;
@@ -53,7 +53,7 @@ export function Panel({
   testId?: string;
 }) {
   return (
-    <section data-testid={testId} className={`rounded-2xl border border-border bg-surface panel-shadow ${className}`}>
+    <section data-testid={testId} className={`bento-card rounded-[24px] ${className}`}>
       {(title || actions || badge) && (
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-5 py-4 sm:px-6">
           <div className="flex flex-col gap-0.5">
@@ -127,7 +127,7 @@ export function StatusPill({ status, label, testId }: { status: string; label: s
   const s = STATUS_STYLE[status] ?? STATUS_STYLE.open!;
   const { Icon } = s;
   return (
-    <span data-testid={testId} className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${s.bg} ${s.fg}`}>
+    <span data-testid={testId} className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ring-1 ring-inset ring-current/15 ${s.bg} ${s.fg}`}>
       <Icon size={13} weight="fill" aria-hidden />
       {label}
     </span>
@@ -155,12 +155,8 @@ export function SecurityNotice({
   return (
     <div className={`flex items-center gap-3.5 rounded-2xl border border-primary/20 bg-callout ${compact ? "px-4 py-3" : "px-5 py-4"}`}>
       {compact ? (
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-          <LockKey size={17} weight="fill" aria-hidden />
-        </span>
-      ) : (
-        <SecurityLockBadge size={38} />
-      )}
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><LockKey size={17} weight="fill" aria-hidden /></span>
+      ) : <SecurityLockBadge size={38} />}
       <div className="min-w-0 flex-1 text-xs leading-relaxed sm:text-sm">
         {title && <p className="font-bold text-text">{title}</p>}
         <p className="text-text-muted">{body}</p>
@@ -193,6 +189,26 @@ export function InitialAvatar({ name, size = 40 }: { name: string; size?: number
   );
 }
 
+/** First-load skeleton (F-17): shown while the first tRPC round-trip is in
+ * flight so a list never flashes its empty state before data arrives.
+ * EmptyState is only for genuinely-empty-after-load. The label is generic;
+ * pass a specific one when the panel has its own wording. */
+export function LoadingState({ isAr, label }: { isAr: boolean; label?: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 py-10 text-sm text-text-muted" role="status" aria-live="polite">
+      <div className="flex w-full max-w-xs flex-col gap-2">
+        <div className="h-2.5 w-3/4 animate-pulse rounded-full bg-surface-muted" />
+        <div className="h-2.5 w-full animate-pulse rounded-full bg-surface-muted/80" />
+        <div className="h-2.5 w-2/3 animate-pulse rounded-full bg-surface-muted/60" />
+      </div>
+      <div className="flex items-center gap-2 text-xs font-medium">
+        <span className="size-2 animate-pulse rounded-full bg-primary" />
+        {label ?? (isAr ? "جارٍ تحميل البيانات…" : "Loading data…")}
+      </div>
+    </div>
+  );
+}
+
 /** Empty state composition: illustration, title, body, optional CTA. */
 export function EmptyState({
   illustration, title, body, children, testId,
@@ -204,7 +220,7 @@ export function EmptyState({
   testId?: string;
 }) {
   return (
-    <div data-testid={testId} className="flex flex-col items-center gap-3 rounded-2xl border border-border/70 bg-surface px-6 py-10 text-center shadow-xs">
+    <div data-testid={testId} className="glass-recessed flex flex-col items-center gap-3.5 rounded-[24px] px-6 py-12 text-center">
       {illustration}
       <h2 className="text-lg font-bold">{title}</h2>
       {body && <p className="max-w-md text-sm text-text-muted">{body}</p>}

@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { createDb, createAppDb, debtors, invoices, reminders, messages, statementLinks, tenants, type Db } from "@tahseel/db";
 import { FakeMessagingProvider, FlakyProvider } from "@tahseel/providers";
-import { dispatchDue, planForInvoice, planForTenant, type EngineDeps } from "./engine";
+import { formatEgp } from "@tahseel/core";
+import { dispatchDue, planForInvoice, planForTenant, sendGroup, type DispatchSummary, type EngineDeps, type GroupWork } from "./engine";
 
 /**
  * F4 engine acceptance suite (BUILD_PLAN §7-F4 + §10): real Postgres + RLS,
@@ -307,5 +308,60 @@ d("reminder engine (F4)", () => {
     await makeInvoice(tenantId, debtorId, "2026-11-25");
     const result = await planForTenant(deps(), tenantId, new Date("2026-11-10T00:00:00Z"));
     expect(result.planned).toBe(12);
+  });
+
+  // M05: the send step re-checks invoice state under a lock. The payment
+  // here lands after the group was claimed (staged as `queued`), i.e. in
+  // the window between prepareTenant's guard read and the provider call.
+  it("M05: a reminder for an invoice paid after claiming is never sent", async () => {
+    const tenantId = await makeTenant();
+    const debtorId = await makeDebtor(tenantId, "+20105556666");
+    const invoiceId = await makeInvoice(tenantId, debtorId, "2026-11-20");
+    await planForInvoice(deps(), tenantId, invoiceId, new Date("2026-11-10T00:00:00Z"));
+    const [rem] = await tenantReminders(tenantId);
+    await owner.update(reminders).set({ status: "queued" }).where(eq(reminders.id, rem!.id));
+    // The payment lands now — after claiming, before the send.
+    await owner.update(invoices).set({ status: "paid", paidMinor: 100_000n }).where(eq(invoices.id, invoiceId));
+    const group: GroupWork = {
+      businessName: "محل الاختبار", groupKey: `grp:m05-paid:${invoiceId}`, channel: "whatsapp",
+      debtorId, debtorPhone: "+20105556666", templateKey: rem!.templateKey,
+      reminderIds: [rem!.id], invoiceIds: [invoiceId],
+      totalOutstandingMinor: 100_000n, earliestDueOn: "2026-11-20", payLinkEnabled: false,
+    };
+    const summary: DispatchSummary = { tenants: 0, due: 0, groupsSent: 0, remindersSent: 0, skipped: {}, rescheduled: 0, retried: 0, failed: 0, paused: false };
+    whatsapp.sent.length = 0;
+    await sendGroup(deps(), tenantId, group, new Date("2026-11-17T08:30:00Z"), summary);
+    expect(whatsapp.sent).toHaveLength(0);
+    expect(summary.groupsSent).toBe(0);
+    expect(summary.skipped.invoice_paid).toBe(1);
+    // The tenant has 6 planned reminders: read back the staged row by id,
+    // not the first row of an unordered list.
+    const [after] = await owner.select().from(reminders).where(eq(reminders.id, rem!.id));
+    expect(after?.status).toBe("cancelled");
+    expect(after?.skipReason).toBe("invoice_paid");
+  });
+
+  it("M05: a partial payment after claiming shrinks the quoted amount", async () => {
+    const tenantId = await makeTenant();
+    const debtorId = await makeDebtor(tenantId, "+20105557777");
+    const invoiceId = await makeInvoice(tenantId, debtorId, "2026-11-20");
+    await planForInvoice(deps(), tenantId, invoiceId, new Date("2026-11-10T00:00:00Z"));
+    const [rem] = await tenantReminders(tenantId);
+    await owner.update(reminders).set({ status: "queued" }).where(eq(reminders.id, rem!.id));
+    await owner.update(invoices).set({ status: "partially_paid", paidMinor: 40_000n }).where(eq(invoices.id, invoiceId));
+    const group: GroupWork = {
+      businessName: "محل الاختبار", groupKey: `grp:m05-partial:${invoiceId}`, channel: "whatsapp",
+      debtorId, debtorPhone: "+20105557777", templateKey: rem!.templateKey,
+      reminderIds: [rem!.id], invoiceIds: [invoiceId],
+      totalOutstandingMinor: 100_000n, earliestDueOn: "2026-11-20", payLinkEnabled: false,
+    };
+    const summary: DispatchSummary = { tenants: 0, due: 0, groupsSent: 0, remindersSent: 0, skipped: {}, rescheduled: 0, retried: 0, failed: 0, paused: false };
+    whatsapp.sent.length = 0;
+    await sendGroup(deps(), tenantId, group, new Date("2026-11-17T08:30:00Z"), summary);
+    expect(whatsapp.sent).toHaveLength(1);
+    expect(whatsapp.sent[0]!.variables.amount).toBe(formatEgp(60_000n));
+    expect(summary.groupsSent).toBe(1);
+    const [after] = await owner.select().from(reminders).where(eq(reminders.id, rem!.id));
+    expect(after?.status).toBe("sent");
   });
 });

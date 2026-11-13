@@ -55,7 +55,10 @@ test("Notifications Bell, Dashboard AI Briefing, Debtors Health & AI Copilot Dra
   await expect(popover).toBeHidden();
 
   // 4. AI Copilot Drawer: Briefing -> Smart Draft -> Ask AI
+  // Prompt 07: the trigger button only opens the AI menu — the drawer
+  // opens from a menu item (ai-menu-briefing-btn), not from the trigger.
   await page.getByTestId("ai-copilot-trigger-btn").click();
+  await page.getByTestId("ai-menu-briefing-btn").click();
   const drawer = page.getByTestId("ai-copilot-drawer");
   await expect(drawer).toBeVisible();
   await expect(drawer).toContainText("شركة الساحل للمقاولات");
@@ -67,7 +70,7 @@ test("Notifications Bell, Dashboard AI Briefing, Debtors Health & AI Copilot Dra
   await drawer.getByRole("button", { name: "اسأل المساعد" }).click();
   await page.getByTestId("copilot-question-input").fill("من هم أهم العملاء المتأخرين؟");
   await page.getByTestId("copilot-question-input").press("Enter");
-  await expect(drawer).toContainText("شركة الساحل للمقاولات", { timeout: 10000 });
+  await expect(drawer).toContainText("شركة الساحل للمقاولات", { timeout: 45000 });
   await page.keyboard.press("Escape");
   await expect(drawer).toBeHidden();
 

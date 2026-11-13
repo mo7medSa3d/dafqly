@@ -17,6 +17,25 @@ export const DEFAULT_POLICY: SchedulePolicy = {
   fridayMorningSkip: false,
 };
 
+/**
+ * True when `tz` is a real IANA timezone. `Intl.DateTimeFormat` throws
+ * RangeError on unknown zones — an unvalidated tenant timezone used to
+ * brick every request that computed "today" with a 500.
+ */
+export function isValidTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The timezone itself when valid, else `fallback` (never throws). */
+export function safeTimezone(tz: string | null | undefined, fallback = "Africa/Cairo"): string {
+  return tz && isValidTimezone(tz) ? tz : fallback;
+}
+
 interface LocalParts { hour: number; minute: number; weekday: string }
 function localParts(at: Date, timezone: string): LocalParts {
   const fmt = new Intl.DateTimeFormat("en-GB", {

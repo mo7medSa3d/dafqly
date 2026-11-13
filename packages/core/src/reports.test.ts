@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeKpis, computeReminderPerformance, toCsv, type ReportInvoice, type ReportPayment } from "./reports";
+import { computeKpis, computeReminderPerformance, toCsv, formatPct, formatDso, type ReportInvoice, type ReportPayment } from "./reports";
 
 /**
  * Hand-computed fixture (today = 2026-11-15):
@@ -12,10 +12,10 @@ import { computeKpis, computeReminderPerformance, toCsv, type ReportInvoice, typ
  * totalOutstanding = 60000+50000+30000 = 140000
  * overdueAmount = 60000+50000 = 110000
  * aging: current 30000, 0-7: 60000, 8-30: 0, 31-60: 50000, 60+: 0
- * Payments (confirmed): 25000 on 2026-11-03, 5000 on 2026-11-15, 77000 on 2026-10-31 (other month), one CLAIMED 12345 on 2026-11-05 (excluded), one confirmed reversal -2000 on 2026-11-10 (nets)
- * collectedInMonth = 25000+5000-2000 = 28000
- * collectionRate = 28000 / (28000+140000) = 28000/168000 = 1/6 = 0.16666...
- * invoiced last 90d: issued in [2026-08-17, 2026-11-15]: A 100000 (11-01) + C 20000 (use issued below) + D 30000 (11-14); B issued 2026-09-01 is INSIDE the window too -> +50000; E issued 2026-11-02 -> +999999? E is written_off but it WAS invoiced; the DSO denominator counts invoicing regardless of status: total = 100000+50000+20000+30000+999999 = 1199999. To keep the arithmetic clean E's amount is set 0 below instead — see fixture (E amount 0). Then invoiced90 = 200000, DSO = 140000/200000*90 = 63.
+ * Payments (confirmed): 25000 on 2026-11-03, 5000 on 2026-11-15, 77000 on 2026-10-31 (other month), one CLAIMED 12345 on 2026-11-05 (excluded), one confirmed reversal -2000 on 2026-11-10 (M03: reported as its own line, not netted)
+ * collectedInMonth = 25000+5000 = 30000 (gross); refundedInMonth = 2000;
+ * net collected = 28000, so collectionRate = 28000 / (28000+140000) = 28000/168000 = 1/6 = 0.16666...
+ * invoiced last 90d: issued in [2026-08-17, 2026-11-15]: A 100000 (11-01) + C 20000 (use issued below) + D 30000 (11-14); B issued 2026-09-01 is INSIDE the window too -> +50000. E is written_off and therefore EXCLUDED from the DSO denominator (cancelled/written-off invoices are not real sales); its amount is 0 in the fixture. Then invoiced90 = 200000, DSO = 140000/200000*90 = 63.
  * topDebtors: d1 110000, d2 30000.
  */
 const invoices: ReportInvoice[] = [
@@ -39,13 +39,38 @@ describe("computeKpis (hand-computed)", () => {
   it("totals", () => {
     expect(k.totalOutstandingMinor).toBe(140000);
     expect(k.overdueAmountMinor).toBe(110000);
-    expect(k.collectedInMonthMinor).toBe(28000);
+    expect(k.collectedInMonthMinor).toBe(30000);
+    expect(k.refundedInMonthMinor).toBe(2000);
+  });
+  it("M03: a reversal in another month does not rewrite this month's collected", () => {
+    const crossMonth = computeKpis({
+      invoices, debtorNames: names, today: "2026-11-15",
+      payments: [
+        { amountMinor: 10000, status: "confirmed", receivedOn: "2026-10-28" },
+        { amountMinor: -10000, status: "confirmed", receivedOn: "2026-11-05" },
+      ],
+    });
+    // October keeps its 10000 (the refund is November's line); November
+    // shows collected 0 and refunded 10000, with a 0 collection rate.
+    expect(crossMonth.collectedInMonthMinor).toBe(0);
+    expect(crossMonth.refundedInMonthMinor).toBe(10000);
+    expect(crossMonth.collectionRate).toBe(0);
   });
   it("collection rate = collected / (collected + outstanding) = 1/6", () => {
     expect(k.collectionRate).toBeCloseTo(1 / 6, 10);
   });
   it("DSO = (140000 / 200000) * 90 = 63", () => {
     expect(k.dsoDays).toBe(63);
+  });
+  it("DSO denominator excludes cancelled/written-off invoices issued in the window", () => {
+    const withDead: ReportInvoice[] = [
+      ...invoices,
+      { id: "X", debtorId: "d9", amountMinor: 100000, paidMinor: 0, status: "cancelled", issuedOn: "2026-11-10", dueOn: "2026-11-20" },
+      { id: "Y", debtorId: "d9", amountMinor: 100000, paidMinor: 0, status: "written_off", issuedOn: "2026-11-10", dueOn: "2026-11-20" },
+    ];
+    const k2 = computeKpis({ invoices: withDead, payments, debtorNames: names, today: "2026-11-15" });
+    expect(k2.dsoDays).toBe(63); // denominator still 200000, not 400000
+    expect(k2.totalOutstandingMinor).toBe(140000);
   });
   it("aging buckets", () => {
     expect(k.agingBuckets).toEqual({ current: 30000, "0-7": 60000, "8-30": 0, "31-60": 50000, "60+": 0 });
@@ -93,5 +118,32 @@ describe("toCsv", () => {
     expect(csv).toContain("\r\n");
     expect(csv).toContain('"أحمد, وشركاه",1250');
     expect(csv).toContain('"قال ""نعم""",5');
+  });
+  it("prefixes formula-leading cells with a single quote (no spreadsheet execution)", () => {
+    const csv = toCsv([["name", "note"], ["=2+5", "+2+5"], ["-2+5", "@SUM(A1:A2)"], ["  =cmd", "plain"]]);
+    expect(csv).toContain("'=2+5");
+    expect(csv).toContain("'+2+5");
+    expect(csv).toContain("'-2+5");
+    expect(csv).toContain("'@SUM(A1:A2)");
+    expect(csv).toContain("'  =cmd");
+    expect(csv).toContain(",plain\r\n");
+    // Numbers are untouched (a negative number is data, not a formula trigger
+    // in the numeric branch — only string cells are prefixed).
+    expect(toCsv([[5, -3]])).toContain("5,-3");
+  });
+});
+
+describe("formatPct / formatDso (single KPI display formatting)", () => {
+  it("one decimal everywhere: 1/6 -> 16.7%, DSO 63 -> 63.0", () => {
+    expect(formatPct(1 / 6)).toBe("16.7%");
+    expect(formatPct(0)).toBe("0.0%");
+    expect(formatPct(1)).toBe("100.0%");
+    expect(formatDso(63)).toBe("63.0");
+    expect(formatDso(62.95)).toBe("63.0");
+  });
+  it("the hand-computed fixture formats the same in every surface", () => {
+    const k = computeKpis({ invoices, payments, debtorNames: names, today: "2026-11-15" });
+    expect(formatPct(k.collectionRate)).toBe("16.7%");
+    expect(formatDso(k.dsoDays)).toBe("63.0");
   });
 });

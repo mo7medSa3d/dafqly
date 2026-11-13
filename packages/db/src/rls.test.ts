@@ -14,7 +14,11 @@ import { TENANT_TABLES, debtors } from "./schema";
  * a missing DB fails the build instead of silently skipping the RLS proof.
  */
 const ownerUrl = process.env.DATABASE_URL;
-const appUrl = process.env.APP_DATABASE_URL ?? process.env.DATABASE_URL;
+// The app URL must be its own variable: falling back to the owner URL
+// would run the isolation suite as the table owner (RLS bypassed) and
+// the "fails closed" test would fail — but only after wasting a run and
+// hiding which role was actually tested. Fail loudly instead.
+const appUrl = process.env.APP_DATABASE_URL;
 const requireDb = process.env.REQUIRE_DB_TESTS === "1";
 if (!ownerUrl || !appUrl) {
   if (requireDb) throw new Error("REQUIRE_DB_TESTS=1 but DATABASE_URL/APP_DATABASE_URL are not set");
@@ -22,6 +26,41 @@ if (!ownerUrl || !appUrl) {
 }
 
 const d = ownerUrl && appUrl ? describe : describe.skip;
+
+d("M10 platform-table revokes (migration 0016)", () => {
+  let appClient: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    const mig = createDb(ownerUrl!);
+    await migrate(mig.db, { migrationsFolder: new URL("../drizzle", import.meta.url).pathname });
+    await mig.client.end();
+    appClient = postgres(appUrl!);
+  });
+  afterAll(async () => {
+    await appClient?.end();
+  });
+
+  const denied = async (sql: string) => {
+    await expect(appClient.unsafe(sql)).rejects.toMatchObject({ code: "42501" });
+  };
+
+  it("denies the app role on every platform table", async () => {
+    await denied(`select * from webhook_events limit 1`);
+    await denied(`select * from ai_global_budget limit 1`);
+    await denied(`select * from ai_global_usage limit 1`);
+    await denied(`select * from tenant_deletions limit 1`);
+    await denied(`select * from "session" limit 1`);
+    await denied(`select * from account limit 1`);
+    await denied(`select * from verification limit 1`);
+  });
+
+  it("denies the app role on user columns beyond id/name, but keeps id/name readable", async () => {
+    await denied(`select email from "user" limit 1`);
+    await denied(`select * from "user" limit 1`);
+    const rows = await appClient`select id, name from "user" limit 1`;
+    expect(Array.isArray(rows)).toBe(true);
+  });
+});
 
 d("RLS cross-tenant isolation (generic, every tenant table)", () => {
   const tenantA = uuidv7();
@@ -63,6 +102,12 @@ d("RLS cross-tenant isolation (generic, every tenant table)", () => {
       case "cheque_alerts": return { id, tenant_id: tenant, cheque_id: rowIds.get("cheques")?.[which], alert_kind: "due_today", alert_date: "2026-12-01" };
       case "subscription_invoices": return { id, tenant_id: tenant, plan_key: "starter", period_start: "2026-11-01", period_end: "2026-12-01", amount_minor: 4900, status: "issued" };
       case "notifications": return { id, tenant_id: tenant, kind: "ai_briefing", severity: "info", title_ar: "تنبيه", title_en: "Alert", body_ar: "تفاصيل", body_en: "Details", dedupe_key: `probe-${tenant}` };
+      case "ai_conversations": return { id, tenant_id: tenant, user_id: which === "a" ? userA : userB, title: "RLS probe" };
+      case "ai_messages": return { id, tenant_id: tenant, conversation_id: rowIds.get("ai_conversations")?.[which], role: "user", content: "RLS probe" };
+      case "promises_to_pay": return { id, tenant_id: tenant, debtor_id: debtorId, invoice_id: rowIds.get("invoices")?.[which], amount_minor: 1000, promised_on: "2026-12-01", status: "pending", source: "manual", note: "factory probe" };
+      case "collection_tasks": return { id, tenant_id: tenant, debtor_id: debtorId, invoice_id: rowIds.get("invoices")?.[which], title: "Probe task", description: "factory probe", priority: "normal", status: "open", due_at: new Date(), created_by: which === "a" ? userA : userB };
+      case "ai_action_approvals": return { id, tenant_id: tenant, requested_by: which === "a" ? userA : userB, action_type: "create_collection_task", status: "pending", title: "Probe action", rationale: "factory probe", payload: JSON.stringify({}) };
+      case "invoice_sequences": return { tenant_id: tenant, next_val: 1001 };
       default: throw new Error(`no factory for tenant table ${table}`);
     }
   }
@@ -84,17 +129,20 @@ d("RLS cross-tenant isolation (generic, every tenant table)", () => {
     await owner`insert into tenants (id, name, business_name_ar, settings) values (${tenantA}, 'Tenant A', 'شركة أ', ${settings}), (${tenantB}, 'Tenant B', 'شركة ب', ${settings})`;
     await owner`insert into "user" (id, name, email) values (${userA}, 'A', ${`a-${userA}@example.test`}), (${userB}, 'B', ${`b-${userB}@example.test`})`;
     // Dependency order: debtors -> invoices/import_jobs -> payments -> allocations/rows.
-    const depOrder = ["debtors", "files", "invoices", "import_jobs", "payments", "payment_allocations", "import_rows", "reminders", "messages", "opt_outs", "payment_links", "statement_links", "disputes", "message_intents"];
+    const depOrder = ["ai_conversations", "ai_messages", "debtors", "files", "invoices", "import_jobs", "payments", "payment_allocations", "import_rows", "reminders", "messages", "opt_outs", "payment_links", "statement_links", "disputes", "message_intents", "promises_to_pay", "collection_tasks", "ai_action_approvals", "invoice_sequences"];
     const ordered = [...TENANT_TABLES].sort((x, y) => {
       const ix = depOrder.indexOf(x.name); const iy = depOrder.indexOf(y.name);
       return (ix === -1 ? 99 : ix) - (iy === -1 ? 99 : iy);
     });
-    for (const { name } of ordered) {
+    for (const entry of ordered) {
+      const { name } = entry;
+      // Only invoice_sequences is keyed by tenant_id instead of id.
+      const key = ("keyColumn" in entry ? (entry as { keyColumn?: string }).keyColumn : undefined) ?? "id";
       const ra = factory(name, tenantA, "a");
       const rb = factory(name, tenantB, "b");
       await insertRaw(owner, name, ra);
       await insertRaw(owner, name, rb);
-      rowIds.set(name, { a: String(ra.id), b: String(rb.id) });
+      rowIds.set(name, { a: String(ra[key]), b: String(rb[key]) });
     }
   });
 
@@ -114,26 +162,36 @@ d("RLS cross-tenant isolation (generic, every tenant table)", () => {
     }) as Promise<T>;
   }
 
-  for (const { name, probeColumn, probeValue } of TENANT_TABLES) {
+  for (const entry of TENANT_TABLES) {
+    const { name, probeColumn, probeValue } = entry;
+    // Only invoice_sequences is keyed by tenant_id instead of id.
+    const key = ("keyColumn" in entry ? (entry as { keyColumn?: string }).keyColumn : undefined) ?? "id";
     it(`${name}: tenant A cannot read, insert into, update or delete tenant B rows`, async () => {
       const ids = rowIds.get(name)!;
-      const seen = await asTenant(tenantA, (tx) => tx.unsafe(`select id from "${name}" where id in ($1, $2)`, [ids.a, ids.b]));
-      expect(seen.map((r) => r.id)).toEqual([ids.a]);
+      const seen = await asTenant(tenantA, (tx) => tx.unsafe(`select "${key}" as k from "${name}" where "${key}" in ($1, $2)`, [ids.a, ids.b]));
+      expect(seen.map((r) => r.k)).toEqual([ids.a]);
 
       await expect(asTenant(tenantA, (tx) => insertRaw(tx, name, factory(name, tenantB, "b")))).rejects.toThrow();
 
       const updated = await asTenant(tenantA, (tx) =>
-        tx.unsafe(`update "${name}" set "${probeColumn}" = $1 where id = $2 returning id`, [probeValue, ids.b]));
+        tx.unsafe(`update "${name}" set "${probeColumn}" = $1 where "${key}" = $2 returning "${key}" as k`, [probeValue, ids.b]));
       expect(updated.length).toBe(0);
 
-      const deleted = await asTenant(tenantA, (tx) => tx.unsafe(`delete from "${name}" where id = $1 returning id`, [ids.b]));
+      const deleted = await asTenant(tenantA, (tx) => tx.unsafe(`delete from "${name}" where "${key}" = $1 returning "${key}" as k`, [ids.b]));
       expect(deleted.length).toBe(0);
 
       // B's row is untouched (verified as owner)
-      const stillThere = await owner.unsafe(`select id from "${name}" where id = $1`, [ids.b]);
+      const stillThere = await owner.unsafe(`select "${key}" as k from "${name}" where "${key}" = $1`, [ids.b]);
       expect(stillThere.length).toBe(1);
     });
   }
+
+  it("factory covers every tenant table (a new table without a factory case fails here, not in beforeAll)", () => {
+    for (const { name } of TENANT_TABLES) {
+      expect(() => factory(name, tenantA, "a")).not.toThrow();
+    }
+    expect(new Set(TENANT_TABLES.map((t) => t.name)).size).toBe(TENANT_TABLES.length);
+  });
 
   it("fails closed: with no tenant context set, the app role sees zero rows", async () => {
     const seen = await app`select id from debtors`;

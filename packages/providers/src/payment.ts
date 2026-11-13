@@ -27,6 +27,12 @@ export interface RefundInput {
   /** The original Paymob transaction id being refunded. */
   transactionId: string;
   amountMinor: bigint;
+  /**
+   * Deterministic per-attempt key (H3: `refund:<reversal row id>`). Providers
+   * that support idempotent refunds should dedupe on it. The ledger-side
+   * refund-intent row is the authoritative dedupe — the key is a second layer.
+   */
+  idempotencyKey?: string;
 }
 
 export interface PaymentProvider {
@@ -38,6 +44,7 @@ export interface PaymentProvider {
 export class FakePaymentProvider implements PaymentProvider {
   readonly created: CreateLinkInput[] = [];
   readonly refunded: RefundInput[] = [];
+  private readonly refundedByKey = new Map<string, string>();
   async createPaymentLink(input: CreateLinkInput): Promise<CreatedPaymentLink> {
     this.created.push(input);
     const transactionId = `fake-intent-${this.created.length}`;
@@ -48,7 +55,14 @@ export class FakePaymentProvider implements PaymentProvider {
     };
   }
   async refundPayment(input: RefundInput): Promise<{ refundTransactionId: string }> {
+    // H3: same idempotency key replays the same refund transaction id.
+    if (input.idempotencyKey) {
+      const prior = this.refundedByKey.get(input.idempotencyKey);
+      if (prior) return { refundTransactionId: prior };
+    }
     this.refunded.push(input);
-    return { refundTransactionId: `fake-refund-${this.refunded.length}` };
+    const refundTransactionId = `fake-refund-${this.refunded.length}`;
+    if (input.idempotencyKey) this.refundedByKey.set(input.idempotencyKey, refundTransactionId);
+    return { refundTransactionId };
   }
 }

@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import {
-  AppError, allocatePayment, decideReceiptOutcome, evaluateReceiptChecks, formatEgp,
+  AppError, allocatePayment, decideReceiptOutcome, evaluateReceiptChecks, formatMoney,
   localDateOf, matchReceiptAmount, suggestDebtorByName, type ReceiptCheck, type ReceiptExtraction,
 } from "@tahseel/core";
 import {
@@ -11,7 +11,7 @@ import { withTenant, type Db } from "@tahseel/db";
 import type { OcrLlmProvider, StorageProvider } from "@tahseel/providers";
 import { renderTemplate } from "@tahseel/templates";
 import { storeUpload, getFileBytes } from "./files";
-import { recomputeInvoicePaid } from "./ledger";
+import { lockDebtorInvoices, recomputeInvoicePaid } from "./ledger";
 import { replanLater } from "./engine";
 import { upsertNotificationInTx } from "./notifications";
 
@@ -57,6 +57,9 @@ export async function processReceiptImage(
   let fileId = input.fileId ?? null;
   let bytes: Uint8Array | null = input.bytes ?? null;
   let mime = input.mime ?? "image/png";
+  // M06: set when storeUpload deduped these exact bytes onto an existing
+  // file row (the bytes were uploaded before).
+  let uploadWasDuplicate = false;
   if (fileId) {
     const got = await getFileBytes(app, deps.storage, tenantId, fileId);
     bytes = got.bytes;
@@ -64,6 +67,12 @@ export async function processReceiptImage(
   } else if (bytes) {
     const stored = await storeUpload(app, deps.storage, tenantId, actor, { bytes, mime, kind: "receipt" });
     fileId = stored.id;
+    // M5: the LLM sees the EXIF-stripped bytes, never the raw upload.
+    bytes = stored.bytes;
+    // M06: the exact bytes were already uploaded — the duplicate-hash
+    // check below must fail for this upload (it can only ever be a
+    // human-review claim, never an auto-confirm).
+    uploadWasDuplicate = stored.deduped;
   }
   if (!fileId || !bytes) throw new AppError("NO_FILE", "A receipt image is required", 400);
 
@@ -120,10 +129,13 @@ export async function processReceiptImage(
       };
     }
 
-    // Duplicate detection: every OTHER file's hash (this file's own row must
-    // not self-match) + every reference number already carried by a payment.
-    const allFiles = await tx.select({ id: files.id, sha256: files.sha256 }).from(files);
-    const seenHashes = new Set(allFiles.filter((f) => f.id !== fileId).map((f) => f.sha256));
+    // Duplicate detection: a single indexed lookup for ANOTHER file with
+    // this hash (this file's own row must not self-match) + every reference
+    // number already carried by a payment. M06: the old code loaded the
+    // whole files table into memory on every receipt.
+    const [otherWithHash] = await tx.select({ id: files.id }).from(files)
+      .where(and(eq(files.sha256, sha256), ne(files.id, fileId!))).limit(1);
+    const seenHashes = new Set<string>(uploadWasDuplicate || otherWithHash ? [sha256] : []);
     const paidRefs = await tx.select({ referenceNo: payments.referenceNo }).from(payments)
       .where(isNotNull(payments.referenceNo));
     const seenReferences = new Set(paidRefs.map((p) => p.referenceNo!).filter(Boolean));
@@ -143,8 +155,9 @@ export async function processReceiptImage(
       };
     }
 
-    const openInvoices = await tx.select().from(invoices)
-      .where(eq(invoices.debtorId, debtor.id)).orderBy(asc(invoices.dueOn), asc(invoices.id));
+    // F01: lock the debtor's invoices before matching/allocating, so a
+    // concurrent manual payment cannot allocate the same outstanding.
+    const openInvoices = await lockDebtorInvoices(tx, debtor.id);
     const match = matchReceiptAmount(
       extraction.amount_minor,
       openInvoices
@@ -163,10 +176,16 @@ export async function processReceiptImage(
       ? localDateOf(new Date(extraction.datetime), tenant.timezone)
       : localDateOf(now, tenant.timezone);
     const paymentId = uuidv7();
+    // OCR currency is free text ("LE", "ج.م", ...) — only a supported ISO
+    // code is stored; anything else falls back to EGP rather than failing
+    // the CHECK constraint on payments.currency.
+    const receiptCurrency = (extraction.currency ?? "").toUpperCase();
+    const paymentCurrency = ["EGP", "SAR", "USD", "AED", "EUR", "KWD", "JPY"].includes(receiptCurrency) ? receiptCurrency : "EGP";
     await tx.insert(payments).values({
       id: paymentId, tenantId, debtorId: debtor.id,
       invoiceId: match.allocations[0]?.invoiceId ?? null,
       amountMinor: BigInt(extraction.amount_minor),
+      currency: paymentCurrency,
       method: METHOD_MAP[extraction.method ?? "other"] ?? "other",
       receivedOn, referenceNo: extraction.reference_no,
       status: decision === "auto_confirm" ? "confirmed" : "claimed",
@@ -200,8 +219,8 @@ export async function processReceiptImage(
         decision === "auto_confirm"
           ? `Receipt auto-confirmed — ${debtor.displayName}`
           : `Receipt claim awaiting review — ${debtor.displayName}`,
-      bodyAr: `قيمة التحويل: ${formatEgp(BigInt(extraction.amount_minor))} ج.م.`,
-      bodyEn: `Transfer amount: ${formatEgp(BigInt(extraction.amount_minor))} EGP.`,
+      bodyAr: `قيمة التحويل: ${formatMoney(BigInt(extraction.amount_minor), paymentCurrency, { locale: "ar" })}.`,
+      bodyEn: `Transfer amount: ${formatMoney(BigInt(extraction.amount_minor), paymentCurrency, { locale: "en" })}.`,
       actionUrl: decision === "auto_confirm" ? `/debtors/${debtor.id}` : "/ai-inbox",
       entityType: "payment",
       entityId: paymentId,
@@ -226,8 +245,8 @@ export async function processReceiptImage(
       .reduce((s, i) => s + (i.amountMinor - i.paidMinor > 0n ? i.amountMinor - i.paidMinor : 0n), 0n);
     const templateKey = decision === "auto_confirm" ? "payment_received" : "payment_received_pending";
     const body = renderTemplate(templateKey, "ar", {
-      amount: formatEgp(BigInt(extraction.amount_minor)),
-      remaining: formatEgp(remainingMinor),
+      amount: formatMoney(BigInt(extraction.amount_minor), paymentCurrency, { locale: "ar" }),
+      remaining: formatMoney(remainingMinor, paymentCurrency, { locale: "ar" }),
     });
     const [msg] = await tx.insert(messages).values({
       tenantId, debtorId: debtor.id, direction: "out", channel: "whatsapp", provider: "whatsapp",

@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useMemo } from "react";
 import {
+  formatCurrencyMinor,
   formatEgp,
   formatMoney,
   getCurrencySymbol,
@@ -30,10 +31,13 @@ export const CurrencyContext = createContext<CurrencyContextValue>(defaultContex
 export function CurrencyProvider({
   currency = "EGP",
   locale = "ar",
+  digits = "latin",
   children,
 }: {
   currency?: string;
   locale?: string;
+  /** "eastern" renders Eastern Arabic digits (١٢٣) when the tenant opted in. */
+  digits?: "latin" | "eastern";
   children: React.ReactNode;
 }) {
   const normCurrency = (currency || "EGP").toUpperCase() as SupportedCurrency;
@@ -42,12 +46,14 @@ export function CurrencyProvider({
   const value = useMemo<CurrencyContextValue>(() => ({
     currency: normCurrency,
     symbol,
-    format: (minor, opts) => formatMoney(minor, normCurrency, { locale, ...opts }),
+    format: (minor, opts) => formatMoney(minor, normCurrency, { locale, digits: opts?.digits ?? digits }),
+    // Amount without the symbol, still in the tenant currency and its
+    // minor-unit exponent (KWD 3 decimals, JPY 0) — not EGP.
     formatAmountOnly: (minor, opts) => {
       const b = typeof minor === "bigint" ? minor : BigInt(String(minor || "0"));
-      return formatEgp(b, opts);
+      return formatCurrencyMinor(b, normCurrency, { digits: opts?.digits ?? digits });
     },
-  }), [normCurrency, symbol, locale]);
+  }), [normCurrency, symbol, locale, digits]);
 
   return (
     <CurrencyContext.Provider value={value}>

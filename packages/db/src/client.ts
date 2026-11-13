@@ -18,6 +18,22 @@ export function createAppDb(url: string) {
 }
 
 /**
+ * Fail-closed role assertion for the app connection: the URL must connect
+ * as the limited `tahseel_app` role. Any other role (notably the table
+ * owner) bypasses RLS, so every tenant-isolation guarantee would be void.
+ * Call once at startup / readiness; the check is cheap (one query).
+ */
+export async function assertAppRole(client: ReturnType<typeof postgres>): Promise<void> {
+  const rows = await client`select current_user as "user"`;
+  const user = (rows[0] as { user?: string } | undefined)?.user;
+  if (user !== "tahseel_app") {
+    throw new Error(
+      `APP_DATABASE_URL must connect as tahseel_app, got ${user ?? "unknown"} — the owner role bypasses RLS and tenant isolation would be void`,
+    );
+  }
+}
+
+/**
  * Run `fn` inside a transaction with `SET LOCAL app.tenant_id`, which is what
  * every RLS policy reads (BUILD_PLAN §3). This is the ONLY way request code
  * may touch tenant tables.

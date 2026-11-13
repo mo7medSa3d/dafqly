@@ -63,9 +63,11 @@ describe("forecastCashflow (hand-computed)", () => {
   }));
   const history = [...d1History, ...d2History];
   it("not-enough-data below 10 paid invoices: zeroed weeks, enoughData false", () => {
-    const f = forecastCashflow({ openInvoices: [{ id: "o1", debtorId: "d1", dueOn: "2026-11-20", outstandingMinor: 1000 }], paidHistory: history.slice(0, 9), today: "2026-11-16" });
+    const f = forecastCashflow({ openInvoices: [{ id: "o1", debtorId: "d1", dueOn: "2026-11-20", outstandingMinor: 1000 }], paidHistory: history.slice(0, 9), today: "2026-11-16", currency: "EGP" });
     expect(f.enoughData).toBe(false);
     expect(f.weeks.every((w) => w.expectedMinor === 0 && w.conservativeMinor === 0)).toBe(true);
+    expect(f.currency).toBe("EGP");
+    expect(f.beyondHorizon).toEqual({ expectedMinor: 0, conservativeMinor: 0 });
   });
   it("buckets expected (due+median) and conservative (due+p80) per debtor level", () => {
     // Open invoices:
@@ -78,7 +80,7 @@ describe("forecastCashflow (hand-computed)", () => {
         { id: "o2", debtorId: "d2", dueOn: "2026-11-10", outstandingMinor: 50000 },
         { id: "o3", debtorId: "d3", dueOn: "2026-12-20", outstandingMinor: 30000 },
       ],
-      paidHistory: history, today: "2026-11-16",
+      paidHistory: history, today: "2026-11-16", currency: "EGP",
     });
     expect(f.enoughData).toBe(true);
     expect(f.weeks[0]).toMatchObject({ weekStart: "2026-11-16", expectedMinor: 50000, conservativeMinor: 50000 });
@@ -86,6 +88,24 @@ describe("forecastCashflow (hand-computed)", () => {
     expect(f.weeks[6]).toMatchObject({ expectedMinor: 30000, conservativeMinor: 30000 });
     expect(f.explanation.basisByLevel).toEqual({ debtor: 2, tenant: 1, default: 0 });
     expect(f.explanation.tenantMedianDays).toBe(10);
+  });
+  it("M04: amounts past the 8-week horizon land in beyondHorizon, not nowhere", () => {
+    // o-far (d3, tenant level median 10 / p80 10): due 2027-01-20 ->
+    // expected 2027-01-30 (offset 75 -> week 10) and conservative the
+    // same; both past the 8-week horizon.
+    const f = forecastCashflow({
+      openInvoices: [{ id: "o-far", debtorId: "d3", dueOn: "2027-01-20", outstandingMinor: 42000 }],
+      paidHistory: history, today: "2026-11-16", currency: "EGP",
+    });
+    expect(f.enoughData).toBe(true);
+    expect(f.weeks.every((w) => w.expectedMinor === 0 && w.conservativeMinor === 0)).toBe(true);
+    expect(f.beyondHorizon).toEqual({ expectedMinor: 42000, conservativeMinor: 42000 });
+  });
+  it("M04: an unsafe-integer amount throws instead of silently losing precision", () => {
+    expect(() => forecastCashflow({
+      openInvoices: [{ id: "o1", debtorId: "d1", dueOn: "2026-11-18", outstandingMinor: Number.MAX_SAFE_INTEGER + 1 }],
+      paidHistory: history, today: "2026-11-16", currency: "EGP",
+    })).toThrow(/safe integer/);
   });
 });
 

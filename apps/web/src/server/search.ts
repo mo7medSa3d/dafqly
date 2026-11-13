@@ -1,5 +1,6 @@
 import { and, desc, ilike, isNull, or } from "drizzle-orm";
 import type { Db } from "@tahseel/db";
+import { likePattern } from "@tahseel/core";
 import { withTenant } from "@tahseel/db";
 import { auditLog, cheques, debtors, invoices } from "@tahseel/db/schema";
 
@@ -52,8 +53,8 @@ export async function globalSearch(app: Db, tenantId: string, query: string): Pr
           and(
             isNull(debtors.deletedAt),
             or(
-              ilike(debtors.displayName, `%${q}%`),
-              ilike(debtors.phoneE164, `%${q}%`),
+              ilike(debtors.displayName, likePattern(q)),
+              ilike(debtors.phoneE164, likePattern(q)),
             ),
           ),
         )
@@ -71,8 +72,8 @@ export async function globalSearch(app: Db, tenantId: string, query: string): Pr
         .from(invoices)
         .where(
           or(
-            ilike(invoices.reference, `%${q}%`),
-            ilike(invoices.description, `%${q}%`),
+            ilike(invoices.reference, likePattern(q)),
+            ilike(invoices.description, likePattern(q)),
           ),
         )
         .limit(6),
@@ -89,8 +90,8 @@ export async function globalSearch(app: Db, tenantId: string, query: string): Pr
         .from(cheques)
         .where(
           or(
-            ilike(cheques.number, `%${q}%`),
-            ilike(cheques.bank, `%${q}%`),
+            ilike(cheques.number, likePattern(q)),
+            ilike(cheques.bank, likePattern(q)),
           ),
         )
         .limit(4),

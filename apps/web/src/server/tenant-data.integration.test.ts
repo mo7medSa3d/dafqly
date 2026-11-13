@@ -17,12 +17,12 @@ if (!hasDb && process.env.REQUIRE_DB_TESTS === "1") throw new Error("REQUIRE_DB_
 const d = hasDb ? describe : describe.skip;
 
 d("tenant data export + delete (M6)", () => {
-  const ownerA = { id: randomUUID().replace(/-/g, ""), email: `oa-${randomUUID()}@example.test`, name: "OA" };
-  const ownerB = { id: randomUUID().replace(/-/g, ""), email: `ob-${randomUUID()}@example.test`, name: "OB" };
-  const staffA = { id: randomUUID().replace(/-/g, ""), email: `sa-${randomUUID()}@example.test`, name: "SA" };
+  const ownerA = { id: randomUUID().replace(/-/g, ""), email: `oa-${randomUUID()}@example.test`, name: "OA", emailVerified: true };
+  const ownerB = { id: randomUUID().replace(/-/g, ""), email: `ob-${randomUUID()}@example.test`, name: "OB", emailVerified: true };
+  const staffA = { id: randomUUID().replace(/-/g, ""), email: `sa-${randomUUID()}@example.test`, name: "SA", emailVerified: true };
   let tenantA = "";
   let tenantB = "";
-  const ctxFor = (u: typeof ownerA | null) => ({ user: u, appDb: appDb(), ownerDb: ownerDb() });
+  const ctxFor = (u: typeof ownerA | null) => ({ user: u, headers: new Headers(), appDb: appDb(), ownerDb: ownerDb() });
   const mkTenant = async (u: typeof ownerA, name: string) =>
     (await createTenantForUser(appDb(), u.id, {
       businessNameAr: name, timezone: "Africa/Cairo", quietStart: "21:00", quietEnd: "09:00",

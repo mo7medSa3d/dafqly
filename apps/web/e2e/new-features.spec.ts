@@ -53,7 +53,7 @@ test.describe("New Features: Search, WhatsApp Share, Audit Trail", () => {
     await page.screenshot({ path: path.join(FIXES_DIR, "feature_invoices_whatsapp.png"), fullPage: true });
   });
 
-  test("3. Verify Audit Trail on settings page", async ({ page }) => {
+  test("3. Verify Audit Trail is removed from settings page per user requirement", async ({ page }) => {
     await page.goto("/ar/login");
     await page.fill('[data-testid="auth-email"]', "demo@tahseel.test");
     await page.fill('[data-testid="auth-password"]', "demo-password-123");
@@ -61,11 +61,8 @@ test.describe("New Features: Search, WhatsApp Share, Audit Trail", () => {
     await page.waitForURL("**/ar/dashboard");
 
     await page.goto("/ar/settings");
-    await page.waitForSelector('text=سجل العمليات والرقابة');
+    await expect(page.locator('text=سجل العمليات والرقابة')).toHaveCount(0);
 
-    const auditTable = page.locator('text=سجل العمليات والرقابة');
-    await expect(auditTable).toBeVisible();
-
-    await page.screenshot({ path: path.join(FIXES_DIR, "feature_settings_audit_trail.png"), fullPage: true });
+    await page.screenshot({ path: path.join(FIXES_DIR, "feature_settings_audit_trail_removed.png"), fullPage: true });
   });
 });

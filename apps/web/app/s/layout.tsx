@@ -27,6 +27,13 @@ export const viewport: Viewport = {
 export default function StatementLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ar" dir="rtl" suppressHydrationWarning>
+      <head>
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `html,body,*,*::before,*::after{scrollbar-width:none!important;-ms-overflow-style:none!important;}::-webkit-scrollbar,*::-webkit-scrollbar{display:none!important;width:0!important;height:0!important;background:transparent!important;}::-webkit-scrollbar-track,*::-webkit-scrollbar-track,::-webkit-scrollbar-thumb,*::-webkit-scrollbar-thumb,::-webkit-scrollbar-corner,*::-webkit-scrollbar-corner,::-webkit-scrollbar-button,*::-webkit-scrollbar-button{display:none!important;width:0!important;height:0!important;background:transparent!important;}`,
+          }}
+        />
+      </head>
       <body>{children}</body>
     </html>
   );

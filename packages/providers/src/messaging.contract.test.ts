@@ -45,3 +45,17 @@ describe("FakeClock", () => {
     expect(Math.abs(new SystemClock().now().getTime() - Date.now())).toBeLessThan(5000);
   });
 });
+
+describe("NotConfiguredMessagingProvider (fail closed)", () => {
+  it("never silently accepts sends when a live adapter is missing", async () => {
+    const { NotConfiguredMessagingProvider } = await import("./messaging");
+    const provider = new NotConfiguredMessagingProvider("whatsapp");
+    await expect(provider.sendTemplate({
+      toE164: "+201000000000", templateKey: "invoice_due_today", variables: {},
+      idempotencyKey: "missing-provider", channel: "whatsapp",
+    })).rejects.toThrow(/whatsapp provider is not configured/i);
+    await expect(provider.sendText({
+      toE164: "+201000000000", body: "test", idempotencyKey: "missing-provider-text",
+    })).rejects.toThrow(/whatsapp provider is not configured/i);
+  });
+});

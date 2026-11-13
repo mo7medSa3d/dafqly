@@ -18,7 +18,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
-import { formatEgp } from "@tahseel/core";
+import { useCurrency } from "./CurrencyContext";
 import { openAiCopilot } from "./AiCopilotDrawer";
 
 interface SearchDebtorResult {
@@ -56,6 +56,7 @@ interface CommandPaletteProps {
 export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps) {
   const t = useTranslations("search");
   const isEn = locale === "en";
+  const { formatAmountOnly } = useCurrency();
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -310,7 +311,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         </div>
 
         {/* Results Body */}
-        <div className="max-h-[380px] overflow-y-auto p-2">
+        <div className="max-h-[380px] overflow-y-auto p-2 no-scrollbar" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
           {isLoading && (
             <div className="py-8 text-center text-xs text-text-muted">
               <span className="inline-block animate-pulse">...</span>
@@ -447,7 +448,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`text-xs font-bold ${isSelected ? "text-white" : "text-primary"}`} dir="ltr">
-                          {formatEgp(BigInt(inv.amountMinor))}
+                          {formatAmountOnly(BigInt(inv.amountMinor))}
                         </span>
                         <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-white" : "text-text-subtle"}`} />
                       </div>
@@ -495,7 +496,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`text-xs font-bold ${isSelected ? "text-white" : "text-primary"}`} dir="ltr">
-                          {formatEgp(BigInt(chq.amountMinor))}
+                          {formatAmountOnly(BigInt(chq.amountMinor))}
                         </span>
                         <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-white" : "text-text-subtle"}`} />
                       </div>

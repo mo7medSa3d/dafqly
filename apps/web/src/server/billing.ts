@@ -2,7 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import {
-  AppError, PLANS_SEED, localDateOf, planByKey, quotaStatus,
+  AppError, PLANS_SEED, PLAN_PRICES_ARE_PLACEHOLDERS, localDateOf, planByKey, quotaStatus,
   type PlanDef, type QuotaStatus,
 } from "@tahseel/core";
 import { auditLog, plans as plansTable, subscriptionInvoices, tenants, usageLedger } from "@tahseel/db/schema";
@@ -14,8 +14,11 @@ import type { PaymentProvider } from "@tahseel/providers";
  * TABLE at runtime (seeded by migration 0007 from core PLANS_SEED; the core
  * seed is only the fallback if the table is somehow empty). Prices in the
  * table are PLACEHOLDERS pending HUMAN_INPUTS #10 — never present them as
- * decided. Metering is usage_ledger units of kinds whatsapp_utility + sms
- * in the tenant-local calendar month.
+ * decided. Metering is usage_ledger units of kind whatsapp_utility in the
+ * tenant-local calendar month (F-09: the "sms" kind is metered by the same
+ * code path only if an SMS adapter ever ships — none is shipped, the
+ * NotConfiguredSmsProvider fails closed, and no user-facing copy promises
+ * SMS sending).
  */
 
 async function audit(tx: Db, tenantId: string, actor: string | null, action: string, entity: string, entityId: string, after: unknown) {
@@ -105,6 +108,13 @@ export async function changePlan(
   const catalogue = await getPlanCatalogue(deps.app);
   const plan = planByKey(input.planKey, catalogue);
   if (!plan) throw new AppError("UNKNOWN_PLAN", `Unknown plan ${input.planKey}`, 400);
+  // Prices are placeholders (HUMAN_INPUTS #10, undecided). A paid plan
+  // change must never be sold at a placeholder price — not even through
+  // the dev fake provider, which used to mark the invoice paid and flip
+  // the plan immediately. Free plans (trial, price 0) still apply.
+  if (PLAN_PRICES_ARE_PLACEHOLDERS && plan.priceMinor > 0) {
+    throw new AppError("PRICING_NOT_FINAL", "Plan prices are not final yet — paid plan changes are disabled until pricing is decided", 409);
+  }
 
   const created = await withTenant(deps.app, tenantId, async (tx) => {
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));

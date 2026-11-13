@@ -1,4 +1,4 @@
-import { daysOverdue } from "./invoices";
+import { daysOverdue, isCollectibleStatus } from "./invoices";
 
 /**
  * Dashboard KPIs and CSV export (BUILD_PLAN F11, ADR-023). Pure functions
@@ -6,20 +6,40 @@ import { daysOverdue } from "./invoices";
  * hand-computed fixture. Amounts are integer minor units (numbers here are
  * safe integers well below 2^53 for any realistic book).
  *
- * PINNED DEFINITIONS (ADR-023):
+ * PINNED DEFINITIONS (ADR-023, amended by ADR-031 for M03):
  * - totalOutstanding: Σ (amount − paid) over open + partially_paid invoices.
  * - overdueAmount: the same sum restricted to invoices due before today.
- * - collectedInMonth: Σ CONFIRMED payments with receivedOn inside the
- *   calendar month of `today` (reversals are confirmed negative rows, so
- *   they net out).
- * - collectionRate = collectedInMonth / (collectedInMonth +
- *   totalOutstanding); 0 when the denominator is 0.
+ * - collectedInMonth: Σ CONFIRMED *positive* payments with receivedOn
+ *   inside the calendar month of `today` (gross cash received).
+ * - refundedInMonth: Σ |CONFIRMED *negative* payments| (reversals) with
+ *   receivedOn inside the month (gross cash returned). The two are
+ *   reported as separate lines: a June payment refunded in July must not
+ *   silently rewrite June, and July must not look like a bad collections
+ *   month — July shows collected 0 and refunded the full amount instead.
+ * - collectionRate = netCollected / (netCollected + totalOutstanding),
+ *   where netCollected = collectedInMonth − refundedInMonth floored at 0;
+ *   0 when the denominator is 0.
  * - dsoDays = (totalOutstanding / invoicedInLast90Days) * 90, where the
- *   denominator is Σ amounts of invoices ISSUED in [today−89, today];
+ *   denominator is Σ amounts of invoices ISSUED in [today−89, today],
+ *   excluding cancelled/written-off invoices (not real sales);
  *   0 when nothing was invoiced in the window.
  * - aging buckets bucket outstanding by days overdue: not yet due =
  *   "current", then 1–7 "0-7", 8–30, 31–60, >60 "60+".
  */
+
+/**
+ * The single display formatting for KPI percentages and DSO, used by the
+ * dashboard cards, the intelligence briefing and the charts alike: one
+ * decimal everywhere. (The same metric used to render 16.7% on the KPI
+ * card, 17% in the intelligence chart via Math.round, and raw in places —
+ * three different roundings of one number.)
+ */
+export function formatPct(rateFraction: number): string {
+  return `${(rateFraction * 100).toFixed(1)}%`;
+}
+export function formatDso(days: number): string {
+  return days.toFixed(1);
+}
 
 export interface ReportInvoice {
   id: string;
@@ -44,13 +64,15 @@ export interface KpiReport {
   totalOutstandingMinor: number;
   overdueAmountMinor: number;
   collectedInMonthMinor: number;
+  /** M03: gross refunds (reversals) received in the month, as a positive
+   * magnitude. Kept separate from collected so a cross-month refund is
+   * visible instead of silently netting against another month's number. */
+  refundedInMonthMinor: number;
   collectionRate: number;
   dsoDays: number;
   agingBuckets: Record<AgingBucketKey, number>;
   topDebtors: { debtorId: string; displayName: string; outstandingMinor: number }[];
 }
-
-const OPEN_STATUSES = new Set(["open", "partially_paid"]);
 
 export function agingBucketFor(daysOverdueCount: number): AgingBucketKey {
   if (daysOverdueCount <= 0) return "current";
@@ -73,7 +95,9 @@ export function computeKpis(input: {
   const perDebtor = new Map<string, number>();
 
   for (const inv of input.invoices) {
-    if (!OPEN_STATUSES.has(inv.status)) continue;
+    // H09: the same collectible rule as every other surface — a disputed
+    // invoice is frozen and contributes nothing to outstanding.
+    if (!isCollectibleStatus(inv.status)) continue;
     const outstanding = Math.max(0, inv.amountMinor - inv.paidMinor);
     if (outstanding === 0) continue;
     totalOutstanding += outstanding;
@@ -83,16 +107,26 @@ export function computeKpis(input: {
     perDebtor.set(inv.debtorId, (perDebtor.get(inv.debtorId) ?? 0) + outstanding);
   }
 
+  // M03: collected and refunded are separate lines — a reversal nets
+  // only against its own month's gross, never against another month.
   let collected = 0;
+  let refunded = 0;
   for (const p of input.payments) {
-    if (p.status === "confirmed" && p.receivedOn.slice(0, 7) === monthPrefix) collected += p.amountMinor;
+    if (p.status === "confirmed" && p.receivedOn.slice(0, 7) === monthPrefix) {
+      if (p.amountMinor >= 0) collected += p.amountMinor;
+      else refunded += -p.amountMinor;
+    }
   }
+  const netCollected = Math.max(0, collected - refunded);
 
   // Invoiced in the last 90 days: issuedOn in [today-89, today] (a 90-day
-  // inclusive window ending today).
+  // inclusive window ending today). Cancelled and written-off invoices are
+  // not real sales, so they must not inflate the denominator and flatter
+  // DSO; disputed invoices stay in (they are issued sales under review).
   const windowStart = addDays(input.today, -89);
   let invoiced90 = 0;
   for (const inv of input.invoices) {
+    if (inv.status === "cancelled" || inv.status === "written_off") continue;
     if (inv.issuedOn >= windowStart && inv.issuedOn <= input.today) invoiced90 += inv.amountMinor;
   }
 
@@ -109,7 +143,8 @@ export function computeKpis(input: {
     totalOutstandingMinor: totalOutstanding,
     overdueAmountMinor: overdueAmount,
     collectedInMonthMinor: collected,
-    collectionRate: collected + totalOutstanding > 0 ? collected / (collected + totalOutstanding) : 0,
+    refundedInMonthMinor: refunded,
+    collectionRate: netCollected + totalOutstanding > 0 ? netCollected / (netCollected + totalOutstanding) : 0,
     // Rounded to 2 decimals: DSO is a reporting figure, and the rounding
     // keeps it free of binary float dust (140000/200000*90 is 63, not 62.999...).
     dsoDays: invoiced90 > 0 ? Math.round(((totalOutstanding / invoiced90) * 90) * 100) / 100 : 0,
@@ -160,10 +195,19 @@ export function computeReminderPerformance(input: {
 /**
  * CSV serialization for F11 exports: UTF-8 BOM so Excel renders Arabic
  * correctly, CRLF line endings, RFC-4180 quoting.
+ *
+ * Formula-injection guard: a cell starting with `=`, `+`, `-`, `@` (or one
+ * of those after whitespace/tab) is executed as a formula when the CSV is
+ * opened in Excel/Sheets, so debtor names, notes and references are
+ * attacker-controlled text. Prefix such cells with a single quote — the
+ * standard OWASP mitigation — so spreadsheet apps treat them as text.
  */
 export function toCsv(rows: readonly (readonly (string | number)[])[]): string {
   const escape = (v: string | number): string => {
-    const s = String(v);
+    let s = String(v);
+    // Numbers are real data (a negative amount is a number, not a formula);
+    // only string cells — debtor names, notes, references — get the guard.
+    if (typeof v === "string" && /^[\s\t]*[=+\-@]/.test(s)) s = `'${s}`;
     return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   return "\uFEFF" + rows.map((r) => r.map(escape).join(",")).join("\r\n") + "\r\n";

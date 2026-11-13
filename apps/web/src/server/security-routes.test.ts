@@ -26,11 +26,13 @@ const CLASSIFICATION: Record<string, RouteClass> = {
   "api/public/statement/[token]/route.ts": "public", // 32-byte hash token + per-IP rate limit (M3)
   "api/public/statement/[token]/dispute/route.ts": "public", // same token gate
   "api/public/statement/[token]/pay/route.ts": "public", // same token gate
+  "api/public/statement/[token]/promise/route.ts": "public", // token gate + IP rate limit
   "s/[token]/page.tsx": "public", // statement page behind the same unguessable token
   "[locale]/login/page.tsx": "public", // sign-in form (redirects away when signed in)
   "[locale]/signup/page.tsx": "public", // sign-up form (rate-limited by the auth limiter)
   // Everything else requires a session:
   "api/trpc/[trpc]/route.ts": "session", // procedures enforce auth individually (proven below)
+  "api/ai/copilot/stream/route.ts": "session", // signed-in SSE Copilot endpoint
   "[locale]/page.tsx": "session",
   "[locale]/onboarding/page.tsx": "session",
   "[locale]/dashboard/page.tsx": "session",
@@ -43,6 +45,8 @@ const CLASSIFICATION: Record<string, RouteClass> = {
   "[locale]/ai-inbox/page.tsx": "session",
   "[locale]/billing/page.tsx": "session",
   "[locale]/settings/page.tsx": "session",
+  "[locale]/tasks/page.tsx": "session",
+  "[locale]/platform/ai-budget/page.tsx": "session", // additional platform-admin allowlist check inside page
 };
 
 function walk(dir: string, base: string): string[] {
@@ -64,7 +68,7 @@ describe("route auth allowlist (§9, M6)", () => {
 
   it("the public allowlist is exactly the documented set", () => {
     const publics = Object.entries(CLASSIFICATION).filter(([, v]) => v === "public").map(([k]) => k);
-    expect(publics).toHaveLength(11);
+    expect(publics).toHaveLength(12);
   });
 
   it("every tRPC procedure except `health` rejects unauthenticated calls", async () => {

@@ -7,9 +7,10 @@ import { createTenantForUser } from "./services";
 import { createDebtor, createInvoice, recordPayment, getDebtorDetail } from "./ledger";
 import {
   createGatewayLink, handlePaymobCallback, refundGatewayPayment, getReconciliation,
-  confirmClaimedPayment, rejectClaimedPayment, type GatewayDeps,
+  confirmClaimedPayment, rejectClaimedPayment, confirmRefundIntent, rejectRefundIntent,
+  type GatewayDeps,
 } from "./gateway";
-import { FakePaymentProvider } from "@tahseel/providers";
+import { FakePaymentProvider, type PaymentProvider } from "@tahseel/providers";
 import { computePaymobHmac } from "@tahseel/core/payments-crypto";
 
 /**
@@ -74,6 +75,9 @@ d("F5 gateway payments (service layer)", () => {
     expect(link.amountMinor).toBe("60000");
     expect(link.status).toBe("pending");
     expect(link.checkoutUrl).toContain("pay.example.invalid");
+    // F-02: a fake-provider link must carry provider "fake" so the UI can
+    // label it SIMULATED instead of presenting it as a real checkout.
+    expect(link.provider).toBe("fake");
     const [row] = await ownerDb().select().from(paymentLinks).where(eq(paymentLinks.id, link.id));
     expect(row!.specialReference).toBe(fake.created[fake.created.length - 1]!.reference);
     expect(row!.expiresAt.getTime() - Date.now()).toBeGreaterThan(50 * 60_000);
@@ -262,5 +266,167 @@ d("F5 gateway payments (service layer)", () => {
     detail = await getDebtorDetail(app(), tenantId, debtor.id);
     expect(detail.invoices.find((i) => i.id === inv2.id)).toMatchObject({ paidMinor: "0", status: "open" });
     void inv;
+  });
+
+  // H3: two concurrent full refunds — exactly one succeeds, the provider is
+  // called once, the second gets 409 (the first intent already claims it).
+  it("H3: concurrent full refunds refund once, never twice", async () => {
+    const debtor = await newDebtor("استرجاع متزامن");
+    const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "600.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
+    const link = await createGatewayLink(deps(), tenantId, user.id, { debtorId: debtor.id, invoiceId: inv.id });
+    const [row] = await ownerDb().select().from(paymentLinks).where(eq(paymentLinks.id, link.id));
+    const { payload, hmac } = callbackPayload({ reference: row!.specialReference, amountCents: 60000 });
+    const paid = await handlePaymobCallback(deps(), payload, hmac, new Date());
+    expect(paid.outcome).toBe("fulfilled");
+    const refundedBefore = fake.refunded.length;
+    const results = await Promise.allSettled([
+      refundGatewayPayment(deps(), tenantId, user.id, { paymentId: paid.paymentId! }),
+      refundGatewayPayment(deps(), tenantId, user.id, { paymentId: paid.paymentId! }),
+    ]);
+    const ok = results.filter((r) => r.status === "fulfilled");
+    const bad = results.filter((r) => r.status === "rejected");
+    expect(ok).toHaveLength(1);
+    expect(bad).toHaveLength(1);
+    expect((bad[0] as PromiseRejectedResult).reason).toMatchObject({ code: "INVALID_REFUND" });
+    expect(fake.refunded.length - refundedBefore).toBe(1);
+    const detail = await getDebtorDetail(app(), tenantId, debtor.id);
+    expect(detail.invoices[0]).toMatchObject({ paidMinor: "0", status: "open" });
+  });
+
+  // H3: a provider failure releases the claim — balances untouched, the
+  // amount is refundable again, and the failed intent is REJECTED.
+  it("H3: a failed provider refund rejects its intent and stays refundable", async () => {
+    const debtor = await newDebtor("استرجاع فاشل");
+    const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "500.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
+    const link = await createGatewayLink(deps(), tenantId, user.id, { debtorId: debtor.id, invoiceId: inv.id });
+    const [row] = await ownerDb().select().from(paymentLinks).where(eq(paymentLinks.id, link.id));
+    const { payload, hmac } = callbackPayload({ reference: row!.specialReference, amountCents: 50000 });
+    const paid = await handlePaymobCallback(deps(), payload, hmac, new Date());
+    expect(paid.outcome).toBe("fulfilled");
+    const throwing: PaymentProvider = {
+      createPaymentLink: fake.createPaymentLink.bind(fake),
+      refundPayment: async () => { throw new Error("provider down"); },
+    };
+    const failingDeps = (): GatewayDeps => ({ ...deps(), provider: throwing });
+    await expect(refundGatewayPayment(failingDeps(), tenantId, user.id, { paymentId: paid.paymentId! }))
+      .rejects.toThrow("provider down");
+    // The intent is REJECTED (not stuck CLAIMED) and the invoice is untouched.
+    const intents = await ownerDb().select().from(payments).where(eq(payments.reversalOf, paid.paymentId!));
+    expect(intents).toHaveLength(1);
+    expect(intents[0]!.status).toBe("rejected");
+    let detail = await getDebtorDetail(app(), tenantId, debtor.id);
+    expect(detail.invoices[0]).toMatchObject({ paidMinor: "50000", status: "paid" });
+    // The same amount refunds fine afterwards.
+    const ok = await refundGatewayPayment(deps(), tenantId, user.id, { paymentId: paid.paymentId! });
+    expect(ok.reversedMinor).toBe("50000");
+    detail = await getDebtorDetail(app(), tenantId, debtor.id);
+    expect(detail.invoices[0]).toMatchObject({ paidMinor: "0", status: "open" });
+  });
+
+  // H3 crash recovery: a CLAIMED intent confirms with the provider's refund
+  // transaction id, and rejects only when the outcome is known-not-refunded.
+  it("H3: a stuck CLAIMED refund intent confirms or rejects via the owner path", async () => {
+    const debtor = await newDebtor("استرجاع عالق");
+    const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "300.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
+    const link = await createGatewayLink(deps(), tenantId, user.id, { debtorId: debtor.id, invoiceId: inv.id });
+    const [row] = await ownerDb().select().from(paymentLinks).where(eq(paymentLinks.id, link.id));
+    const { payload, hmac } = callbackPayload({ reference: row!.specialReference, amountCents: 30000 });
+    const paid = await handlePaymobCallback(deps(), payload, hmac, new Date());
+    expect(paid.outcome).toBe("fulfilled");
+    // Simulate a crash after the provider call: write a CLAIMED intent row
+    // directly (as refundGatewayPayment's Tx1 would), with its allocations.
+    const [intent] = await ownerDb().insert(payments).values({
+      tenantId, debtorId: debtor.id, invoiceId: inv.id, amountMinor: -30000n,
+      currency: "EGP", method: "gateway", receivedOn: "2026-11-09",
+      status: "claimed", source: "gateway_webhook", reversalOf: paid.paymentId!,
+    }).returning();
+    // (the allocation is inserted via the app connection below, RLS-scoped)
+    const { withTenant } = await import("@tahseel/db");
+    await withTenant(app(), tenantId, async (tx) => {
+      const { paymentAllocations } = await import("@tahseel/db/schema");
+      await tx.insert(paymentAllocations).values({ tenantId, paymentId: intent!.id, invoiceId: inv.id, amountMinor: -30000n });
+    });
+    const report = await getReconciliation(app(), tenantId);
+    expect(report.pendingRefunds.some((p) => p.id === intent!.id)).toBe(true);
+    const confirmed = await confirmRefundIntent(app(), tenantId, user.id, intent!.id, "paymob-refund-123");
+    expect(confirmed.reversedMinor).toBe("30000");
+    const detail = await getDebtorDetail(app(), tenantId, debtor.id);
+    expect(detail.invoices[0]).toMatchObject({ paidMinor: "0", status: "open" });
+    // A second intent can be rejected, freeing the amount for a fresh refund.
+    const inv2 = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "100.00", issuedOn: "2026-11-02", dueOn: "2026-11-21" });
+    const link2 = await createGatewayLink(deps(), tenantId, user.id, { debtorId: debtor.id, invoiceId: inv2.id });
+    const [row2] = await ownerDb().select().from(paymentLinks).where(eq(paymentLinks.id, link2.id));
+    const second = callbackPayload({ reference: row2!.specialReference, amountCents: 10000 });
+    const paid2 = await handlePaymobCallback(deps(), second.payload, second.hmac, new Date());
+    expect(paid2.outcome).toBe("fulfilled");
+    const [intent2] = await ownerDb().insert(payments).values({
+      tenantId, debtorId: debtor.id, invoiceId: inv2.id, amountMinor: -10000n,
+      currency: "EGP", method: "gateway", receivedOn: "2026-11-09",
+      status: "claimed", source: "gateway_webhook", reversalOf: paid2.paymentId!,
+    }).returning();
+    await rejectRefundIntent(app(), tenantId, user.id, intent2!.id);
+    const fresh = await refundGatewayPayment(deps(), tenantId, user.id, { paymentId: paid2.paymentId! });
+    expect(fresh.reversedMinor).toBe("10000");
+  });
+
+  // M8: the same idempotency key twice mints one link and one intention.
+  it("M8: createGatewayLink with the same idempotency key replays the link", async () => {
+    const debtor = await newDebtor("رابط مكرر");
+    const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "250.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
+    const key = `link-${randomUUID()}`;
+    const createdBefore = fake.created.length;
+    const first = await createGatewayLink(deps(), tenantId, user.id, { debtorId: debtor.id, invoiceId: inv.id, idempotencyKey: key });
+    const second = await createGatewayLink(deps(), tenantId, user.id, { debtorId: debtor.id, invoiceId: inv.id, idempotencyKey: key });
+    expect(second.id).toBe(first.id);
+    expect(fake.created.length - createdBefore).toBe(1);
+    const rows = await ownerDb().select().from(paymentLinks).where(eq(paymentLinks.idempotencyKey, key));
+    expect(rows).toHaveLength(1);
+  });
+
+  // H12: the outstanding moves while the provider call is in flight — the
+  // link must fail closed with PRICE_CHANGED, not mint a stale link.
+  it("H12: a price move during link creation fails closed (PRICE_CHANGED)", async () => {
+    const debtor = await newDebtor("رابط سعر متحرك");
+    const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "800.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
+    let release!: () => void;
+    let started = false;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const blocking: PaymentProvider = {
+      createPaymentLink: async (input) => {
+        started = true;
+        await gate;
+        return fake.createPaymentLink(input);
+      },
+      refundPayment: fake.refundPayment.bind(fake),
+    };
+    const blockingDeps = (): GatewayDeps => ({ ...deps(), provider: blocking });
+    const pending = createGatewayLink(blockingDeps(), tenantId, user.id, { debtorId: debtor.id, invoiceId: inv.id });
+    for (let i = 0; i < 50 && !started; i++) await new Promise((r) => setTimeout(r, 100));
+    expect(started).toBe(true);
+    // The debtor pays the invoice while the provider call is in flight.
+    await recordPayment(app(), tenantId, user.id, { debtorId: debtor.id, amount: "800.00", receivedOn: "2026-11-09" });
+    release();
+    await expect(pending).rejects.toMatchObject({ code: "PRICE_CHANGED", status: 409 });
+  });
+
+  // H03: two identical callbacks at once — one fulfils, one is a duplicate,
+  // exactly one payment row exists for the transaction.
+  it("H03: concurrent duplicate Paymob callbacks fulfil once", async () => {
+    const debtor = await newDebtor("كولباك مكرر");
+    const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "700.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
+    const link = await createGatewayLink(deps(), tenantId, user.id, { debtorId: debtor.id, invoiceId: inv.id });
+    const [row] = await ownerDb().select().from(paymentLinks).where(eq(paymentLinks.id, link.id));
+    const { payload, hmac } = callbackPayload({ reference: row!.specialReference, amountCents: 70000 });
+    const [first, second] = await Promise.all([
+      handlePaymobCallback(deps(), payload, hmac, new Date()),
+      handlePaymobCallback(deps(), payload, hmac, new Date()),
+    ]);
+    const outcomes = [first.outcome, second.outcome].sort();
+    expect(outcomes).toEqual(["duplicate", "fulfilled"]);
+    const txnId = (payload.obj as { id: number }).id;
+    const rows = await ownerDb().select().from(payments).where(eq(payments.gatewayTransactionId, String(txnId)));
+    expect(rows).toHaveLength(1);
+    const detail = await getDebtorDetail(app(), tenantId, debtor.id);
+    expect(detail.invoices[0]).toMatchObject({ paidMinor: "70000", status: "paid" });
   });
 });

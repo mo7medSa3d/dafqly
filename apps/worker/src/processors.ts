@@ -1,5 +1,5 @@
 import type { Clock } from "@tahseel/providers";
-import { dispatchDue, planAllTenants, type EngineDeps } from "@tahseel/reminders";
+import { dispatchDue, planAllTenants, purgeOldWebhookPayloads, type EngineDeps } from "@tahseel/reminders";
 
 /**
  * Worker processors (M2): the BullMQ ticks call the real reminder engine
@@ -31,4 +31,16 @@ export async function processDispatchTick(deps: TickDeps): Promise<{
     dryRun: deps.dryRun,
     at: now.toISOString(),
   };
+}
+
+/**
+ * M3/M6 maintenance tick (nightly): purge webhook/message raw payloads
+ * older than 90 days (tombstoned, not deleted, so dedupe keys survive).
+ */
+export async function processMaintenanceTick(deps: TickDeps): Promise<{
+  webhookEvents: number; messages: number; at: string;
+}> {
+  const now = deps.clock.now();
+  const purged = await purgeOldWebhookPayloads(deps.engine.owner);
+  return { ...purged, at: now.toISOString() };
 }

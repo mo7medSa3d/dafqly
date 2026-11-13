@@ -3,8 +3,10 @@
 *The agent maintains this file. Each item says what to do, what to expect, and who does it.*
 
 ## Environment
-- [ ] `docker compose up -d` starts Postgres, Redis, MinIO, Mailpit.
-- [ ] `pnpm db:migrate && pnpm db:seed && pnpm dev && pnpm worker` runs cleanly.
+- [ ] `docker compose up -d` starts Postgres, Redis, MinIO, Mailpit; confirm `minio-init` completes and the `tahseel-files` bucket has anonymous access disabled.
+- [ ] Configure S3/MinIO endpoint, region, bucket and dedicated access/secret keys; production must use HTTPS and non-default credentials.
+- [ ] `pnpm db:migrate` applies migration `0010_persisted_ai_conversations.sql`; verify both `ai_conversations` and `ai_messages` have RLS enabled.
+- [ ] `pnpm db:seed && pnpm dev && pnpm worker` runs cleanly.
 
 ## WhatsApp (needs real accounts)
 - [ ] Meta Business verification complete; test number connected.
@@ -16,9 +18,13 @@
 ## Payments (needs sandbox)
 - [ ] Create a payment link, pay it in the Paymob sandbox, webhook marks the invoice paid exactly once. *(Full scripted check: M3 checks below.)*
 
-## LLM
-- [ ] Run `pnpm eval` against the real eval data; paste metrics; compare with targets in the plan.
-- [ ] Check the monthly budget guard by setting a tiny budget and confirming calls are refused.
+## LLM / AI Agent
+- [ ] Set `AI_PROVIDER=gemini` with `GEMINI_API_KEY`, or `AI_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`. Production refuses to boot without a real AI credential; development can show an explicit deterministic fallback.
+- [ ] Gemini routing defaults: `AI_MODEL=gemini-3.8-flash` for multi-step Copilot reasoning, `GEMINI_MODEL_FAST=gemini-3.5-flash-lite` for routine text, and `GEMINI_MODEL_VISION=gemini-3.8-flash` for vision. Anthropic routing defaults: `LLM_MODEL_AGENT=claude-sonnet-5-5`, `LLM_MODEL_FAST=claude-haiku-5-5`, `LLM_MODEL_VISION=claude-sonnet-5-5`. Confirm model availability for the actual API account before rollout.
+- [ ] Open AI Copilot, ask a multi-step question about a debtor and confirm the model calls read-only tools, reports tool execution, and cites returned amounts/dates accurately. Start a second conversation, reload the page, and confirm thread history persists; verify user B cannot open user A's thread.
+- [ ] Run the real AI copywriter for a reminder and inbox reply; confirm the UI says `AI-written` only for model output that passes fact validation and otherwise says `Safe template`. Never send without user review.
+- [ ] Run `pnpm eval` against consented real eval data; paste metrics; compare with targets in the plan.
+- [ ] `AI_DAILY_TOKEN_LIMIT` is a rolling 24-hour Copilot preflight threshold, not an atomic hard cap; concurrent requests can exceed it slightly. OCR/classification/copywriting units are metered in `usage_ledger`, but no global USD spend enforcement or non-zero per-model cost estimate is implemented yet.
 
 ## Brand and fonts
 - [ ] Font permission answer recorded in DECISIONS.md.
@@ -29,6 +35,13 @@
 - [ ] Backup and restore test performed and timed.
 - [ ] Rollback procedure rehearsed.
 - [ ] Legal drafts reviewed by a lawyer (Terms, Privacy, consent wording, collection message wording).
+
+### Credential rotation (H6)
+- **App role (`tahseel_app`)**: the password in migration 0000 (`tahseel_app_dev`) is applied history — do NOT rewrite the migration. To rotate: `ALTER ROLE tahseel_app PASSWORD '<new>';` as the database owner, then update `APP_DATABASE_URL` in every deployment's `.env` and restart web + worker. The same password must never be reused for the owner role.
+- **Demo login**: set `DEMO_PASSWORD` in `.env` and re-seed with `RESET_SEED=1 pnpm db:seed` (the seed only creates the user when it does not exist, so a password change needs the reset). The e2e runner sets `DEMO_PASSWORD=demo-password-123` itself (root `test:e2e`).
+- **Compose passwords** (`POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`): change in `.env`, then `docker compose down -v && docker compose up -d` (the `-v` is required — the passwords are baked into the data volumes at first start).
+- **Session secret / phone pepper**: `SESSION_SECRET` and `PHONE_HASH_PEPPER` are load-bearing — rotating `SESSION_SECRET` signs everyone out; rotating the pepper invalidates every stored `phone_hash` (debtors must be re-hashed). Do not rotate either casually.
+- **Verification**: `scripts/check-secrets.mjs` (runs in `pnpm lint`) flags any new `PASSWORD '…'` literal in SQL migrations and any literal compose password; the only grandfathered value is migration 0000's `tahseel_app_dev`.
 
 ## M0 checks (added 2026-11-09)
 - [ ] On a machine WITH Docker: `docker compose up -d` → all four services healthy; `pnpm db:migrate && pnpm db:seed && pnpm dev` (terminal 1) and `pnpm worker` (terminal 2) run cleanly; sign in with the synthetic demo login `demo@tahseel.test` / `demo-password-123` and confirm the dashboard shows إجمالي المستحق 4,250.50. (The agent's VM has no Docker, so compose itself was not exercised — services ran natively at the same versions. CI validates the compose file with `docker compose config -q`.)
@@ -73,8 +86,7 @@ Everything automated is green with the FAKE provider + HMAC-signed webhook fixtu
 - [ ] Local-dev note (agent-learned, 2026-11-09): if you ever reset the dev database by dropping schema `public`, also drop schema `drizzle` (the migration journal) and re-grant `GRANT USAGE, CREATE ON SCHEMA public TO PUBLIC;` after recreating it — a hand-recreated `public` schema lacks the initdb grants and the app role then sees "relation does not exist" for every table.
 
 ## M4 checks (added 2026-11-09) — the live Anthropic run (M4 exit criterion's manual half)
-Everything automated is green with the deterministic FAKE provider on SYNTHETIC datasets (see PROGRESS "M4 done" for the measured numbers). No real Anthropic call has ever been made — there is no API key (HUMAN_INPUTS #5) and no real eval data (HUMAN_INPUTS #9). About 20 minutes once both exist:
-1. Create an Anthropic API key (console.anthropic.com) and set `ANTHROPIC_API_KEY` in `.env` (also confirm `LLM_MODEL_FAST` / `LLM_MODEL_VISION` name models your account can use). Restart web + worker. Nothing else changes: the provider seam (`aiDeps()` in `apps/web/src/server/engine.ts`) picks the real `AnthropicLlmProvider` automatically when a key is present, and the fake otherwise.
+The historical M4 automated evidence used the deterministic FAKE provider on SYNTHETIC datasets (see PROGRESS M4). No live provider call has been verified in this environment. Configure either Gemini or Anthropic as described in the current LLM section, confirm the model IDs are enabled for your account, then restart web + worker. `aiDeps()` selects the configured real provider; tests remain isolated on the FAKE provider unless `RUN_SANDBOX_TESTS=1` is explicitly enabled.
 2. Put real, consented eval data in `packages/eval/fixtures/private/` (real photographed ledger pages, real transfer receipts with gold extractions, real labelled debtor replies — anonymized). Run `pnpm eval` and compare against the plan targets (ledger amount ≥0.90 / name ≥0.85 / wrong-cell flag ≥0.90; receipts clean amount ≥0.95, zero false auto-confirms, duplicates 100%; replies intent ≥0.90, date ≥0.95, opt-out recall 1.0, zero injection violations). Paste the metrics into PROGRESS.md — these replace the synthetic numbers as the real evidence.
 3. Real ledger photo on a phone: photograph one page of a real paper ledger (messy handwriting, Eastern Arabic digits if you have them), upload it on the دفتر بالصور page, and check the review table: rows extracted, low-confidence cells highlighted, debtor suggestions sensible (suggestions only — nothing merges without your confirm). Fix a cell, press تأكيد الاستيراد, and confirm the invoices exist with the photo attached as evidence.
 4. Real receipt: upload a real InstaPay/bank receipt screenshot in the AI inbox for a debtor with a matching open invoice — expect a claim (or an auto-confirm ONLY if you enabled auto-close in tenant settings and every check passes at confidence ≥0.9). Upload the SAME image again: it must be caught as a duplicate and create no second payment.

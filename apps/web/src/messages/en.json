@@ -34,7 +34,8 @@
     "openInvoices": "Open invoices",
     "overdue": "Overdue",
     "title": "Overview",
-    "totalOutstanding": "Total outstanding"
+    "totalOutstanding": "Total outstanding",
+    "autoRefreshNote": "This page refreshes automatically when you come back to it, reflecting the latest recorded invoices and payments."
   },
   "onboarding": {
     "businessNameAr": "Business name (Arabic)",
@@ -64,6 +65,7 @@
     "ledgerPhoto": "Smart Scan",
     "aiInbox": "Inbox",
     "cheques": "Cheques",
+    "tasks": "Collection work",
     "billing": "Billing",
     "settings": "Settings"
   },
@@ -82,7 +84,8 @@
     "deleted": "Customer deleted",
     "saveFailed": "Could not save. Check the details (the phone may already exist).",
     "view": "View",
-    "optedOut": "Opted out of reminders"
+    "optedOut": "Opted out of reminders",
+    "sortLabel": "Sort customers"
   },
   "invoices": {
     "title": "Invoices",
@@ -117,7 +120,8 @@
       "8-30": "8-30 days",
       "31-60": "31-60 days",
       "60+": "60+ days"
-    }
+    },
+    "bulkTargetStatus": "New status for selected"
   },
   "payments": {
     "record": "Record payment",
@@ -156,10 +160,12 @@
     "rejected": "Rejected",
     "reversal": "Reversal",
     "reconciliation": "Gateway reconciliation",
+    "ledgerReconciliation": "Ledger reconciliation",
     "gatewayTotal": "Confirmed gateway total",
     "balanced": "Books balanced",
     "discrepancies": "Discrepancies need review",
-    "history": "Payment history"
+    "history": "Payment history",
+    "simulated": "SIMULATED — not a real payment"
   },
   "statements": {
     "title": "Customer statement",
@@ -229,7 +235,7 @@
     "failed": "The operation failed. Please try again.",
     "name": "Name",
     "phone": "Phone",
-    "amount": "Amount (EGP)",
+    "amount": "Amount",
     "date": "Date",
     "suggestion": "Suggested customer",
     "useSuggestion": "Use suggestion ({score}%)",
@@ -273,7 +279,7 @@
     "payable": "Payable",
     "number": "Cheque number",
     "bank": "Bank",
-    "amount": "Amount (EGP)",
+    "amount": "Amount",
     "issueDate": "Issue date",
     "dueDate": "Due date",
     "invoice": "Linked invoice (optional)",
@@ -333,7 +339,7 @@
     "plansTitle": "Plans",
     "currentPlan": "Current plan",
     "upgrade": "Upgrade",
-    "placeholderPrices": "Standard transparent pricing with continuous updates",
+    "placeholderPrices": "Prices shown are indicative — final pricing has not been decided yet",
     "perMonth": "messages/month"
   },
   "tenantData": {
@@ -384,5 +390,76 @@
     "entity": "Entity",
     "date": "Date",
     "noLogs": "No recent actions recorded"
+  },
+  "tasks": {
+    "title": "Collection workspace",
+    "subtitle": "Manage team tasks, promises to pay, and AI-proposed actions in one operational workspace."
+  },
+  "statementPortal": {
+    "secureStatementFrom": "Secure statement from",
+    "totalDue": "Total due",
+    "payTotal": "Pay the total now",
+    "invoices": "Invoices",
+    "noInvoices": "No invoices.",
+    "invoiceFallback": "Invoice",
+    "amount": "Amount",
+    "paid": "Paid",
+    "remaining": "Remaining",
+    "dueOn": "Due",
+    "payThisInvoice": "Pay this invoice",
+    "disputeInvoice": "Dispute this invoice",
+    "disputeReason": "Dispute reason",
+    "submitDispute": "Submit dispute",
+    "disputeRecorded": "A dispute has been recorded for this invoice and is under review.",
+    "promiseTitle": "Request a payment date",
+    "promiseHint": "You can propose an amount and a date. The request is not final until the business reviews it.",
+    "promiseInvoice": "Invoice",
+    "promiseAnyInvoice": "Apply to the open balance",
+    "promiseRemaining": "remaining",
+    "promiseAmount": "Proposed amount",
+    "promiseDate": "Proposed payment date",
+    "promiseNote": "Note (optional)",
+    "promiseNotePlaceholder": "Additional details",
+    "promiseSubmit": "Send payment-date request",
+    "promisesTitle": "Payment-date requests",
+    "paymentsTitle": "Payment history",
+    "noPayments": "No confirmed payments recorded yet.",
+    "securityBody": "A secure payment and review page. If you have any note about an invoice, send it here.",
+    "footer": "Secure statement page from {business} via Dafqly",
+    "payFailed": "Could not start payment right now. Please try again.",
+    "disputeOk": "Your dispute has been recorded and the invoice is under review.",
+    "disputeFailed": "Could not record the dispute. Please try again.",
+    "promiseInvalid": "Enter a valid amount for the payment-date request.",
+    "promiseOk": "Your payment-date request has been sent to the business and will show as pending until approved.",
+    "promiseFailed": "Could not send the payment-date request. Check the amount and date and try again.",
+    "rateLimitedTitle": "Too many requests",
+    "rateLimitedBody": "Please try again shortly.",
+    "notFoundTitle": "Invalid link",
+    "notFoundBody": "This link is invalid or expired. Contact the business for a new one.",
+    "status": {
+      "open": "Open",
+      "partially_paid": "Partially paid",
+      "paid": "Paid",
+      "disputed": "Disputed",
+      "written_off": "Written off",
+      "cancelled": "Cancelled",
+      "confirmed": "Confirmed",
+      "claimed": "Pending confirmation"
+    },
+    "method": {
+      "cash": "Cash",
+      "instapay": "InstaPay",
+      "bank": "Bank transfer",
+      "wallet": "Wallet",
+      "cheque": "Cheque",
+      "gateway": "Online payment",
+      "other": "Other"
+    },
+    "promiseStatus": {
+      "pending": "Pending review",
+      "accepted": "Date approved",
+      "kept": "Kept",
+      "broken": "Missed"
+    }
   }
 }

@@ -2,13 +2,15 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { ownerDb, appDb } from "./db";
-import { user as userTable, tenants, statementLinks, disputes, reminders } from "@tahseel/db/schema";
+import { user as userTable, tenants, statementLinks, disputes, reminders, auditLog } from "@tahseel/db/schema";
 import { createTenantForUser } from "./services";
 import { createDebtor, createInvoice, recordPayment } from "./ledger";
 import {
   createStatementLink, listStatementLinks, revokeStatementLink,
   getStatementData, raiseStatementDispute, listDisputes, resolveStatementDispute,
+  createPublicPromiseRequest,
 } from "./statements";
+import { listPromisesToPay } from "./workflows";
 
 /**
  * F10 acceptance at the service layer (real Postgres + RLS): hash-only token
@@ -78,6 +80,26 @@ d("F10 statement links and disputes (service layer)", () => {
     expect(row!.lastViewedAt).not.toBeNull();
   });
 
+  it("customer portal promise requests stay pending and use the tenant-local calendar date", async () => {
+    const debtor = await createDebtor(app(), tenantId, user.id, { displayName: "طلب وعد سداد", phone: "01066665555" });
+    const invoice = await createInvoice(app(), tenantId, user.id, {
+      debtorId: debtor.id, amount: "100.00", issuedOn: "2026-11-01", dueOn: "2026-11-20",
+    });
+    // At 23:30 UTC the tenant's Africa/Cairo date is already the next day.
+    const lateNow = new Date("2026-11-09T23:30:00.000Z");
+    const link = await createStatementLink(app(), tenantId, user.id, debtor.id, lateNow);
+    await expect(createPublicPromiseRequest(app(), owner(), link.token, {
+      invoiceId: invoice.id, amountMinor: "2500", promisedOn: "2026-11-09",
+    }, lateNow)).rejects.toMatchObject({ code: "BAD_PROMISE_DATE" });
+
+    const request = await createPublicPromiseRequest(app(), owner(), link.token, {
+      invoiceId: invoice.id, amountMinor: "2500", promisedOn: "2026-11-10", note: "سأسدد يوم الثلاثاء",
+    }, lateNow);
+    expect(request.status).toBe("pending");
+    const rows = await listPromisesToPay(app(), tenantId, "2026-11-10");
+    expect(rows.find((row) => row.id === request.id)).toMatchObject({ status: "pending", amountMinor: "2500", source: "customer_portal" });
+  });
+
   it("unknown, expired and revoked tokens are indistinguishable: all return no data", async () => {
     const debtor = await createDebtor(app(), tenantId, user.id, { displayName: "انتهاء وإلغاء", phone: "01066663333" });
     await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "100.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
@@ -142,8 +164,60 @@ d("F10 statement links and disputes (service layer)", () => {
     expect(afterResolve!.openDisputes).toHaveLength(0);
   });
 
+  it("M9: one open dispute per invoice, three open per debtor, audit actor is the statement link", async () => {
+    const debtor = await createDebtor(app(), tenantId, user.id, { displayName: "كثير النزاعات", phone: "01066660000" });
+    const invs = [];
+    for (let i = 0; i < 4; i++) {
+      invs.push(await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "10.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" }));
+    }
+    const link = await createStatementLink(app(), tenantId, user.id, debtor.id, now);
+    const out = await raiseStatementDispute(app(), owner(), link.token, { invoiceId: invs[0]!.id, reason: "الأولى" }, new Date());
+    // The dispute audit is attributed to the statement link, not a bare literal.
+    const audits = await owner().select().from(auditLog).where(eq(auditLog.entityId, out.disputeId));
+    expect(audits.find((r) => r.action === "dispute.raised")?.actorUserId).toBe(`statement:${link.id}`);
+    // Second dispute on the same invoice: the invoice is already disputed.
+    await expect(raiseStatementDispute(app(), owner(), link.token, { invoiceId: invs[0]!.id, reason: "مرة أخرى" }, new Date()))
+      .rejects.toMatchObject({ code: "INVALID_STATE" });
+    // An open dispute row without the transition (legacy/inconsistent state) → explicit cap error.
+    await owner().insert(disputes).values({
+      tenantId, invoiceId: invs[1]!.id, debtorId: debtor.id, raisedBy: "debtor", reason: "يدوي", status: "open",
+    });
+    await expect(raiseStatementDispute(app(), owner(), link.token, { invoiceId: invs[1]!.id, reason: "مكرر" }, new Date()))
+      .rejects.toMatchObject({ code: "DISPUTE_ALREADY_OPEN", status: 409 });
+    // Three open disputes (inv0 real + inv1 manual + inv2 real) → the 4th is capped.
+    await raiseStatementDispute(app(), owner(), link.token, { invoiceId: invs[2]!.id, reason: "الثالثة" }, new Date());
+    await expect(raiseStatementDispute(app(), owner(), link.token, { invoiceId: invs[3]!.id, reason: "الرابعة" }, new Date()))
+      .rejects.toMatchObject({ code: "DISPUTE_LIMIT", status: 429 });
+  });
+
+  it("M9: resolving a dispute twice is an idempotent replay; a different resolution is a 409", async () => {
+    const debtor = await createDebtor(app(), tenantId, user.id, { displayName: "إعادة حل", phone: "01066669999" });
+    const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "40.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
+    const link = await createStatementLink(app(), tenantId, user.id, debtor.id, now);
+    const out = await raiseStatementDispute(app(), owner(), link.token, { invoiceId: inv.id, reason: "مبلغ خاطئ" }, new Date());
+    const first = await resolveStatementDispute(app(), tenantId, user.id, { disputeId: out.disputeId, resolution: "reopen_invoice" });
+    expect(first.invoiceStatus).toBe("open");
+    expect(first.replayed).toBe(false);
+    const resolvedRows = () => owner().select().from(auditLog)
+      .where(eq(auditLog.entityId, out.disputeId));
+    expect((await resolvedRows()).filter((r) => r.action === "dispute.resolved")).toHaveLength(1);
+    // Same resolution again: the existing outcome, no second audit row.
+    const replay = await resolveStatementDispute(app(), tenantId, user.id, { disputeId: out.disputeId, resolution: "reopen_invoice" });
+    expect(replay.invoiceStatus).toBe("open");
+    expect(replay.replayed).toBe(true);
+    expect((await resolvedRows()).filter((r) => r.action === "dispute.resolved")).toHaveLength(1);
+    // A different resolution must not silently report the other outcome.
+    await expect(resolveStatementDispute(app(), tenantId, user.id, { disputeId: out.disputeId, resolution: "cancel_invoice" }))
+      .rejects.toMatchObject({ code: "DISPUTE_RESOLUTION_MISMATCH", status: 409 });
+    expect((await resolvedRows()).filter((r) => r.action === "dispute.resolved")).toHaveLength(1);
+    const [row] = await owner().select().from(disputes).where(eq(disputes.id, out.disputeId));
+    expect(row?.resolution).toBe("reopen_invoice");
+  });
+
   it("a token cannot dispute another debtor's invoice (generic NOT_FOUND)", async () => {
-    const a = await createDebtor(app(), tenantId, user.id, { displayName: "أ", phone: "01066665555" });
+    // Phone must be unique in this tenant: 01066665555 is already used by
+    // the "طلب وعد سداد" debtor created earlier in this file.
+    const a = await createDebtor(app(), tenantId, user.id, { displayName: "أ", phone: "01066667777" });
     const b = await createDebtor(app(), tenantId, user.id, { displayName: "ب", phone: "01066666666" });
     const invB = await createInvoice(app(), tenantId, user.id, { debtorId: b.id, amount: "50.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
     const linkA = await createStatementLink(app(), tenantId, user.id, a.id, now);

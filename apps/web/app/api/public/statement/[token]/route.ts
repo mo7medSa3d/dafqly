@@ -1,6 +1,6 @@
 import { AppError, toApiErrorBody } from "@tahseel/core";
 import { appDb, ownerDb } from "@/server/db";
-import { rateLimit } from "@/server/rate-limit";
+import { clientIp, rateLimit } from "@/server/rate-limit";
 import { getStatementData } from "@/server/statements";
 
 /**
@@ -16,8 +16,9 @@ const GENERIC_404 = () =>
 
 export async function GET(req: Request, { params }: { params: Promise<{ token: string }> }): Promise<Response> {
   const { token } = await params;
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
-  const limit = rateLimit(`statement:get:${ip}`, { limit: 60, windowSeconds: 60 });
+  const ip = clientIp(req.headers);
+  // L8: the page and the API share one read bucket (statement:read:<ip>).
+  const limit = rateLimit(`statement:read:${ip}`, { limit: 60, windowSeconds: 60 });
   if (!limit.allowed) {
     return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), {
       status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds), "X-Robots-Tag": "noindex, nofollow" },

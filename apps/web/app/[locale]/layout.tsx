@@ -84,6 +84,11 @@ export default async function LocaleLayout({
       suppressHydrationWarning
     >
       <head>
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `html,body,*,*::before,*::after{scrollbar-width:none!important;-ms-overflow-style:none!important;}::-webkit-scrollbar,*::-webkit-scrollbar{display:none!important;width:0!important;height:0!important;background:transparent!important;}::-webkit-scrollbar-track,*::-webkit-scrollbar-track,::-webkit-scrollbar-thumb,*::-webkit-scrollbar-thumb,::-webkit-scrollbar-corner,*::-webkit-scrollbar-corner,::-webkit-scrollbar-button,*::-webkit-scrollbar-button{display:none!important;width:0!important;height:0!important;background:transparent!important;}`,
+          }}
+        />
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var m=document.cookie.match(/(?:^|; )dafqly-theme=([^;]*)/);var c=m?m[1]:null;var t=c||localStorage.getItem("dafqly-theme")||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=t;if(!c||c!==t){document.cookie="dafqly-theme="+t+";path=/;max-age=31536000;SameSite=Lax";}}catch(e){}})();`,

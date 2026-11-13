@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull, lt } from "drizzle-orm";
 import { debtors, messages, reminders, webhookEvents, withTenant, type Db } from "@tahseel/db";
 import { canAdvanceMessageStatus, isOptOutText, type ProviderMessageStatus } from "@tahseel/core";
 import { applyOptOut, type EngineDeps } from "./engine";
@@ -23,14 +23,14 @@ export type WebhookEvent =
   | { kind: "inbound"; dedupeKey: string; waId: string; providerMessageId: string; at: Date; text: string | null; mediaId: string | null; mediaMime: string | null }
   | { kind: "status"; dedupeKey: string; providerMessageId: string; status: ProviderMessageStatus; errorCode: number | null; at: Date };
 
-interface WaStatus { id?: string; status?: string; timestamp?: string; errors?: { code?: number }[] }
+interface WaStatus { id?: string; status?: string; timestamp?: string; recipient_id?: string; errors?: { code?: number }[] }
 interface WaMessage {
   from?: string; id?: string; timestamp?: string; type?: string;
   text?: { body?: string }; image?: { id?: string; mime_type?: string };
   video?: { id?: string; mime_type?: string }; audio?: { id?: string; mime_type?: string };
   document?: { id?: string; mime_type?: string };
 }
-interface WaValue { messages?: WaMessage[]; statuses?: WaStatus[] }
+interface WaValue { messages?: WaMessage[]; statuses?: WaStatus[]; contacts?: { wa_id?: string }[] }
 interface WaPayload { entry?: { changes?: { value?: WaValue }[] }[] }
 
 const STATUS_MAP: Record<string, ProviderMessageStatus> = {
@@ -74,18 +74,73 @@ export function parseWebhookPayload(payload: unknown): WebhookEvent[] {
   return events;
 }
 
-/** Persist the raw payload's events in the inbox (owner connection). Returns how many were NEW. */
+/**
+ * M6: strip PII from a Meta webhook payload before it is stored. The typed
+ * events (ids, statuses, error codes) are what processing and replay need;
+ * the sender's phone number and the message body text are never persisted.
+ * Returns a deep copy — the caller's payload is untouched.
+ */
+export function redactWebhookPayload(payload: unknown): unknown {
+  let copy: unknown;
+  try {
+    copy = JSON.parse(JSON.stringify(payload ?? null)) as unknown;
+  } catch {
+    return { redacted: true };
+  }
+  const p = copy as WaPayload & Record<string, unknown>;
+  for (const entry of p.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      const value = change.value ?? {};
+      for (const m of value.messages ?? []) {
+        if (m.from !== undefined) m.from = "[redacted]";
+        if (m.text?.body !== undefined) m.text.body = "[redacted]";
+      }
+      // The phone also appears as the contact's wa_id and the status
+      // recipient_id — both are identifiers, not processing inputs.
+      for (const c of value.contacts ?? []) {
+        if (c.wa_id !== undefined) c.wa_id = "[redacted]";
+      }
+      for (const s of value.statuses ?? []) {
+        if (s.recipient_id !== undefined) s.recipient_id = "[redacted]";
+      }
+    }
+  }
+  return copy;
+}
+
+/** Persist the payload's events in the inbox (owner connection). Returns how many were NEW. */
 export async function persistWebhookEvents(owner: Db, payload: unknown): Promise<{ inserted: number; events: WebhookEvent[] }> {
   const events = parseWebhookPayload(payload);
+  // M6: store the redacted payload — processing uses the parsed events.
+  const stored = redactWebhookPayload(payload) as Record<string, unknown>;
   let inserted = 0;
   for (const event of events) {
     const rows = await owner.insert(webhookEvents)
-      .values({ provider: "whatsapp", dedupeKey: event.dedupeKey, payload: payload as Record<string, unknown> })
+      .values({ provider: "whatsapp", dedupeKey: event.dedupeKey, payload: stored })
       .onConflictDoNothing()
       .returning();
     inserted += rows.length;
   }
   return { inserted, events };
+}
+
+/**
+ * M3/M6 retention purge (90 days by default, per the privacy draft): old
+ * webhook payloads are replaced by a tombstone (the row + dedupeKey stay,
+ * so at-least-once redelivery still dedupes) and old message raw payloads
+ * are dropped. Run nightly from the worker maintenance tick.
+ */
+export async function purgeOldWebhookPayloads(owner: Db, olderThanDays = 90): Promise<{ webhookEvents: number; messages: number }> {
+  const cutoff = new Date(Date.now() - olderThanDays * 86_400_000);
+  const events = await owner.update(webhookEvents)
+    .set({ payload: { redacted: true } })
+    .where(lt(webhookEvents.receivedAt, cutoff))
+    .returning({ id: webhookEvents.id });
+  const msgs = await owner.update(messages)
+    .set({ raw: null })
+    .where(and(lt(messages.createdAt, cutoff), isNotNull(messages.raw)))
+    .returning({ id: messages.id });
+  return { webhookEvents: events.length, messages: msgs.length };
 }
 
 export interface ProcessSummary { inboundStored: number; optOutsApplied: number; statusesApplied: number; statusesIgnored: number; unknown: number }

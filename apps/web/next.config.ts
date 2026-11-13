@@ -47,7 +47,7 @@ const nextConfig: NextConfig = {
   compress: true,
   reactStrictMode: true,
   transpilePackages: ["@tahseel/core", "@tahseel/db", "@tahseel/brand"],
-  serverExternalPackages: ["argon2", "postgres"],
+  serverExternalPackages: ["argon2", "postgres", "better-auth"],
   experimental: {
     optimizePackageImports: ["@phosphor-icons/react"],
   },

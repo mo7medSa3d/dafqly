@@ -1,15 +1,18 @@
 # Local development infrastructure (BUILD_PLAN §3): Postgres, Redis, MinIO,
 # Mailpit. The web and worker apps run on the host via pnpm (dev / worker).
 # Start: docker compose up -d
+# L4/H6: every port binds loopback only (never 0.0.0.0), and every password
+# comes from the gitignored .env (see .env.example) — compose refuses to
+# start without them, so no default credential can reach a shared network.
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: tahseel
-      POSTGRES_PASSWORD: tahseel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env — see .env.example}
       POSTGRES_DB: tahseel
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -21,7 +24,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -34,11 +37,11 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env — see .env.example}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - miniodata:/data
     healthcheck:
@@ -47,11 +50,26 @@ services:
       timeout: 3s
       retries: 10
 
+  minio-init:
+    image: minio/mc:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command: >-
+      until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 2; done;
+      mc mb --ignore-existing local/tahseel-files;
+      mc anonymous set none local/tahseel-files
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env — see .env.example}
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+
   mailpit:
     image: axllent/mailpit:latest
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
 
 volumes:
   pgdata:

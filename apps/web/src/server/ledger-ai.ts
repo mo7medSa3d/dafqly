@@ -4,11 +4,13 @@ import {
   AppError, MAX_LEDGER_PAGES, normalizeEgPhone, normalizeLedgerRowDigits, parseEgp,
   resolveDueOn, suggestDebtorByName,
 } from "@tahseel/core";
+import { decodeBase64Upload, MAX_UPLOAD_BASE64_CHARS } from "@tahseel/core/files-crypto";
 import { auditLog, debtors, importJobs, importRows, invoices, tenants, usageLedger } from "@tahseel/db/schema";
 import { withTenant, type Db } from "@tahseel/db";
 import type { OcrLlmProvider, StorageProvider } from "@tahseel/providers";
 import { storeUpload, getFileBytes } from "./files";
 import { hashPhone } from "./services";
+import { nextInvoiceReference } from "./ledger";
 import { replanTenantLater } from "./engine";
 
 /**
@@ -67,7 +69,7 @@ export const createLedgerJobInput = z.object({
   uploads: z.array(z.object({
     fileName: z.string().trim().min(1).max(200),
     mime: z.string().trim().min(3).max(80),
-    contentBase64: z.string().min(4),
+    contentBase64: z.string().min(4).max(MAX_UPLOAD_BASE64_CHARS),
   })).min(1).max(MAX_LEDGER_PAGES),
 });
 export type CreateLedgerJobInput = z.infer<typeof createLedgerJobInput>;
@@ -80,7 +82,7 @@ export async function createLedgerJob(
   }
   const fileIds: string[] = [];
   for (const upload of input.uploads) {
-    const bytes = new Uint8Array(Buffer.from(upload.contentBase64, "base64"));
+    const bytes = decodeBase64Upload(upload.contentBase64);
     const file = await storeUpload(app, ai.storage, tenantId, actor, { bytes, mime: upload.mime, kind: "ledger_page" });
     fileIds.push(file.id);
   }
@@ -263,6 +265,9 @@ export async function updateLedgerRow(
       }
     }
     if (input.amount !== undefined) {
+      // F-06: the ledger-photo import is EGP-denominated by design —
+      // committed invoices are created with currency "EGP" — so the EGP
+      // parse here is correct, not a leftover.
       try { data.amountMinor = parseEgp(input.amount).toString(); }
       catch { throw new AppError("INVALID_AMOUNT", "Amount is not a readable EGP amount", 400); }
     }
@@ -325,8 +330,11 @@ export async function commitLedgerJob(
       }
       if (data.phoneE164) debtorByPhone.set(data.phoneE164, debtorId);
       const issuedOn = data.date ?? today;
+      // H05: generated references come from the single per-tenant sequence —
+      // a per-job 1001+ counter collided with invoices created elsewhere.
+      const reference = await nextInvoiceReference(tx, tenantId, issuedOn.slice(0, 4));
       const [invoice] = await tx.insert(invoices).values({
-        tenantId, debtorId, reference: `INV-${issuedOn.slice(0, 4)}-${1001 + createdInvoices}`, description: data.note,
+        tenantId, debtorId, reference, description: data.note,
         amountMinor: BigInt(data.amountMinor), currency: "EGP", issuedOn,
         dueOn: resolveDueOn(issuedOn, null, terms),
         status: "open", source: "ledger_photo", importJobId: jobId,

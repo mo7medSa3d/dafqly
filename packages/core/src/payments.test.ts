@@ -4,7 +4,7 @@ import {
 } from "./payments-crypto";
 import {
   parsePaymobCallback, decideGatewayCallback,
-  planReversalAllocations, reconcileGateway,
+  planReversalAllocations, reconcileGateway, reconcileLedger, redactPaymobPayload,
   statementLinkState, outstandingForLink, STATEMENT_DEFAULT_EXPIRY_DAYS,
 } from "./payments";
 
@@ -57,6 +57,31 @@ describe("parsePaymobCallback", () => {
     expect(() => parsePaymobCallback(null)).toThrow();
     expect(() => parsePaymobCallback({})).toThrow();
     expect(() => parsePaymobCallback({ obj: { id: "x" } })).toThrow();
+  });
+
+  // M8: exact amounts + required decision booleans.
+  it("parses amount_cents given as a string above 2^53 exactly", () => {
+    const cb = parsePaymobCallback(payload({ amount_cents: "9007199254740993" }));
+    expect(cb.amountMinor).toBe(9007199254740993n);
+  });
+  it("rejects a non-safe-integer number amount_cents", () => {
+    // One past the safe-integer range cannot be represented exactly as a
+    // JS number; the schema must refuse it rather than silently
+    // truncating before BigInt(). (Written as an expression, not a
+    // literal: the literal itself would lose precision at parse time.)
+    expect(() => parsePaymobCallback(payload({ amount_cents: Number.MAX_SAFE_INTEGER + 1 }))).toThrow();
+    expect(() => parsePaymobCallback(payload({ amount_cents: -5 }))).toThrow();
+    expect(() => parsePaymobCallback(payload({ amount_cents: "10.5" }))).toThrow();
+  });
+  it("rejects a callback that omits any decision-critical boolean", () => {
+    for (const key of ["success", "pending", "is_auth", "is_capture", "is_refunded", "is_voided", "error_occured"] as const) {
+      const { [key]: _omitted, ...rest } = TXN;
+      expect(() => parsePaymobCallback({ type: "TRANSACTION", obj: rest }), `missing ${key}`).toThrow();
+    }
+    // Non-decision flags may still default (a genuine callback carries them,
+    // but their absence cannot change fulfil vs reverse).
+    const { has_parent_transaction: _h, is_3d_secure: _s, is_standalone_payment: _p, ...rest } = TXN;
+    expect(parsePaymobCallback({ type: "TRANSACTION", obj: rest }).success).toBe(true);
   });
 });
 
@@ -152,6 +177,92 @@ describe("reconcileGateway (report total == sum of confirmed gateway payments)",
   });
 });
 
+describe("reconcileLedger (M01: invoice paid == confirmed allocations, replay == stored credit)", () => {
+  // p1 20000 over two invoices leaves 4000 credit; p2 pays 2000 and
+  // allocates 6000, consuming that credit — replay ends at 0.
+  const debtor = { id: "d1", creditMinor: 0n, creditCurrency: "EGP" };
+  const clean = () => reconcileLedger(
+    [
+      { id: "i1", paidMinor: 10000n },
+      { id: "i2", paidMinor: 12000n },
+    ],
+    [
+      { id: "p1", debtorId: "d1", amountMinor: 20000n, currency: "EGP", status: "confirmed", createdAt: "2026-11-01T10:00:00Z" },
+      { id: "p2", debtorId: "d1", amountMinor: 2000n, currency: "EGP", status: "confirmed", createdAt: "2026-11-02T10:00:00Z" },
+      { id: "p3", debtorId: "d1", amountMinor: 3000n, currency: "EGP", status: "claimed", createdAt: "2026-11-03T10:00:00Z" },
+    ],
+    [
+      { paymentId: "p1", invoiceId: "i1", amountMinor: 10000n },
+      { paymentId: "p1", invoiceId: "i2", amountMinor: 6000n },
+      { paymentId: "p2", invoiceId: "i2", amountMinor: 6000n },
+    ],
+    [debtor],
+  );
+  it("a clean book balances: credit consumption is not over-allocation", () => {
+    const r = clean();
+    expect(r.balanced).toBe(true);
+    expect(r.discrepancies).toEqual([]);
+    expect(r.byCurrency).toEqual([{ currency: "EGP", confirmedPaymentsMinor: 22000n, allocatedMinor: 22000n, storedCreditMinor: 0n }]);
+  });
+  it("flags an invoice whose paidMinor drifted from its allocations", () => {
+    const r = reconcileLedger(
+      [{ id: "i1", paidMinor: 9999n }],
+      [{ id: "p1", debtorId: "d1", amountMinor: 10000n, currency: "EGP", status: "confirmed", createdAt: "2026-11-01T10:00:00Z" }],
+      [{ paymentId: "p1", invoiceId: "i1", amountMinor: 10000n }],
+      [{ id: "d1", creditMinor: 0n, creditCurrency: "EGP" }],
+    );
+    expect(r.balanced).toBe(false);
+    expect(r.discrepancies).toEqual([expect.objectContaining({ kind: "invoice_paid_mismatch", id: "i1" })]);
+  });
+  it("flags a payment allocated beyond amount + available credit", () => {
+    const r = reconcileLedger(
+      [{ id: "i1", paidMinor: 11000n }],
+      [{ id: "p1", debtorId: "d1", amountMinor: 10000n, currency: "EGP", status: "confirmed", createdAt: "2026-11-01T10:00:00Z" }],
+      [{ paymentId: "p1", invoiceId: "i1", amountMinor: 11000n }],
+      [{ id: "d1", creditMinor: 0n, creditCurrency: "EGP" }],
+    );
+    expect(r.discrepancies.map((d) => d.kind)).toContain("payment_over_allocated");
+  });
+  it("flags stored credit that does not match the replay", () => {
+    const r = reconcileLedger(
+      [{ id: "i1", paidMinor: 10000n }],
+      [{ id: "p1", debtorId: "d1", amountMinor: 20000n, currency: "EGP", status: "confirmed", createdAt: "2026-11-01T10:00:00Z" }],
+      [{ paymentId: "p1", invoiceId: "i1", amountMinor: 10000n }],
+      [{ id: "d1", creditMinor: 9999n, creditCurrency: "EGP" }],
+    );
+    expect(r.discrepancies).toEqual([expect.objectContaining({ kind: "currency_imbalance", id: "d1" })]);
+  });
+  it("flags a remainder in a non-credit currency as unattributed", () => {
+    const r = reconcileLedger(
+      [{ id: "i1", paidMinor: 6000n }],
+      [
+        // p0 created the 5000 EGP credit; p1's 4000 USD remainder has
+        // nowhere to go — the debtor's credit tag is EGP.
+        { id: "p0", debtorId: "d1", amountMinor: 5000n, currency: "EGP", status: "confirmed", createdAt: "2026-10-01T10:00:00Z" },
+        { id: "p1", debtorId: "d1", amountMinor: 10000n, currency: "USD", status: "confirmed", createdAt: "2026-11-01T10:00:00Z" },
+      ],
+      [{ paymentId: "p1", invoiceId: "i1", amountMinor: 6000n }],
+      [{ id: "d1", creditMinor: 5000n, creditCurrency: "EGP" }],
+    );
+    expect(r.discrepancies).toEqual([expect.objectContaining({ kind: "unattributed_remainder", id: "d1" })]);
+  });
+  it("a reversal that un-allocates more than it reverses is over-allocation", () => {
+    const r = reconcileLedger(
+      [{ id: "i1", paidMinor: -1000n }],
+      [
+        { id: "p1", debtorId: "d1", amountMinor: 10000n, currency: "EGP", status: "confirmed", createdAt: "2026-11-01T10:00:00Z" },
+        { id: "p2", debtorId: "d1", amountMinor: -5000n, currency: "EGP", status: "confirmed", createdAt: "2026-11-02T10:00:00Z" },
+      ],
+      [
+        { paymentId: "p1", invoiceId: "i1", amountMinor: 10000n },
+        { paymentId: "p2", invoiceId: "i1", amountMinor: -11000n },
+      ],
+      [{ id: "d1", creditMinor: 6000n, creditCurrency: "EGP" }],
+    );
+    expect(r.discrepancies.map((d) => d.kind)).toContain("payment_over_allocated");
+  });
+});
+
 describe("statement tokens (F10: 32 random bytes, hash-only storage)", () => {
   it("generates unique 43-char base64url tokens whose hash is stored", () => {
     const a = generateStatementToken();
@@ -186,5 +297,27 @@ describe("outstandingForLink (server-side pricing from the ledger)", () => {
   });
   it("debtor-total link sums open + partially paid, never disputed/paid", () => {
     expect(outstandingForLink(invs, null)).toBe(10500n);
+  });
+});
+
+describe("redactPaymobPayload (M3)", () => {
+  it("drops source_data (masked PAN) + card, keeps the fulfilment fields, leaves the input untouched", () => {
+    const payload = {
+      type: "TRANSACTION",
+      obj: {
+        id: 123, amount_cents: 50000, currency: "EGP", success: true,
+        source_data: { type: "card", pan: "512345******6789", sub_type: "MasterCard" },
+        card: { last4: "6789" },
+        order: { merchant_order_id: "link-1" },
+      },
+    };
+    const redacted = redactPaymobPayload(payload) as typeof payload;
+    const json = JSON.stringify(redacted);
+    expect(json).not.toContain("512345");
+    expect(json).not.toContain("source_data");
+    expect(json).not.toContain("6789");
+    expect(redacted.obj.amount_cents).toBe(50000);
+    expect(redacted.obj.order.merchant_order_id).toBe("link-1");
+    expect(JSON.stringify(payload)).toContain("512345"); // input untouched
   });
 });

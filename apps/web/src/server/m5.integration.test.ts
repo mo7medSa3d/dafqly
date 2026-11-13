@@ -5,11 +5,11 @@ import { ownerDb, appDb } from "./db";
 import { user as userTable, tenants, payments, usageLedger, reminders } from "@tahseel/db/schema";
 import { withTenant } from "@tahseel/db";
 import { createTenantForUser } from "./services";
-import { createDebtor, createInvoice, recordPayment, getDebtorDetail } from "./ledger";
+import { createDebtor, createInvoice, recordPayment, getDebtorDetail, transitionInvoice } from "./ledger";
 import { registerCheque, transitionCheque, listCheques, runChequeAlerts, listChequeAlerts } from "./cheques";
 import { confirmClaimedPayment } from "./gateway";
 import { getQuotaStatus, changePlan, generateSubscriptionInvoices, listSubscriptionInvoices } from "./billing";
-import { getKpis, getForecast, exportDebtorsCsv } from "./reports";
+import { getKpis, getKpisReference, getForecast, loadCollectedByInvoice, exportDebtorsCsv } from "./reports";
 import { FakePaymentProvider, FakeMessagingProvider } from "@tahseel/providers";
 import { dispatchDue, planForInvoice, quotaExceededFromDb, type EngineDeps } from "@tahseel/reminders";
 import { addDaysIso, localDateOf } from "@tahseel/core";
@@ -149,6 +149,34 @@ d("M5 services (F9/F11/F12/F13)", () => {
     expect(csv.csv).not.toContain("عميل الشيكات");
   });
 
+  it("M03: a June payment refunded in July keeps June's collected and shows July's refund", async () => {
+    const debtor = await createDebtor(app(), tenantB, user.id, { displayName: "عميل الاسترداد", phone: "01099998888" });
+    const june = await getKpis(app(), tenantB, "2026-06-15");
+    const july = await getKpis(app(), tenantB, "2026-07-15");
+    await withTenant(app(), tenantB, async (tx) => {
+      await tx.insert(payments).values([
+        { id: randomUUID().replace(/-/g, ""), tenantId: tenantB, debtorId: debtor.id, amountMinor: 10000n, currency: "EGP", method: "cash", receivedOn: "2026-06-28", status: "confirmed", source: "manual" },
+        { id: randomUUID().replace(/-/g, ""), tenantId: tenantB, debtorId: debtor.id, amountMinor: -10000n, currency: "EGP", method: "cash", receivedOn: "2026-07-02", status: "confirmed", source: "manual" },
+      ]);
+    });
+    // June is untouched by the July refund: collected 10000, refunded 0.
+    const juneAfter = await getKpis(app(), tenantB, "2026-06-15");
+    expect(juneAfter.collectedInMonthMinor - june.collectedInMonthMinor).toBe(10000);
+    expect(juneAfter.refundedInMonthMinor - (june.refundedInMonthMinor ?? 0)).toBe(0);
+    // July does not look like a bad collections month: collected 0 and
+    // refunded 10000 as its own line, with a 0 (never negative) rate.
+    const julyAfter = await getKpis(app(), tenantB, "2026-07-15");
+    expect(julyAfter.collectedInMonthMinor - july.collectedInMonthMinor).toBe(0);
+    expect(julyAfter.refundedInMonthMinor - (july.refundedInMonthMinor ?? 0)).toBe(10000);
+    // The in-memory reference path agrees number-for-number.
+    const refJune = await getKpisReference(app(), tenantB, "2026-06-15");
+    const refJuly = await getKpisReference(app(), tenantB, "2026-07-15");
+    expect(refJune.collectedInMonthMinor - june.collectedInMonthMinor).toBe(10000);
+    expect(refJune.refundedInMonthMinor - (june.refundedInMonthMinor ?? 0)).toBe(0);
+    expect(refJuly.collectedInMonthMinor - july.collectedInMonthMinor).toBe(0);
+    expect(refJuly.refundedInMonthMinor - (july.refundedInMonthMinor ?? 0)).toBe(10000);
+  });
+
   it("F12 forecast service: not-enough-data under 10 paid invoices, a real forecast at 10", async () => {
     const debtorB2 = await createDebtor(app(), tenantB, user.id, { displayName: "عميل التوقع", phone: "01055554444" });
     // 9 paid invoices: still not enough.
@@ -168,6 +196,28 @@ d("M5 services (F9/F11/F12/F13)", () => {
     // 70000 for the new open invoice + 20000 for the F11 fixture's still-open
     // invoice in the same tenant — both land inside the 8-week horizon.
     expect(f.weeks.reduce((s, w) => s + w.expectedMinor, 0)).toBe(90000);
+  });
+
+  it("M04: forecast is single-currency, reports beyond-horizon, and trains on collected sums", async () => {
+    const before = await getForecast(app(), tenantB, today);
+    expect(before.enoughData).toBe(true);
+    expect(before.currency).toBe("EGP");
+    const weeksBefore = before.weeks.reduce((s, w) => s + w.expectedMinor, 0);
+    const debtor = await createDebtor(app(), tenantB, user.id, { displayName: "عميل التوقع ٢", phone: "01055557777" });
+    // A USD open invoice must not move the EGP forecast at all (F02).
+    await createInvoice(app(), tenantB, user.id, { debtorId: debtor.id, amount: "1000", currency: "USD", issuedOn: today, dueOn: addDaysIso(today, 2) });
+    // An EGP open invoice due 70 days out lands past the 8-week horizon.
+    await createInvoice(app(), tenantB, user.id, { debtorId: debtor.id, amount: "420", issuedOn: today, dueOn: addDaysIso(today, 70) });
+    const after = await getForecast(app(), tenantB, today);
+    expect(after.weeks.reduce((s, w) => s + w.expectedMinor, 0)).toBe(weeksBefore);
+    expect(after.beyondHorizon.expectedMinor - before.beyondHorizon.expectedMinor).toBe(42000);
+    expect(after.beyondHorizon.conservativeMinor - before.beyondHorizon.conservativeMinor).toBe(42000);
+    // A paid invoice with only part collected trains on the collected sum.
+    const partial = await createInvoice(app(), tenantB, user.id, { debtorId: debtor.id, amount: "100", issuedOn: addDaysIso(today, -60), dueOn: addDaysIso(today, -50) });
+    await recordPayment(app(), tenantB, user.id, { debtorId: debtor.id, amount: "40", method: "cash", receivedOn: addDaysIso(today, -45) });
+    await transitionInvoice(app(), tenantB, user.id, partial.id, "paid");
+    const collected = await withTenant(app(), tenantB, (tx) => loadCollectedByInvoice(tx));
+    expect(collected.get(partial.id)).toBe(4000n);
   });
 
   it("F13 quota: warn at 80%, and the dispatcher blocks at 100% with quota_exceeded and sends nothing", async () => {
@@ -209,19 +259,31 @@ d("M5 services (F9/F11/F12/F13)", () => {
     expect(summary.skipped["quota_exceeded"]).toBeGreaterThan(0);
   });
 
-  it("F13 changePlan via the FAKE provider pays instantly; the billing job is idempotent", async () => {
+  it("F13 changePlan: paid plans are refused while prices are placeholders; free trial applies immediately; the billing job is idempotent", async () => {
     const provider = new FakePaymentProvider();
-    const result = await changePlan({ app: app(), provider, providerIsFake: true }, tenantB, user.id, { planKey: "starter" }, new Date());
+    // Placeholder prices (HUMAN_INPUTS #10, undecided) must never be sold —
+    // not even through the dev fake provider, which used to mark the
+    // invoice paid and flip the plan immediately.
+    // AppError carries its machine code on `.code` (the message is the
+    // human text), so assert the code + status, not a message match.
+    await expect(
+      changePlan({ app: app(), provider, providerIsFake: true }, tenantB, user.id, { planKey: "starter" }, new Date()),
+    ).rejects.toMatchObject({ code: "PRICING_NOT_FINAL", status: 409 });
+    const [stillTrial] = await ownerDb().select().from(tenants).where(eq(tenants.id, tenantB));
+    expect(stillTrial!.plan).toBe("trial");
+    expect(await listSubscriptionInvoices(app(), tenantB)).toHaveLength(0);
+
+    const result = await changePlan({ app: app(), provider, providerIsFake: true }, tenantB, user.id, { planKey: "trial" }, new Date());
     expect(result.effectiveImmediately).toBe(true);
-    expect(result.invoice).toMatchObject({ planKey: "starter", status: "paid", amountMinor: "4900" });
+    expect(result.invoice).toMatchObject({ planKey: "trial", status: "paid", amountMinor: "0" });
     const [tenant] = await ownerDb().select().from(tenants).where(eq(tenants.id, tenantB));
-    expect(tenant!.plan).toBe("starter");
+    expect(tenant!.plan).toBe("trial");
     const g1 = await generateSubscriptionInvoices(ownerDb(), app(), new Date());
     const g2 = await generateSubscriptionInvoices(ownerDb(), app(), new Date());
-    expect(g1.generated).toBe(0); // changePlan already created this period's invoice for tenantB
+    expect(g1.generated).toBe(0); // trial tenants are skipped by the job
     expect(g2.generated).toBe(0);
     const invoices = await listSubscriptionInvoices(app(), tenantB);
-    expect(invoices.filter((i) => i.planKey === "starter")).toHaveLength(1);
+    expect(invoices.filter((i) => i.planKey === "trial")).toHaveLength(1);
     void payments; void invoices;
   });
 });

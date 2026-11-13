@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { normalizeDigits } from "./digits";
-import { parseEgp } from "./money";
+import { CURRENCY_SYMBOLS, formatCurrencyMinor, formatMoney, getCurrencySymbol, parseEgp } from "./money";
 import { allocatePayment, addDaysIso, type AllocationTarget } from "./invoices";
 
 /**
@@ -265,10 +265,11 @@ export function evaluateReceiptChecks(input: {
   }
   checks.push({ key: "date_plausible", passed: dateOk, detail: dateDetail });
   checks.push({ key: "is_receipt", passed: e.is_receipt, detail: e.is_receipt ? "image is a transfer receipt" : "image is not a transfer receipt" });
+  const relevantTamperSignals = e.tamper_signals.filter((signal) => signal !== "extraction_unavailable");
   checks.push({
     key: "no_tamper",
-    passed: e.tamper_signals.length === 0,
-    detail: e.tamper_signals.length === 0 ? "no tamper signals" : `tamper signals: ${e.tamper_signals.join(", ")}`,
+    passed: relevantTamperSignals.length === 0,
+    detail: relevantTamperSignals.length === 0 ? "no tamper signals" : `tamper signals: ${relevantTamperSignals.join(", ")}`,
   });
   const confidenceOk = e.confidence >= AUTO_CLOSE_MIN_CONFIDENCE;
   checks.push({
@@ -554,8 +555,13 @@ export function scoreReceiptSet(items: readonly ReceiptScoreItem[]): ReceiptScor
  * Tatweel (kashida), zero-width characters, and normalizing letter variations.
  */
 export function sanitizePromptData(input: string): string {
+  // 0. Strip NUL bytes: Postgres text columns reject 0x00 outright, so any
+  // user-supplied text stored after sanitizing (conversation titles,
+  // messages) must be NUL-free or the insert fails with error 22021.
+  // String arg (not a regex) so eslint no-control-regex stays quiet.
+  const nulFree = input.replaceAll(String.fromCharCode(0), "");
   // 1. Strip Tashkeel (harakat), Tatweel, and zero-width characters so obfuscated Arabic injections are exposed
-  const stripped = input
+  const stripped = nulFree
     .replace(/[\u064B-\u065F\u0670]/g, "") // Tashkeel / Harakat
     .replace(/\u0640/g, "") // Tatweel / Kashida
     .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, " ") // Zero-width and non-breaking spaces
@@ -794,10 +800,18 @@ export function parseReceiptScreenshotAnalysis(input: {
     (normRef !== null && Array.from(seenReferences).some((r) => normalizeDigits(r).trim().replace(/[\s\-_]/g, "").toUpperCase() === normRef))
   );
   const isFuture = e.datetime ? new Date(e.datetime).getTime() > now.getTime() + 86_400_000 : false;
-  const isSuspicious = (e.tamper_signals ?? []).length > 0 || isDupHash || isDupRef || isFuture;
+  const extractionUnavailable = e.tamper_signals.includes("extraction_unavailable");
+  const hasTamperSignal = e.tamper_signals.some((signal) => signal !== "extraction_unavailable");
+  const isSuspicious = hasTamperSignal || isDupHash || isDupRef || isFuture;
 
   let recommendedAction: "auto_confirm" | "merchant_review" | "reject" = "merchant_review";
-  if (!e.is_receipt || isDupHash || isDupRef) {
+  if (isDupHash || isDupRef) {
+    recommendedAction = "reject";
+  } else if (extractionUnavailable) {
+    // An unavailable classifier cannot prove this is a non-receipt. Keep it
+    // in the human queue rather than rejecting it or inventing a confidence.
+    recommendedAction = "merchant_review";
+  } else if (!e.is_receipt) {
     recommendedAction = "reject";
   } else if (autoCloseOptIn && checksRes.allPassed && e.confidence >= AUTO_CLOSE_MIN_CONFIDENCE) {
     recommendedAction = "auto_confirm";
@@ -806,19 +820,25 @@ export function parseReceiptScreenshotAnalysis(input: {
   }
 
   const methodLabel = e.method ?? "تحويل إلكتروني";
-  const amountStr = e.amount_minor !== null ? `${(e.amount_minor / 100).toFixed(2)} ج.م` : "مبلغ غير محدد";
+  const receiptCur = e.currency ?? "EGP";
+  const amountStrAr = e.amount_minor !== null ? formatMoney(BigInt(e.amount_minor), receiptCur, { locale: "ar" }) : "مبلغ غير محدد";
+  const amountStrEn = e.amount_minor !== null ? formatMoney(BigInt(e.amount_minor), receiptCur, { locale: "en" }) : "unspecified amount";
 
-  const summaryAr = recommendedAction === "auto_confirm"
-    ? `إيصال موثوق (${methodLabel}) بمبلغ ${amountStr} مؤهل للاعتماد التلقائي بنسبة ثقة ${Math.round(e.confidence * 100)}%.`
+  const summaryAr = extractionUnavailable
+    ? "تعذر استخراج بيانات الإيصال آلياً. لم يتم تصنيفه كإيصال صالح أو غير صالح؛ راجع الصورة وأدخل البيانات يدوياً."
+    : recommendedAction === "auto_confirm"
+    ? `إيصال موثوق (${methodLabel}) بمبلغ ${amountStrAr} مؤهل للاعتماد التلقائي بنسبة ثقة ${Math.round(e.confidence * 100)}%.`
     : recommendedAction === "reject"
-    ? `تم رفض الإيصال: ${!e.is_receipt ? "الصورة ليست إيصال تحويل صالح" : isDupHash ? "تم تقديم هذا الإيصال مسبقاً (تطابق كامل في الصورة)" : isDupRef ? "رقم العملية أو المرجع مسجل مسبقاً" : "بيانات الإيصال غير صالحة"}.`
-    : `إيصال (${methodLabel}) بمبلغ ${amountStr} بانتظار مراجعة التاجر (نسبة الثقة ${Math.round(e.confidence * 100)}%).`;
+    ? `تم رفض الإيصال: ${isDupHash ? "تم تقديم هذا الإيصال مسبقاً (تطابق كامل في الصورة)" : isDupRef ? "رقم العملية أو المرجع مسجل مسبقاً" : "الصورة ليست إيصال تحويل صالح"}.`
+    : `إيصال (${methodLabel}) بمبلغ ${amountStrAr} بانتظار مراجعة التاجر (نسبة الثقة ${Math.round(e.confidence * 100)}%).`;
 
-  const summaryEn = recommendedAction === "auto_confirm"
-    ? `Verified receipt (${e.method ?? "transfer"}) for ${amountStr} eligible for auto-confirmation (${Math.round(e.confidence * 100)}% confidence).`
+  const summaryEn = extractionUnavailable
+    ? "Receipt data could not be extracted. The image has not been classified as valid or invalid; review it and enter the details manually."
+    : recommendedAction === "auto_confirm"
+    ? `Verified receipt (${e.method ?? "transfer"}) for ${amountStrEn} eligible for auto-confirmation (${Math.round(e.confidence * 100)}% confidence).`
     : recommendedAction === "reject"
-    ? `Receipt rejected: ${!e.is_receipt ? "not a valid transfer receipt" : isDupHash ? "duplicate receipt image" : isDupRef ? "duplicate reference number" : "invalid receipt data"}.`
-    : `Receipt (${e.method ?? "transfer"}) for ${amountStr} pending merchant confirmation (${Math.round(e.confidence * 100)}% confidence).`;
+    ? `Receipt rejected: ${isDupHash ? "duplicate receipt image" : isDupRef ? "duplicate reference number" : "not a valid transfer receipt"}.`
+    : `Receipt (${e.method ?? "transfer"}) for ${amountStrEn} pending merchant confirmation (${Math.round(e.confidence * 100)}% confidence).`;
 
   return {
     isReceipt: e.is_receipt,
@@ -864,6 +884,8 @@ export interface GenerateSmartNotificationInput {
 
 export interface GenerateSmartNotificationResult {
   notificationText: string;
+  /** Whether free-form copy was generated by a configured LLM or the deterministic safe template. */
+  generationMode?: "ai" | "rules";
   suggestedSendTime: string;
   toneApplied: NotificationTone;
   securityGuards: {
@@ -883,8 +905,17 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
   const safeBusinessName = sanitizePromptData(input.tenantBusinessName);
   const debtorDisplayName = safeDebtorName || (isEn ? "Valued Customer" : "عزيزي العميل");
   const businessDisplayName = safeBusinessName || (isEn ? "DAFQLY" : "دافقلي");
-  const currency = input.currency ?? (isEn ? "EGP" : "ج.م");
-  const amountMajor = (input.amountMinor / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const symbolToCode: Record<string, string> = {
+    "ج.م": "EGP", "ر.س": "SAR", "د.إ": "AED", "د.ك": "KWD", "$": "USD", "€": "EUR", "¥": "JPY",
+  };
+  const rawCur = (input.currency ?? "").trim();
+  const resolvedCode = rawCur
+    ? (CURRENCY_SYMBOLS[rawCur.toUpperCase()] ? rawCur.toUpperCase() : (symbolToCode[rawCur] ?? "EGP"))
+    : "EGP";
+  const currency = rawCur
+    ? (CURRENCY_SYMBOLS[rawCur.toUpperCase()] ? getCurrencySymbol(resolvedCode, isEn ? "en" : "ar") : rawCur)
+    : getCurrencySymbol("EGP", isEn ? "en" : "ar");
+  const amountMajor = formatCurrencyMinor(BigInt(input.amountMinor), resolvedCode);
   const invoiceRefText = input.reference ? (isEn ? ` #${input.reference}` : ` رقم ${input.reference}`) : "";
 
   // Select appropriate tone based on overdue status and customer risk flag
@@ -911,10 +942,10 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
         text = `عزيزي ${debtorDisplayName}، نرجو الإحاطة بأن الفاتورة${invoiceRefText} المستحقة لدى ${businessDisplayName} بقيمة ${amountMajor} ${currency} حل موعد سدادها (${input.dueDate}). شاكرين تعاونكم معنا.`;
         break;
       case "firm":
-        text = `السيد/ة ${debtorDisplayName}، نلفت انتباهكم إلى تأخر سداد الفاتورة${invoiceRefText} المستحقة لدى ${businessDisplayName} بقيمة ${amountMajor} ${currency} منذ ${input.daysOverdue} يوماً. نرجو التكرم بسرعة السداد لتجنب أي تعليق في التعاملات.`;
+        text = `السيد/ة ${debtorDisplayName}، نلفت انتباهكم إلى تأخر سداد الفاتورة${invoiceRefText} المستحقة لدى ${businessDisplayName} بقيمة ${amountMajor} ${currency} منذ ${input.daysOverdue} يوماً (تاريخ الاستحقاق ${input.dueDate}). نرجو التكرم بسرعة السداد لتجنب أي تعليق في التعاملات.`;
         break;
       case "urgent":
-        text = `إشعار عاجل - ${debtorDisplayName}: نرجو تسوية المبلغ المتأخر والبالغ ${amountMajor} ${currency} لصالح ${businessDisplayName} بصورة فورية. يرجى التواصل معنا أو السداد عبر الرابط التالي.`;
+        text = `إشعار عاجل - ${debtorDisplayName}: نرجو تسوية المبلغ المتأخر والبالغ ${amountMajor} ${currency} لصالح ${businessDisplayName} بصورة فورية (تاريخ الاستحقاق ${input.dueDate}). يرجى التواصل معنا أو السداد عبر الرابط التالي.`;
         break;
     }
     if (input.paymentLink) {
@@ -929,10 +960,10 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
         text = `Dear ${debtorDisplayName}, please note that your invoice${invoiceRefText} of ${amountMajor} ${currency} with ${businessDisplayName} is now due (${input.dueDate}). Thank you for your prompt payment.`;
         break;
       case "firm":
-        text = `Notice for ${debtorDisplayName}: Your payment of ${amountMajor} ${currency} to ${businessDisplayName} is overdue by ${input.daysOverdue} days. Please settle this amount to maintain your active account.`;
+        text = `Notice for ${debtorDisplayName}: Your payment of ${amountMajor} ${currency} to ${businessDisplayName} is overdue by ${input.daysOverdue} days (due ${input.dueDate}). Please settle this amount to maintain your active account.`;
         break;
       case "urgent":
-        text = `Urgent Notice - ${debtorDisplayName}: An outstanding balance of ${amountMajor} ${currency} is past due at ${businessDisplayName}. Please arrange immediate settlement.`;
+        text = `Urgent Notice - ${debtorDisplayName}: An outstanding balance of ${amountMajor} ${currency} is past due at ${businessDisplayName} (due ${input.dueDate}). Please arrange immediate settlement.`;
         break;
     }
     if (input.paymentLink) {
@@ -945,6 +976,7 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
 
   return {
     notificationText: text,
+    generationMode: "rules",
     suggestedSendTime,
     toneApplied: tone,
     securityGuards: {

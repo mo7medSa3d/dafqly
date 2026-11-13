@@ -53,6 +53,10 @@ describe("status derived from confirmed paid amount (§6: paid_minor from confir
     expect(resolveStatusAfterPayment("partially_paid", 1000n, 0n)).toBe("open"); // reversal to zero
     expect(resolveStatusAfterPayment("disputed", 1000n, 1000n)).toBe("paid");
   });
+  it("a disputed invoice stays disputed on a PARTIAL payment (reminders stay paused, dispute stays open)", () => {
+    expect(resolveStatusAfterPayment("disputed", 1000n, 400n)).toBe("disputed");
+    expect(resolveStatusAfterPayment("disputed", 1000n, 0n)).toBe("disputed");
+  });
   it("outstanding never goes negative (overpayment is credit, §6)", () => {
     expect(outstandingMinor(1000n, 1500n)).toBe(0n);
     expect(outstandingMinor(1000n, 250n)).toBe(750n);
@@ -77,7 +81,10 @@ describe("due dates and overdue/aging (§5: overdue is derived; §6: no due date
   it("aging buckets: current, 0-7, 8-30, 31-60, 60+", () => {
     const today = "2026-11-30";
     expect(agingBucket("2026-12-05", today)).toBe("current");
-    expect(agingBucket("2026-11-30", today)).toBe("0-7");
+    // Due today is "current", not "0-7": same boundary as the pinned
+    // ADR-023 definition and the SQL KPI path (due_on >= today).
+    expect(agingBucket("2026-11-30", today)).toBe("current");
+    expect(agingBucket("2026-11-29", today)).toBe("0-7");
     expect(agingBucket("2026-11-23", today)).toBe("0-7");
     expect(agingBucket("2026-11-22", today)).toBe("8-30");
     expect(agingBucket("2026-10-31", today)).toBe("8-30");

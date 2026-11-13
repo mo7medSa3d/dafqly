@@ -7,7 +7,9 @@ import {
   tenants,
   auditLog,
   notifications,
+  aiMessages,
 } from "@tahseel/db/schema";
+import { withTenant } from "@tahseel/db";
 import { createTenantForUser } from "./services";
 import { createDebtor, createInvoice } from "./ledger";
 import {
@@ -22,6 +24,8 @@ import {
   getWorkspaceIntelligence,
   getDebtorIntelligence,
   askWorkspaceCopilot,
+  getCopilotConversation,
+  listCopilotConversations,
 } from "./intelligence";
 import {
   proposeWorkspaceInstallmentPlan,
@@ -286,9 +290,52 @@ d("Notifications & AI Intelligence integration (service layer + RLS)", () => {
     );
 
     expect(resPriority.answerAr).toContain("عميل متأخر");
+    expect(resPriority.conversationId).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(resPriority.aiMode).toBe("fallback"); // NODE_ENV=test never makes live provider calls.
     expect(resPriority.suggestedDebtors.length).toBeGreaterThan(0);
     expect(resPriority.quickLinks.some((l) => l.href === "/debtors")).toBe(true);
     expect(resPriority.answerAr).not.toContain("INV-B-SECRET");
+    const savedConversations = await listCopilotConversations(app, tenantA, userA.id);
+    expect(savedConversations.items.some((item) => item.id === resPriority.conversationId)).toBe(true);
+    expect(savedConversations.totalCount).toBeGreaterThanOrEqual(1);
+    const savedThread = await getCopilotConversation(app, tenantA, userA.id, resPriority.conversationId);
+    expect(savedThread.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(savedThread.totalMessages).toBe(2);
+    await expect(getCopilotConversation(app, tenantA, userB.id, resPriority.conversationId)).rejects.toThrow(/not found/i);
+
+    const continued = await askWorkspaceCopilot(app, tenantA, userA.id, "شركة الأفق للتجارة", todayIso, {
+      intent: "custom_question", question: "وما الإجراء التالي؟", conversationId: resPriority.conversationId, locale: "ar",
+    });
+    expect(continued.conversationId).toBe(resPriority.conversationId);
+    const threadAfterFollowup = await getCopilotConversation(app, tenantA, userA.id, resPriority.conversationId);
+    expect(threadAfterFollowup.messages).toHaveLength(4);
+    expect(threadAfterFollowup.totalMessages).toBe(4);
+    // F-18: beyond the 60-message cap the thread returns the LATEST 60
+    // (oldest dropped), not the first 60 — seed 61 extra turns directly.
+    await withTenant(app, tenantA, async (tx) => {
+      // Distinct createdAt values so the latest-60 ordering is
+      // deterministic even when inserts land in the same millisecond.
+      const base = Date.now();
+      for (let i = 0; i < 61; i++) {
+        await tx.insert(aiMessages).values({
+          tenantId: tenantA, conversationId: resPriority.conversationId,
+          role: i % 2 === 0 ? "user" : "assistant", content: `seed turn ${i}`,
+          createdAt: new Date(base + i * 1000),
+        });
+      }
+    });
+    const capped = await getCopilotConversation(app, tenantA, userA.id, resPriority.conversationId);
+    expect(capped.totalMessages).toBe(65);
+    expect(capped.messages).toHaveLength(60);
+    expect(capped.messages[0]!.content).toBe("seed turn 1"); // turn 0 + the 4 originals are the oldest 5, dropped
+    expect(capped.messages[59]!.content).toBe("seed turn 60"); // newest kept
+    // A raw read through the app-role connection needs tenant context —
+    // without it RLS fail-closes and returns 0 rows (correct behavior).
+    const rawMessages = await withTenant(app, tenantA, async (tx) =>
+      tx.select().from(aiMessages).where(eq(aiMessages.conversationId, resPriority.conversationId)),
+    );
+    // 4 real turns + the 61 F-18 seed turns above.
+    expect(rawMessages).toHaveLength(65);
 
     const resRisk = await askWorkspaceCopilot(
       app,

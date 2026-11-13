@@ -106,3 +106,15 @@ export class DryRunMessagingProvider implements TextCapableProvider {
     return { providerMessageId: `dry-run-text-${input.idempotencyKey}` };
   }
 }
+
+
+/** Explicit fail-closed provider used when a live channel has no adapter/credentials. */
+export class NotConfiguredMessagingProvider implements TextCapableProvider {
+  constructor(private readonly channel: "whatsapp" | "sms") {}
+  async sendTemplate(_input: SendTemplateInput): Promise<SendResult> {
+    throw new ProviderError(0, `${this.channel} provider is not configured`);
+  }
+  async sendText(_input: { toE164: string; body: string; idempotencyKey: string }): Promise<SendResult> {
+    throw new ProviderError(0, `${this.channel} provider is not configured`);
+  }
+}

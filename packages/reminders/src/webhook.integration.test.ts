@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash, createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { createDb, createAppDb, debtors, invoices, messages, optOuts, reminders, tenants, type Db } from "@tahseel/db";
+import { createDb, createAppDb, debtors, invoices, messages, optOuts, reminders, tenants, webhookEvents, type Db } from "@tahseel/db";
 import { FakeMessagingProvider } from "@tahseel/providers";
 import { dispatchDue, planForInvoice, type EngineDeps } from "./engine";
-import { parseWebhookPayload, persistWebhookEvents, processWebhookEvents, verifyWebhookSignature } from "./webhook";
+import { parseWebhookPayload, persistWebhookEvents, processWebhookEvents, purgeOldWebhookPayloads, verifyWebhookSignature } from "./webhook";
 
 /**
  * F3 acceptance suite (BUILD_PLAN §7-F3): recorded-shape Meta webhook
@@ -162,6 +162,48 @@ d("webhook processing (F3)", () => {
       .filter((m) => m.direction === "in");
     expect(inbound).toHaveLength(1);
     expect(inbound[0]?.bodyText).toContain("هدفع بكرة");
+  });
+
+  it("M6: the stored webhook payload never contains the message body or sender phone", async () => {
+    const f = await fixture();
+    const payload = inboundPayload(`wamid.in-redact-${f.tenantId.slice(0, 8)}`, f.phone.slice(1), "دفعت 500 جنيه اليوم");
+    const persisted = await persistWebhookEvents(owner, payload);
+    expect(persisted.inserted).toBe(1);
+    const [row] = await owner.select().from(webhookEvents).where(eq(webhookEvents.dedupeKey, persisted.events[0]!.dedupeKey));
+    const stored = JSON.stringify(row!.payload);
+    expect(stored).not.toContain("دفعت 500 جنيه");
+    expect(stored).not.toContain(f.phone.slice(1));
+    expect(stored).toContain(persisted.events[0]!.providerMessageId);
+    // Processing still works from the parsed events (not the stored payload).
+    const s = await processWebhookEvents(deps(), persisted.events, new Date("2026-11-20T09:00:00Z"));
+    expect(s.inboundStored).toBe(1);
+  });
+
+  it("M3/M6 retention purge: old payloads become tombstones, fresh rows untouched, dedupe keys survive", async () => {
+    const f = await fixture();
+    const oldAt = new Date(Date.now() - 100 * 86_400_000);
+    await owner.insert(webhookEvents).values({
+      provider: "whatsapp", dedupeKey: `purge-old-${f.tenantId.slice(0, 8)}`,
+      payload: { secret: "old-body-text" }, receivedAt: oldAt,
+    });
+    await owner.insert(webhookEvents).values({
+      provider: "whatsapp", dedupeKey: `purge-fresh-${f.tenantId.slice(0, 8)}`,
+      payload: { body: "fresh" },
+    });
+    await owner.insert(messages).values({
+      tenantId: f.tenantId, debtorId: f.debtorId, direction: "in", channel: "whatsapp",
+      provider: "whatsapp", bodyText: "old inbound", status: "read", raw: { secret: "old-raw" }, createdAt: oldAt,
+    });
+    const purged = await purgeOldWebhookPayloads(owner);
+    expect(purged.webhookEvents).toBeGreaterThanOrEqual(1);
+    expect(purged.messages).toBeGreaterThanOrEqual(1);
+    const [oldRow] = await owner.select().from(webhookEvents).where(eq(webhookEvents.dedupeKey, `purge-old-${f.tenantId.slice(0, 8)}`));
+    expect(oldRow!.payload).toEqual({ redacted: true });
+    expect(oldRow!.dedupeKey).toBe(`purge-old-${f.tenantId.slice(0, 8)}`);
+    const [freshRow] = await owner.select().from(webhookEvents).where(eq(webhookEvents.dedupeKey, `purge-fresh-${f.tenantId.slice(0, 8)}`));
+    expect(freshRow!.payload).toEqual({ body: "fresh" });
+    const [msg] = await owner.select().from(messages).where(eq(messages.bodyText, "old inbound"));
+    expect(msg!.raw).toBeNull();
   });
 
   it("OPT-OUT: an إيقاف reply stops all further sends for that phone immediately", async () => {

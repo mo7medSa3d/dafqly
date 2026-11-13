@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
-  AppError, actionForIntent, canTransition, formatEgp, isOptOutText, localDateOf,
+  AppError, actionForIntent, canTransition, formatMoney, isOptOutText, localDateOf, normalizeCurrencyCode,
   nextAllowedSlot, resolveRelativeDate, zonedTimeToUtc, addDaysIso,
   type ReplyAction,
 } from "@tahseel/core";
@@ -158,7 +158,7 @@ export async function processInboundReply(
       if (first) {
         const body = renderTemplate("invoice_overdue", "ar", {
           business: setup.tenant.businessNameAr,
-          amount: formatEgp(first.amountMinor - first.paidMinor > 0n ? first.amountMinor - first.paidMinor : 0n),
+          amount: formatMoney(first.amountMinor - first.paidMinor > 0n ? first.amountMinor - first.paidMinor : 0n, normalizeCurrencyCode(setup.tenant.settings?.currency), { locale: "ar" }),
           due_date: first.dueOn,
         });
         await tx.insert(messages).values({

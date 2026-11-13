@@ -6,12 +6,9 @@ import { auth } from "@/server/auth";
 import { ownerDb } from "@/server/db";
 import { listTenantsForUser } from "@/server/services";
 import { BrandLockup, BrandMark } from "@/components/BrandMark";
+import { HeroBandArt, HeroDashboardIllustration, ReceivablesIllustration, SecurityLockBadge, SecuritySignInIllustration } from "@/components/illustrations";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { LocaleToggle } from "@/components/LocaleToggle";
-import {
-  HeroBandArt, HeroDashboardIllustration, ReceivablesIllustration,
-  SecurityLockBadge, SecuritySignInIllustration,
-} from "@/components/illustrations";
 import { Reveal } from "@/components/motion";
 import { SecurityNotice } from "@/components/ui";
 
@@ -81,31 +78,26 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
                 </Link>
               </div>
             </div>
-            <div className="relative hidden justify-center sm:flex" aria-hidden>
-              <HeroBandArt size={380} />
-            </div>
+            <div className="relative hidden justify-center sm:flex" aria-hidden><HeroBandArt size={380} /></div>
           </div>
         </section>
       </Reveal>
 
-      {/* Yaseir Purposeful Imagery Stage: Workspace, Receivables & Security Illustrations */}
+      {/* Service-led illustrations: each visual maps to a real product capability. */}
       <Reveal>
         <section className="grid gap-6 lg:grid-cols-3">
-          <div className="panel-shadow flex flex-col items-center gap-4 rounded-2xl border border-border bg-surface p-5 text-center">
+          <article className="panel-shadow flex flex-col items-center gap-4 overflow-hidden rounded-2xl border border-border bg-surface p-5 text-center">
             <HeroDashboardIllustration size={320} />
-            <h2 className="text-[18px] font-bold">{steps[0]!.title}</h2>
-            <p className="text-sm text-text-muted">{steps[0]!.body}</p>
-          </div>
-          <div className="panel-shadow flex flex-col items-center gap-4 rounded-2xl border border-border bg-surface p-5 text-center">
+            <div><h2 className="text-[18px] font-bold">{steps[0]!.title}</h2><p className="mt-2 text-sm leading-6 text-text-muted">{steps[0]!.body}</p></div>
+          </article>
+          <article className="panel-shadow flex flex-col items-center gap-4 overflow-hidden rounded-2xl border border-border bg-surface p-5 text-center">
             <ReceivablesIllustration size={320} />
-            <h2 className="text-[18px] font-bold">{steps[1]!.title}</h2>
-            <p className="text-sm text-text-muted">{steps[1]!.body}</p>
-          </div>
-          <div className="panel-shadow flex flex-col items-center gap-4 rounded-2xl border border-border bg-surface p-5 text-center">
+            <div><h2 className="text-[18px] font-bold">{steps[1]!.title}</h2><p className="mt-2 text-sm leading-6 text-text-muted">{steps[1]!.body}</p></div>
+          </article>
+          <article className="panel-shadow flex flex-col items-center gap-4 overflow-hidden rounded-2xl border border-border bg-surface p-5 text-center">
             <SecuritySignInIllustration size={320} />
-            <h2 className="text-[18px] font-bold">{steps[2]!.title}</h2>
-            <p className="text-sm text-text-muted">{steps[2]!.body}</p>
-          </div>
+            <div><h2 className="text-[18px] font-bold">{steps[2]!.title}</h2><p className="mt-2 text-sm leading-6 text-text-muted">{steps[2]!.body}</p></div>
+          </article>
         </section>
       </Reveal>
 
@@ -121,10 +113,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
       </Reveal>
 
       <footer className="mt-auto flex flex-col items-center gap-2 pt-2 text-center text-xs text-text-muted">
-        <div className="flex items-center gap-2">
-          <BrandMark variant="mono" size={24} />
-          <SecurityLockBadge size={24} />
-        </div>
+        <div className="flex items-center gap-2"><BrandMark variant="mono" size={24}/><SecurityLockBadge size={24}/></div>
         <p>{locale === "en" ? "Dafqly" : "دفقلي"} — {t("heroTagline")}</p>
       </footer>
     </main>

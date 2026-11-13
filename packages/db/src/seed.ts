@@ -1,8 +1,11 @@
 // Seed: SYNTHETIC demo data only (no real people, phones or amounts owed by
-// anyone real). Demo login: demo@tahseel.test / demo-password-123 — dev only,
-// documented in RUNBOOK.md. Idempotent: safe to run repeatedly.
+// anyone real). Demo login: demo@tahseel.test — password from DEMO_PASSWORD
+// (see .env.example) or a random one printed below when it is unset. The
+// seeded user is emailVerified, so enabling email verification (H5) never
+// locks the demo account out. Dev/test only: seeding refuses production
+// unless ALLOW_PROD_SEED=1. Idempotent: safe to run repeatedly.
 import "./load-env";
-import { createHmac, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 // Password hashing MUST match the web auth config (argon2id, BUILD_PLAN §3):
 // the seed writes credential rows directly, so it hashes exactly like
@@ -25,7 +28,15 @@ if (process.env.NODE_ENV === "production" && process.env.ALLOW_PROD_SEED !== "1"
 
 const phoneHash = (e164: string) => createHmac("sha256", pepper).update(e164).digest("hex");
 export const DEMO_EMAIL = "demo@tahseel.test";
-export const DEMO_PASSWORD = "demo-password-123";
+// H6: no credential literal in the seed anymore. Set DEMO_PASSWORD in the
+// environment (local .env / CI); when it is unset a random password is
+// generated and printed once — the e2e runner sets DEMO_PASSWORD explicitly
+// (root package.json test:e2e) so the seed and the browser tests agree.
+// Changing the password of an already-seeded demo user needs RESET_SEED=1.
+export const DEMO_PASSWORD = process.env.DEMO_PASSWORD ?? randomBytes(16).toString("hex");
+if (!process.env.DEMO_PASSWORD) {
+  console.log(`seed: DEMO_PASSWORD is not set — generated a random demo password (dev only): ${DEMO_PASSWORD}`);
+}
 
 const { db, client } = createDb(url);
 try {

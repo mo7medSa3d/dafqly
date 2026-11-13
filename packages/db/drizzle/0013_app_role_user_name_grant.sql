@@ -1,0 +1,11 @@
+-- 0013_app_role_user_name_grant
+-- listCollectionTasks and listAiActionApprovals (apps/web/src/server/workflows.ts)
+-- LEFT JOIN the Better Auth "user" table to show the assignee/requester name.
+-- Those queries run on the RLS-bound tahseel_app connection, which had no
+-- grant on "user" at all, so both lists failed with "permission denied for
+-- table user" on any tenant with collection tasks or AI approvals.
+-- Least privilege: only the two columns those queries read (id for the join,
+-- name for display). Email, password hashes and all other auth columns stay
+-- unreadable to the app role; auth flows themselves use the owner pool.
+--> statement-breakpoint
+GRANT SELECT (id, name) ON "user" TO tahseel_app;

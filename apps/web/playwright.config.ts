@@ -30,6 +30,16 @@ export default defineConfig({
       PAYMOB_HMAC_SECRET: "e2e-paymob-hmac-secret-for-tests-only",
       // The e2e server runs in production mode with no real Paymob keys, so
       // the gateway uses the FAKE provider — explicitly allowed here only.
+      // ADR-033: the e2e server runs in production mode with fake providers
+      // and no real S3/AI credentials (no MinIO and no AI key in this VM or
+      // in CI). E2E_FAKE_PROVIDERS lets the production env guard skip only
+      // the "no real provider configured" checks, and aiDeps() use the
+      // deterministic fake LLM + fake storage. Test-only secrets below
+      // (>=32 chars, never "change-me"); the sandbox DB and its data are
+      // local throwaway fixtures, never production data.
+      E2E_FAKE_PROVIDERS: "true",
+      SESSION_SECRET: "e2e-test-session-secret-0123456789abcdef",
+      PHONE_HASH_PEPPER: "e2e-test-phone-hash-pepper-0123456789ab",
       PAYMOB_ALLOW_FAKE: "true",
     },
   },

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
-import { parseEgp, formatEgp, sumMoney, MoneyParseError } from "./money";
+import { parseEgp, formatEgp, parseMoney, formatMoney, currencyMinorExponent, sumMoney, MoneyParseError } from "./money";
 
 describe("parseEgp", () => {
   it("parses plain and grouped amounts into integer minor units", () => {
@@ -30,6 +30,37 @@ describe("parseEgp", () => {
     }));
   });
 });
+describe("per-currency minor units (KWD 3 decimals, JPY 0 decimals)", () => {
+  it("exponents follow ISO 4217", () => {
+    expect(currencyMinorExponent("EGP")).toBe(2);
+    expect(currencyMinorExponent("SAR")).toBe(2);
+    expect(currencyMinorExponent("USD")).toBe(2);
+    expect(currencyMinorExponent("KWD")).toBe(3);
+    expect(currencyMinorExponent("JPY")).toBe(0);
+  });
+  it("KWD parses 3 decimals (1.234 KWD = 1234 fils) and formats back", () => {
+    expect(parseMoney("1.234", "KWD")).toBe(1234n);
+    expect(parseMoney("0.001", "KWD")).toBe(1n);
+    expect(formatMoney(1234n, "KWD")).toBe("1.234 د.ك");
+  });
+  it("KWD rejects more than 3 decimal places", () => {
+    expect(() => parseMoney("1.2345", "KWD")).toThrow(MoneyParseError);
+  });
+  it("JPY has no decimals: whole yen only, fractional input rejected", () => {
+    expect(parseMoney("500", "JPY")).toBe(500n);
+    expect(parseMoney("1,000", "JPY")).toBe(1000n);
+    expect(formatMoney(500n, "JPY")).toBe("500 ¥");
+    expect(() => parseMoney("500.5", "JPY")).toThrow(MoneyParseError);
+    expect(() => parseMoney("500.50", "JPY")).toThrow(MoneyParseError);
+  });
+  it("property: parse(format(x)) === x per currency", () => {
+    fc.assert(fc.property(fc.bigInt({ min: 0n, max: 999_999_999n }), (minor) => {
+      expect(parseMoney(formatMoney(minor, "KWD").replace(" د.ك", ""), "KWD")).toBe(minor);
+      expect(parseMoney(formatMoney(minor, "JPY").replace(" ¥", ""), "JPY")).toBe(minor);
+    }));
+  });
+});
+
 describe("formatEgp / sumMoney", () => {
   it("formats with grouping and 2 decimals, Latin digits by default", () => {
     expect(formatEgp(125050n)).toBe("1,250.50");

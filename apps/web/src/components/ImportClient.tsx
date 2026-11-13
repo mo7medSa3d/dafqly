@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
-import { formatEgp } from "@tahseel/core";
+import { useCurrency } from "./CurrencyContext";
 import {
   ArrowCounterClockwise,
   CheckCircle,
@@ -14,8 +14,8 @@ import {
   WarningCircle,
 } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
-import { ImportIllustration } from "./illustrations";
 import { Panel, StatusPill, btnGhost, btnPrimary, inputCls } from "./ui";
+import { ImportIllustration } from "./illustrations";
 
 const FIELDS = ["name", "phone", "amount", "dueDate", "issuedDate", "reference", "description", "notes"] as const;
 type Field = (typeof FIELDS)[number];
@@ -37,6 +37,7 @@ export function ImportClient() {
   const t = useTranslations("import");
   const locale = useLocale();
   const isAr = locale === "ar";
+  const { formatAmountOnly } = useCurrency();
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [jobs, setJobs] = useState<JobLite[]>([]);
@@ -143,9 +144,12 @@ export function ImportClient() {
 
   function downloadSampleCsv(lang?: "ar" | "en") {
     const useArabic = lang ? lang === "ar" : isAr;
+    // F-14: the sample rows are SYNTHETIC by construction — reserved
+    // test names/phones, labelled as samples in the notes column — so the
+    // file can never be mistaken for real customer data if forwarded.
     const csvContent = useArabic
-      ? "\uFEFFاسم العميل,رقم الهاتف,المبلغ المستحق,تاريخ الاستحقاق,رقم الفاتورة,ملاحظات\nأحمد محمد,01001234567,1500,2026-12-01,INV-1001,فاتورة بضاعة\nشركة الأمل,01122334455,4200.50,2026-12-15,INV-1002,توريد خامات\n"
-      : "Customer Name,Phone Number,Amount,Due Date,Invoice No,Notes\nAhmed Mohamed,01001234567,1500,2026-12-01,INV-1001,Goods delivery\nAl Amal Co,01122334455,4200.50,2026-12-15,INV-1002,Materials\n";
+      ? "\uFEFFاسم العميل,رقم الهاتف,المبلغ المستحق,تاريخ الاستحقاق,رقم الفاتورة,ملاحظات\nعميل تجريبي ١,+201000000001,1500,2026-12-01,INV-1001,بيانات تجريبية — ليست عميلاً حقيقياً\nعميل تجريبي ٢,+201000000002,4200.50,2026-12-15,INV-1002,بيانات تجريبية — ليست عميلاً حقيقياً\n"
+      : "Customer Name,Phone Number,Amount,Due Date,Invoice No,Notes\nSample Customer 1,+201000000001,1500,2026-12-01,INV-1001,Sample data — not a real customer\nSample Customer 2,+201000000002,4200.50,2026-12-15,INV-1002,Sample data — not a real customer\n";
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -174,7 +178,7 @@ export function ImportClient() {
       <div className="grid gap-6 lg:grid-cols-12">
         {/* Upload Dropzone */}
         <label className="brand-pattern-light panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-border/80 bg-surface/90 p-8 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/30 hover:shadow-md lg:col-span-7">
-          <ImportIllustration size={80} />
+          <ImportIllustration size={104} />
           <div className="flex flex-col items-center gap-1">
             <span className="flex items-center gap-2 text-lg font-extrabold text-text">
               <UploadSimple size={22} weight="bold" aria-hidden className="text-primary" />
@@ -209,11 +213,11 @@ export function ImportClient() {
         {/* Guidelines / Helper Column */}
         <div className="panel-shadow flex flex-col justify-between rounded-2xl border border-border bg-surface p-6 lg:col-span-5">
           <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <FileText size={20} weight="fill" className="text-primary" />
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2"><FileText size={20} weight="fill" className="text-primary" />
               <h2 className="text-base font-bold text-text">
                 {isAr ? "استيراد ملفات الفواتير" : "Invoice File Import"}
-              </h2>
+              </h2></div>
             </div>
             <p className="text-xs leading-relaxed text-text-muted" dir={isAr ? "rtl" : "ltr"}>
               {isAr ? (
@@ -359,7 +363,7 @@ export function ImportClient() {
                       <td className="px-3 py-2" dir="ltr">{r.rowNumber}</td>
                       <td className="px-3 py-2 font-semibold">{r.data?.name ?? "—"}</td>
                       <td className="px-3 py-2" dir="ltr">{r.data?.phoneE164 ?? "—"}</td>
-                      <td className="tnum px-3 py-2" dir="ltr">{r.data ? formatEgp(BigInt(r.data.amountMinor)) : "—"}</td>
+                      <td className="tnum px-3 py-2" dir="ltr">{r.data ? formatAmountOnly(BigInt(r.data.amountMinor)) : "—"}</td>
                       <td className="px-3 py-2">
                         <span className="me-2"><StatusPill status={r.status === "valid" ? "paid" : r.status === "duplicate" ? "disputed" : "open"} label={r.status} /></span>
                         {r.errors.length > 0 ? r.errors.map((e) => `${e.field}: ${e.reason}`).join("; ") : ""}

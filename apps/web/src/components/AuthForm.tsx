@@ -9,8 +9,8 @@ import { signIn, signUp } from "@/lib/auth-client";
 import { BrandLockup } from "./BrandMark";
 import { ThemeToggle } from "./ThemeToggle";
 import { LocaleToggle } from "./LocaleToggle";
-import { SecurityLockBadge, SecuritySignInIllustration } from "./illustrations";
 import { SecurityNotice, btnPrimary, inputCls, labelCls } from "./ui";
+import { SecurityLockBadge, SecuritySignInIllustration } from "./illustrations";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const t = useTranslations("auth");
@@ -44,7 +44,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   }
 
   return (
-    <main className="relative grid min-h-dvh bg-bg lg:grid-cols-[1.08fr_1fr]">
+    <main className="glass-canvas relative grid min-h-dvh lg:grid-cols-[1.08fr_1fr]">
       {/* Top Floating Controls — single unified instance */}
       <div className="fixed top-4 end-4 z-30 flex items-center gap-2 sm:top-6 sm:end-6">
         <ThemeToggle />
@@ -62,12 +62,15 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           </span>
         </div>
 
-        <div className="relative flex flex-col items-start gap-6">
-          <div className="w-full rounded-3xl bg-white/10 p-4 backdrop-blur-sm">
-            <SecuritySignInIllustration size={420} />
+        <div className="relative flex flex-col items-start gap-5">
+          <div className="w-full flex justify-center"><SecuritySignInIllustration size={360} /></div>
+          <div className="flex items-center gap-3"><SecurityLockBadge size={44}/><p className="text-sm font-bold text-navy-100">{locale === "en" ? "Secure, isolated business workspace" : "مساحة عمل آمنة ومعزولة لبيانات منشأتك"}</p></div>
+          <div className="w-full rounded-3xl border border-white/15 bg-white/10 p-6 backdrop-blur-sm">
+            <div className="flex items-center gap-3"><ShieldCheck size={28} weight="fill"/><span className="text-sm font-bold">{locale === "en" ? "Secure workspace access" : "دخول آمن لمساحة العمل"}</span></div>
+            <p className="mt-4 text-sm leading-7 text-navy-100">{locale === "en" ? "Your workspace data is separated by tenant permissions and audited business operations." : "بيانات مساحة العمل معزولة بصلاحيات المنشأة، والعمليات المالية قابلة للمراجعة والتتبع."}</p>
           </div>
           <div className="flex items-center gap-3">
-            <SecurityLockBadge size={44} />
+            <ShieldCheck size={38} weight="fill" />
             <div>
               <p className="text-2xl font-extrabold leading-snug">{locale === "en" ? BRAND.tagline : BRAND.taglineAr}</p>
               <p className="text-sm text-navy-100">{locale === "en" ? BRAND.supportingLine : "إدارة ذكية للمستحقات وتدفق نقدي أسرع."}</p>
@@ -84,7 +87,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           <div className="flex flex-col items-center gap-3 text-center lg:items-start lg:text-start">
             <div className="flex w-full items-center justify-between">
               <BrandLockup size="md" locale={locale} />
-              <SecurityLockBadge size={38} />
+              <ShieldCheck size={24} weight="fill" className="text-primary" />
             </div>
             {/* Yaseir Capsule Tab Switcher */}
             <div className="mt-1 grid w-full grid-cols-2 rounded-full bg-surface-muted p-1 text-xs font-bold">

@@ -278,7 +278,7 @@ At the end of each milestone: update `PROGRESS.md`, tag a release, and write a s
 
 1. Meta Business verification and a WhatsApp Business Account with a dedicated number; app secret and access token; template approval (start immediately, it can take time).
 2. A Paymob merchant account (sandbox first) and an SMS provider account.
-3. An Anthropic API key and a monthly LLM budget.
+3. A Gemini or Anthropic API key. Set provider-side spend alerts and limits; this release meters token usage but does not implement a hard global USD spend cap.
 4. Choices for object storage, Redis and Postgres hosting, plus a domain name and an email sender.
 5. Legal review of: collection-message wording, data protection obligations, and the shared-behavior feature.
 6. Seed data for evals: real anonymized ledger photos, transfer screenshots, and 150 realistic Egyptian-Arabic replies.

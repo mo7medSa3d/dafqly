@@ -74,7 +74,13 @@ export function WhatsAppShareButton({
   );
 }
 
-/** Generate a polite Arabic/English reminder message for a specific invoice */
+/**
+ * Generate a polite Arabic/English reminder message for a specific invoice.
+ * `amount` must already carry its currency (callers pass the tenant
+ * currency symbol); the message appends NO currency itself — it used to
+ * hardcode ج.م./EGP here, which double-labelled amounts that already had
+ * a symbol and mis-labelled every non-EGP tenant.
+ */
 export function invoiceShareMessage({
   businessName,
   amount,
@@ -87,9 +93,9 @@ export function invoiceShareMessage({
   locale: string;
 }): string {
   if (locale === "ar") {
-    return `من ${businessName}: تذكير ودّي بمستحقات بقيمة ${amount} ج.م. بتاريخ استحقاق ${dueDate}. شكرًا لتعاونكم. 🙏`;
+    return `من ${businessName}: تذكير ودّي بمستحقات بقيمة ${amount} بتاريخ استحقاق ${dueDate}. شكرًا لتعاونكم. 🙏`;
   }
-  return `From ${businessName}: Friendly reminder of ${amount} EGP due on ${dueDate}. Thank you for your cooperation. 🙏`;
+  return `From ${businessName}: Friendly reminder of ${amount} due on ${dueDate}. Thank you for your cooperation. 🙏`;
 }
 
 /** Generate a polite Arabic/English message for total outstanding */
@@ -103,7 +109,7 @@ export function totalShareMessage({
   locale: string;
 }): string {
   if (locale === "ar") {
-    return `من ${businessName}: إجمالي المستحقات ${totalAmount} ج.م. نرجو التواصل لتسوية الحساب. شكرًا لكم. 🙏`;
+    return `من ${businessName}: إجمالي المستحقات ${totalAmount} نرجو التواصل لتسوية الحساب. شكرًا لكم. 🙏`;
   }
-  return `From ${businessName}: Total outstanding is ${totalAmount} EGP. Please get in touch to settle the account. Thank you. 🙏`;
+  return `From ${businessName}: Total outstanding is ${totalAmount}. Please get in touch to settle the account. Thank you. 🙏`;
 }

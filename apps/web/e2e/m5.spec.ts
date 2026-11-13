@@ -88,17 +88,12 @@ test("M5 dashboard: reports render, forecast is honestly not-enough-data, upgrad
   await expect(page.getByTestId("kpi-collection-rate")).toBeVisible();
   await expect(page.getByTestId("forecast-not-enough")).toBeVisible();
 
-  // Plans render with the placeholder-price label on the billing page; upgrading via the FAKE
-  // provider takes effect immediately (the live Paymob charge is a human
-  // step — prices are NOT decided).
+  // Plans render with the pricing-not-final notice on the billing page;
+  // paid upgrades are disabled while prices are placeholders
+  // (HUMAN_INPUTS #10) — the server refuses them with PRICING_NOT_FINAL.
   await page.goto("/ar/billing");
   await page.waitForLoadState("networkidle");
-  await page.getByTestId("upgrade-starter").click();
-  // The click fires an async mutation; poll the quota until it commits.
-  await expect.poll(async () => {
-    const quotaRes = await page.request.get("/api/trpc/billing.quota");
-    if (quotaRes.status() !== 200) return null;
-    const quota = (await quotaRes.json() as { result: { data: { planKey: string; quota: number | null } } }).result.data;
-    return quota.planKey === "starter" && quota.quota === 500 ? "starter:500" : quota.planKey;
-  }, { timeout: 10_000 }).toBe("starter:500");
+  await expect(page.getByText("السعر يُحدد قريباً").first()).toBeVisible();
+  await expect(page.getByTestId("upgrade-starter")).toBeDisabled();
+  await expect(page.getByTestId("upgrade-growth")).toBeDisabled();
 });

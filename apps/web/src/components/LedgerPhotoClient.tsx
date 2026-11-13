@@ -2,16 +2,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { Camera, CheckCircle, Eye, Notebook, Trash, WarningCircle } from "@phosphor-icons/react";
+import { currencyMinorExponent, formatCurrencyMinor } from "@tahseel/core";
 import { trpc } from "@/lib/trpc-client";
+import { useCurrency } from "./CurrencyContext";
 import { Panel, StatusPill, btnGhost, btnPrimary } from "./ui";
 
 /**
  * F6 ledger-photo review: upload pages -> extraction progress -> editable
  * review table next to the page list, low-confidence CELLS highlighted ->
  * explicit confirm (commit). Nothing is imported before confirm.
- * The stored page image is shown by file name (the dev storage is the
- * in-process fake — signed URLs land with the S3 adapter); the file itself
- * is attached to every imported invoice as evidence.
+ * Page images live in S3-compatible storage (MinIO locally, S3-compatible
+ * in production — see aiDeps() in server/engine.ts); only tests use the
+ * in-process fake storage. The file itself is attached to every imported
+ * invoice as evidence.
  */
 interface RowData { name: string; phone: string | null; amountMinor: string; date: string | null; note: string | null; debtorId: string | null }
 interface JobRow {
@@ -36,6 +39,8 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 export function LedgerPhotoClient() {
+  const { currency } = useCurrency();
+  const minorScale = 10 ** currencyMinorExponent(currency);
   const t = useTranslations("ledgerPhoto");
   const locale = useLocale();
   const isAr = locale === "ar";
@@ -114,7 +119,7 @@ export function LedgerPhotoClient() {
         rowId: row.id,
         ...(e.name !== undefined ? { name: e.name } : {}),
         ...(e.phone !== undefined ? { phone: e.phone } : {}),
-        ...(e.amountMinor !== undefined ? { amount: (Number(e.amountMinor) / 100).toFixed(2) } : {}),
+        ...(e.amountMinor !== undefined ? { amount: formatCurrencyMinor(BigInt(e.amountMinor), currency).replace(/,/g, "") } : {}),
         ...(e.date !== undefined ? { date: e.date } : {}),
         ...(e.debtorId !== undefined ? { debtorId: e.debtorId } : {}),
       });
@@ -270,8 +275,8 @@ export function LedgerPhotoClient() {
                     </td>
                     <td className={`px-2 py-1.5 ${row.cellConfidence && row.cellConfidence.amount < LOW ? lowCell : ""}`}>
                       <input aria-label={t("amount")} className={cellInput}
-                        value={edits[row.id]?.amountMinor !== undefined ? String(Number(edits[row.id]!.amountMinor) / 100) : row.data ? (Number(row.data.amountMinor) / 100).toFixed(2) : ""}
-                        onChange={(e) => edit(row, { amountMinor: String(Math.round(Number(e.target.value || "0") * 100)) })} />
+                        value={edits[row.id]?.amountMinor !== undefined ? String(Number(edits[row.id]!.amountMinor) / minorScale) : row.data ? formatCurrencyMinor(BigInt(row.data.amountMinor), currency).replace(/,/g, "") : ""}
+                        onChange={(e) => edit(row, { amountMinor: String(Math.round(Number(e.target.value || "0") * minorScale)) })} />
                       {row.cellConfidence && row.cellConfidence.amount < LOW && lowNote}
                     </td>
                     <td className="px-2 py-1.5">

@@ -35,13 +35,52 @@ export interface ReplyContext {
   dueOn?: string | null;
 }
 
+export interface AgentMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface AgentToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+export interface AgentToolExecution {
+  name: string;
+  arguments: Record<string, unknown>;
+  result: unknown;
+}
+
+export interface AgentRunResult {
+  text: string;
+  toolExecutions: AgentToolExecution[];
+  inputTokens: number;
+  outputTokens: number;
+  model: string;
+  steps: number;
+}
+
+export interface AgentRunInput {
+  systemInstruction: string;
+  messages: AgentMessage[];
+  tools: AgentToolDefinition[];
+  executeTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+  maxSteps?: number;
+  maxToolCalls?: number;
+}
+
 export interface OcrLlmProvider {
   extractLedgerPage(image: Uint8Array, mime: string): Promise<LlmCallResult<LedgerExtraction>>;
   extractReceipt(image: Uint8Array, mime: string): Promise<LlmCallResult<ReceiptExtraction>>;
   classifyReply(text: string, context: ReplyContext): Promise<LlmCallResult<ReplyClassification>>;
   /** F9: cheque photo -> fields for a merchant-reviewed pre-filled form (a claim, never a registration). */
   extractCheque(image: Uint8Array, mime: string): Promise<LlmCallResult<ChequeExtraction>>;
-  generateText?(prompt: string, systemInstruction?: string): Promise<{ text: string; inputTokens: number; outputTokens: number }>;
+  generateText?(prompt: string, systemInstruction?: string): Promise<{ text: string; inputTokens: number; outputTokens: number; model?: string }>;
+  /** Native multi-turn tool calling; tools are executed only by the server callback. */
+  runAgent?(input: AgentRunInput): Promise<AgentRunResult>;
+  /** Emits provider text deltas as they arrive; used for user-visible token streaming. */
+  streamText?(prompt: string, systemInstruction: string | undefined, onToken: (delta: string) => void): Promise<{ text: string; inputTokens: number; outputTokens: number; model?: string }>;
 }
 
 export class LlmNotConfiguredError extends Error {
@@ -55,7 +94,9 @@ type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
 
 export interface AnthropicOptions {
   apiKey: string;
-  /** Unified multimodal model handling both text/replies and images/files (OCR). */
+  /** Model for multi-step workspace agent reasoning. */
+  modelAgent?: string;
+  /** Optional shared model override for backwards compatibility. */
   model?: string;
   modelFast?: string;
   modelVision?: string;
@@ -66,7 +107,7 @@ export interface AnthropicOptions {
 }
 
 interface AnthropicResponse {
-  content?: { type: string; name?: string; input?: unknown }[];
+  content?: { type: string; id?: string; name?: string; input?: unknown; text?: string }[];
   usage?: { input_tokens?: number; output_tokens?: number };
 }
 
@@ -165,8 +206,131 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
     });
   }
 
-  async generateText(prompt: string, systemInstruction?: string): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
-    const model = this.opts.model ?? "claude-sonnet-5-5";
+  async runAgent(input: AgentRunInput): Promise<AgentRunResult> {
+    const model = this.opts.modelAgent ?? this.opts.model ?? this.opts.modelFast ?? "claude-sonnet-5-5";
+    const messages: { role: "user" | "assistant"; content: unknown }[] = input.messages.map((m) => ({ role: m.role, content: m.content }));
+    const allowed = new Map(input.tools.map((tool) => [tool.name, tool]));
+    const toolExecutions: AgentToolExecution[] = [];
+    const maxSteps = Math.min(5, Math.max(1, input.maxSteps ?? 4));
+    const maxToolCalls = Math.min(10, Math.max(1, input.maxToolCalls ?? 8));
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let finalText = "";
+
+    for (let step = 0; step < maxSteps; step += 1) {
+      const res = await this.fetchFn(`${this.baseUrl}/v1/messages`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": this.opts.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 1400,
+          system: input.systemInstruction,
+          messages,
+          tools: input.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.inputSchema,
+          })),
+          tool_choice: { type: "auto" },
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+      if (!res.ok) throw new Error(`Anthropic Agent API error: HTTP ${res.status}`);
+      const body = (await res.json()) as AnthropicResponse;
+      inputTokens += body.usage?.input_tokens ?? 0;
+      outputTokens += body.usage?.output_tokens ?? 0;
+      const content = body.content ?? [];
+      finalText = content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
+      const toolUses = content.filter((part) => part.type === "tool_use");
+      if (toolUses.length === 0) {
+        return { text: finalText, toolExecutions, inputTokens, outputTokens, model, steps: step + 1 };
+      }
+
+      // The full assistant content (including opaque tool-use ids) must be
+      // echoed back exactly before the corresponding tool_result blocks.
+      messages.push({ role: "assistant", content });
+      const results: Record<string, unknown>[] = [];
+      for (const toolUse of toolUses) {
+        const args = toolUse.input && typeof toolUse.input === "object" && !Array.isArray(toolUse.input)
+          ? toolUse.input as Record<string, unknown> : {};
+        let result: unknown;
+        if (toolExecutions.length >= maxToolCalls) {
+          result = { error: "tool_call_limit_reached" };
+        } else {
+          try {
+            result = allowed.has(toolUse.name ?? "")
+              ? await input.executeTool(toolUse.name!, args)
+              : { error: "tool_not_allowed" };
+          } catch {
+            result = { error: "tool_execution_failed" };
+          }
+        }
+        toolExecutions.push({ name: toolUse.name ?? "unknown", arguments: args, result });
+        if (toolUse.id) {
+          // Anthropic requires one tool_result per tool_use id, even when the
+          // application rejects execution because its budget is exhausted.
+          results.push({ type: "tool_result", tool_use_id: toolUse.id, content: JSON.stringify(result) });
+        }
+      }
+      if (results.length === 0) break;
+      messages.push({ role: "user", content: results });
+    }
+
+    return {
+      text: finalText || "لم أتمكن من إكمال التحليل ضمن حد خطوات الأدوات. جرّب تقسيم السؤال إلى خطوات أصغر.",
+      toolExecutions, inputTokens, outputTokens, model, steps: maxSteps,
+    };
+  }
+
+  async streamText(prompt: string, systemInstruction: string | undefined, onToken: (delta: string) => void): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+    const model = this.opts.modelFast ?? this.opts.model ?? "claude-haiku-5-5";
+    const res = await this.fetchFn(`${this.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": this.opts.apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model, max_tokens: 1400, stream: true, system: systemInstruction, messages: [{ role: "user", content: prompt }] }),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    if (!res.ok || !res.body) throw new Error(`Anthropic streaming error: HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let text = "";
+    let inputTokens = 0;
+    let outputTokens = 0;
+    const consume = (block: string) => {
+      const data = block.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
+      if (!data || data === "[DONE]") return;
+      let event: { type?: string; delta?: { type?: string; text?: string }; message?: { usage?: { input_tokens?: number } }; usage?: { output_tokens?: number } };
+      try {
+        event = JSON.parse(data) as { type?: string; delta?: { type?: string; text?: string }; message?: { usage?: { input_tokens?: number } }; usage?: { output_tokens?: number } };
+      } catch {
+        return;
+      }
+      if (event.type === "message_start") inputTokens += event.message?.usage?.input_tokens ?? 0;
+      if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
+        text += event.delta.text; onToken(event.delta.text);
+      }
+      if (event.type === "message_delta") outputTokens += event.usage?.output_tokens ?? 0;
+    };
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true }).replace(/\r/g, "");
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary >= 0) { consume(buffer.slice(0, boundary)); buffer = buffer.slice(boundary + 2); boundary = buffer.indexOf("\n\n"); }
+      }
+      if (buffer.trim()) consume(buffer);
+    } finally { reader.releaseLock(); }
+    return { text, inputTokens, outputTokens, model };
+  }
+
+  async generateText(prompt: string, systemInstruction?: string): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+    const model = this.opts.modelFast ?? this.opts.model ?? "claude-haiku-5-5";
     const endpoint = `${this.baseUrl}/v1/messages`;
     const payload = {
       model,
@@ -191,7 +355,7 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
     const body = (await res.json()) as { content?: Array<{ text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
     const text = body.content?.[0]?.text ?? "";
     return {
-      text,
+      text, model,
       inputTokens: body.usage?.input_tokens ?? 0,
       outputTokens: body.usage?.output_tokens ?? 0,
     };
@@ -217,14 +381,14 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
  */
 export const SYNTHETIC_MARKER = "TAHSEEL_SYNTHETIC_B64:";
 
-interface SyntheticPayload {
+export interface SyntheticPayload {
   kind: "ledger" | "receipt" | "cheque";
   rows?: Record<string, unknown>[];
   extraction?: Record<string, unknown>;
   errors?: Record<string, Record<string, unknown>>;
 }
 
-function readSyntheticPayload(image: Uint8Array): SyntheticPayload | null {
+export function readSyntheticPayload(image: Uint8Array): SyntheticPayload | null {
   const text = new TextDecoder().decode(image);
   const at = text.indexOf(SYNTHETIC_MARKER);
   if (at < 0) return null;

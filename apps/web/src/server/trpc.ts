@@ -1,12 +1,14 @@
 import { initTRPC, TRPCError } from "@trpc/server";
 import { AppError } from "@tahseel/core";
 import { z } from "zod";
-import { auth } from "./auth";
+import { auth, emailVerificationEnabled } from "./auth";
 import { appDb, ownerDb } from "./db";
 import { listTenantsForUser } from "./services";
+import { withAiTenantContext } from "./ai-budget";
 
 export interface TrpcContext {
-  user: { id: string; email: string; name: string } | null;
+  user: { id: string; email: string; name: string; emailVerified: boolean } | null;
+  headers: Headers;
   appDb: ReturnType<typeof appDb>;
   ownerDb: ReturnType<typeof ownerDb>;
 }
@@ -14,7 +16,10 @@ export interface TrpcContext {
 export async function createTrpcContext(headers: Headers): Promise<TrpcContext> {
   const session = await auth.api.getSession({ headers });
   return {
-    user: session?.user ? { id: session.user.id, email: session.user.email, name: session.user.name } : null,
+    user: session?.user
+      ? { id: session.user.id, email: session.user.email, name: session.user.name, emailVerified: session.user.emailVerified }
+      : null,
+    headers,
     appDb: appDb(),
     ownerDb: ownerDb(),
   };
@@ -44,6 +49,16 @@ export const publicProcedure = t.procedure;
 
 export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
   if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED", message: "Sign-in required" });
+  // H5: when email verification is enabled, an unverified account cannot
+  // use any authenticated capability (including creating tenants and
+  // sending reminders) until the email is verified. Off by default until
+  // a real SMTP sender is configured — see auth.emailVerificationEnabled.
+  // The gate lives here (not tenantProcedure) so tenant creation is
+  // covered too; the verification flow itself runs on Better Auth's own
+  // /api/auth endpoints, not on tRPC.
+  if (emailVerificationEnabled() && !ctx.user.emailVerified) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "EMAIL_NOT_VERIFIED: verify your email to use the workspace" });
+  }
   return next({ ctx: { ...ctx, user: ctx.user } });
 });
 
@@ -52,5 +67,18 @@ export const tenantProcedure = protectedProcedure.use(async ({ ctx, next }) => {
   const mine = await listTenantsForUser(ctx.ownerDb, ctx.user.id);
   const first = mine[0];
   if (!first) throw new TRPCError({ code: "FORBIDDEN", message: "NO_TENANT: complete onboarding first" });
-  return next({ ctx: { ...ctx, tenantId: first.tenantId, role: first.role } });
+  return withAiTenantContext(first.tenantId, () => next({ ctx: { ...ctx, tenantId: first.tenantId, role: first.role } }));
+});
+
+/**
+ * Owner-only tenant procedure. Money-moving and tenant-wide actions —
+ * refunds, confirming claimed payments, plan changes, settings, dispute
+ * resolution, full-data exports — must not be callable by staff members.
+ * The role comes from the caller's membership row, never from the client.
+ */
+export const ownerProcedure = tenantProcedure.use(({ ctx, next }) => {
+  if (ctx.role !== "owner") {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Only workspace owners can perform this action" });
+  }
+  return next({ ctx });
 });

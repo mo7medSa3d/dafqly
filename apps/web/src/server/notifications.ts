@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import {
   buildOperationalNotificationCandidates,
+  normalizeCurrencyCode,
   type NotificationCandidate,
 } from "@tahseel/core";
 import { withTenant, type Db } from "@tahseel/db";
@@ -14,6 +15,7 @@ import {
   messages,
   notifications,
   payments,
+  tenants,
 } from "@tahseel/db/schema";
 import { getQuotaStatus } from "./billing";
 
@@ -105,7 +107,7 @@ export async function syncWorkspaceNotifications(
   tenantId: string,
   todayIso: string,
   briefingSummary?: { summaryAr: string; summaryEn: string },
-): Promise<{ created: number }> {
+): Promise<{ created: number; truncatedCategories: string[] }> {
   const dueWindowEnd = addDaysIso(todayIso, 3);
   const overdueCutoff = addDaysIso(todayIso, -14);
 
@@ -113,12 +115,18 @@ export async function syncWorkspaceNotifications(
   try {
     const q = await getQuotaStatus(app, tenantId, new Date());
     quotaRatio = q.quota ? q.ratio : null;
-  } catch {
+  } catch (err) {
+    // Quota warnings degrade gracefully, but a failing quota lookup must
+    // not vanish silently — it usually means the DB is unhappy.
+    console.warn("[notifications] quota lookup failed during sync", {
+      tenantId,
+      error: err instanceof Error ? err.message : String(err),
+    });
     quotaRatio = null;
   }
 
   return withTenant(app, tenantId, async (tx) => {
-    const [claimRows, disputeRows, intentRows, chequeRows, overdueRows] = await Promise.all([
+    const [claimRows, disputeRows, intentRows, chequeRows, overdueRows, tenantRow] = await Promise.all([
       tx
         .select({
           id: payments.id,
@@ -129,7 +137,7 @@ export async function syncWorkspaceNotifications(
         .from(payments)
         .innerJoin(debtors, eq(debtors.id, payments.debtorId))
         .where(eq(payments.status, "claimed"))
-        .limit(10),
+        .limit(11),
       tx
         .select({
           id: disputes.id,
@@ -141,7 +149,7 @@ export async function syncWorkspaceNotifications(
         .innerJoin(debtors, eq(debtors.id, disputes.debtorId))
         .innerJoin(invoices, eq(invoices.id, disputes.invoiceId))
         .where(eq(disputes.status, "open"))
-        .limit(10),
+        .limit(11),
       tx
         .select({
           id: messageIntents.id,
@@ -151,7 +159,7 @@ export async function syncWorkspaceNotifications(
         .from(messageIntents)
         .innerJoin(messages, eq(messages.id, messageIntents.messageId))
         .where(and(eq(messageIntents.resolvedBy, "human"), eq(messageIntents.actionTaken, "human_inbox")))
-        .limit(10),
+        .limit(11),
       tx
         .select({
           id: cheques.id,
@@ -166,7 +174,7 @@ export async function syncWorkspaceNotifications(
         .where(
           sql`(${cheques.status} = 'bounced' OR (${cheques.status} IN ('held', 'deposited') AND ${cheques.dueDate} <= ${dueWindowEnd}))`,
         )
-        .limit(10),
+        .limit(11),
       tx
         .select({
           debtorId: debtors.id,
@@ -183,12 +191,28 @@ export async function syncWorkspaceNotifications(
             lte(invoices.dueOn, overdueCutoff),
           ),
         )
-        .limit(30),
+        .limit(31),
+      // F-06: tenant display currency for the notification amounts.
+      tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId)).limit(1),
     ]);
+
+    // Each category query fetched cap+1 rows: a full page means more items
+    // exist than this sync can notify about — surface that instead of
+    // silently dropping the rest.
+    const truncatedCategories: string[] = [];
+    const take = <T,>(rows: T[], cap: number, category: string): T[] => {
+      if (rows.length > cap) truncatedCategories.push(category);
+      return rows.slice(0, cap);
+    };
+    const claimRowsCapped = take(claimRows, 10, "claims");
+    const disputeRowsCapped = take(disputeRows, 10, "disputes");
+    const intentRowsCapped = take(intentRows, 10, "intents");
+    const chequeRowsCapped = take(chequeRows, 10, "cheques");
+    const overdueRowsCapped = take(overdueRows, 30, "overdue");
 
     const overdueByDebtor = new Map<string, { debtorId: string; displayName: string; overdueMinor: bigint; maxDaysOverdue: number }>();
     const todayMs = Date.parse(`${todayIso}T00:00:00Z`);
-    for (const r of overdueRows) {
+    for (const r of overdueRowsCapped) {
       const rem = BigInt(r.remainingMinor || "0");
       if (rem <= 0n) continue;
       const dueMs = Date.parse(`${r.dueOn}T00:00:00Z`);
@@ -209,19 +233,20 @@ export async function syncWorkspaceNotifications(
 
     const candidates = buildOperationalNotificationCandidates({
       todayIso,
-      pendingClaims: claimRows,
-      openDisputes: disputeRows,
-      humanIntents: intentRows.map((i) => ({ id: i.id, intent: i.intent, bodySnippet: i.bodySnippet ?? "" })),
-      upcomingCheques: chequeRows,
+      pendingClaims: claimRowsCapped,
+      openDisputes: disputeRowsCapped,
+      humanIntents: intentRowsCapped.map((i) => ({ id: i.id, intent: i.intent, bodySnippet: i.bodySnippet ?? "" })),
+      upcomingCheques: chequeRowsCapped,
       severeOverdueDebtors: [...overdueByDebtor.values()].sort((a, b) =>
         b.overdueMinor > a.overdueMinor ? 1 : b.overdueMinor < a.overdueMinor ? -1 : 0,
       ),
       quotaRatio,
       briefingSummaryAr: briefingSummary?.summaryAr,
       briefingSummaryEn: briefingSummary?.summaryEn,
+      currency: normalizeCurrencyCode(tenantRow?.[0]?.settings?.currency),
     });
 
-    if (candidates.length === 0) return { created: 0 };
+    if (candidates.length === 0) return { created: 0, truncatedCategories };
 
     const inserted = await tx
       .insert(notifications)
@@ -244,7 +269,7 @@ export async function syncWorkspaceNotifications(
       .onConflictDoNothing({ target: [notifications.tenantId, notifications.dedupeKey] })
       .returning({ id: notifications.id });
 
-    return { created: inserted.length };
+    return { created: inserted.length, truncatedCategories };
   });
 }
 

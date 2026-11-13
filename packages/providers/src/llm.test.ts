@@ -132,3 +132,151 @@ describe("storage helpers", () => {
     expect(await store.get("k1")).toBeNull();
   });
 });
+
+describe("S3CompatibleStorageProvider (SigV4) contract", () => {
+  it("signs private object operations and creates bounded presigned GET URLs", async () => {
+    const { S3CompatibleStorageProvider } = await import("./storage");
+    const calls: { url: string; init: RequestInit }[] = [];
+    const store = new S3CompatibleStorageProvider({
+      endpoint: "http://localhost:9000",
+      region: "us-east-1",
+      bucket: "private-files",
+      accessKey: "minio-access",
+      secretKey: "minio-secret-key",
+      forcePathStyle: true,
+      now: () => new Date("2026-11-12T10:00:00.000Z"),
+      fetchFn: async (url, init) => {
+        calls.push({ url, init });
+        if (init.method === "GET") return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+        return new Response(null, { status: init.method === "DELETE" ? 204 : 200 });
+      },
+    });
+
+    await store.put("tenant-a/receipt-1", new Uint8Array([1, 2, 3]), "image/png");
+    expect(calls[0]?.url).toBe("http://localhost:9000/private-files/tenant-a/receipt-1");
+    const putHeaders = calls[0]?.init.headers as Record<string, string>;
+    expect(putHeaders.authorization).toContain("AWS4-HMAC-SHA256");
+    expect(putHeaders["x-amz-content-sha256"]).toMatch(/^[a-f0-9]{64}$/);
+
+    expect(await store.get("tenant-a/receipt-1")).toEqual(new Uint8Array([1, 2, 3]));
+    await store.delete("tenant-a/receipt-1");
+
+    const signed = new URL(await store.getSignedUrl("tenant-a/receipt-1", 300));
+    expect(signed.searchParams.get("X-Amz-Algorithm")).toBe("AWS4-HMAC-SHA256");
+    expect(signed.searchParams.get("X-Amz-Expires")).toBe("300");
+    expect(signed.searchParams.get("X-Amz-Signature")).toMatch(/^[a-f0-9]{64}$/);
+    await expect(store.getSignedUrl("tenant-a/receipt-1", 604_801)).rejects.toThrow(/7 days/i);
+    await expect(store.get("../outside-tenant/object")).rejects.toThrow(/Invalid object storage key/);
+  });
+
+  it("returns null for missing objects and rejects non-local HTTP endpoints", async () => {
+    const { S3CompatibleStorageProvider } = await import("./storage");
+    const store = new S3CompatibleStorageProvider({
+      endpoint: "http://localhost:9000", region: "us-east-1", bucket: "private-files",
+      accessKey: "key", secretKey: "secret", fetchFn: async () => new Response(null, { status: 404 }),
+    });
+    expect(await store.get("tenant-a/missing")).toBeNull();
+    expect(() => new S3CompatibleStorageProvider({
+      endpoint: "http://storage.example.com", region: "us-east-1", bucket: "b", accessKey: "a", secretKey: "s",
+    })).toThrow(/HTTPS/);
+  });
+});
+
+describe("Anthropic native Agent tool loop", () => {
+  it("uses native tool_use/tool_result turns and returns a model-authored final message", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchFn = async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(init.body as string) as Record<string, unknown>);
+      if (bodies.length === 1) {
+        return new Response(JSON.stringify({
+          content: [{ type: "tool_use", id: "tool-123", name: "get_workspace_summary", input: {} }],
+          usage: { input_tokens: 10, output_tokens: 3 },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        content: [{ type: "text", text: "Your overdue balance is EGP 12,000." }],
+        usage: { input_tokens: 18, output_tokens: 8 },
+      }), { status: 200 });
+    };
+    const provider = new AnthropicLlmProvider({ apiKey: "sk-test", modelFast: "claude-fast", fetchFn });
+    const out = await provider.runAgent!({
+      systemInstruction: "Use tools for facts.",
+      messages: [{ role: "user", content: "Summarize collections" }],
+      tools: [{ name: "get_workspace_summary", description: "Read workspace summary", inputSchema: { type: "object", properties: {} } }],
+      executeTool: async () => ({ overdueMinor: "1200000" }),
+    });
+    expect(out.text).toContain("EGP 12,000");
+    expect(out.toolExecutions).toHaveLength(1);
+    expect(out.inputTokens).toBe(28);
+    expect(out.outputTokens).toBe(11);
+    const secondMessages = bodies[1]?.messages as { role: string; content: string | { type?: string; tool_use_id?: string }[] }[];
+    // User-turn content may be a plain string (valid Anthropic shape); only
+    // content-block arrays can carry a tool_result part.
+    expect(secondMessages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === "tool_result" && part.tool_use_id === "tool-123"))).toBe(true);
+  });
+});
+
+
+describe("Anthropic model routing and tool budgets", () => {
+  it("uses the fast model for copy generation rather than the agent model", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const provider = new AnthropicLlmProvider({
+      apiKey: "sk-test", modelAgent: "claude-sonnet-5-5", modelFast: "claude-haiku-5-5",
+      fetchFn: async (_url, init) => {
+        requestBodies.push(JSON.parse(init.body as string) as Record<string, unknown>);
+        return new Response(JSON.stringify({ content: [{ type: "text", text: "Draft." }], usage: { input_tokens: 4, output_tokens: 2 } }), { status: 200 });
+      },
+    });
+    await provider.generateText!("Rewrite safely.");
+    expect(requestBodies[0]?.model).toBe("claude-haiku-5-5");
+  });
+
+  it("records every requested tool, including calls rejected by the per-turn tool budget", async () => {
+    let requestCount = 0;
+    const provider = new AnthropicLlmProvider({
+      apiKey: "sk-test", modelAgent: "claude-sonnet-5-5",
+      fetchFn: async () => {
+        requestCount += 1;
+        const content = requestCount === 1
+          ? [
+              { type: "tool_use", id: "tool-1", name: "read_one", input: {} },
+              { type: "tool_use", id: "tool-2", name: "read_two", input: {} },
+            ]
+          : [{ type: "text", text: "I could only run one tool." }];
+        return new Response(JSON.stringify({ content, usage: { input_tokens: 3, output_tokens: 2 } }), { status: 200 });
+      },
+    });
+    const executed: string[] = [];
+    const out = await provider.runAgent!({
+      systemInstruction: "Read only.",
+      messages: [{ role: "user", content: "Read two things." }],
+      tools: [
+        { name: "read_one", description: "First", inputSchema: { type: "object", properties: {} } },
+        { name: "read_two", description: "Second", inputSchema: { type: "object", properties: {} } },
+      ],
+      executeTool: async (name) => { executed.push(name); return { ok: true }; },
+      maxToolCalls: 1,
+    });
+    expect(executed).toEqual(["read_one"]);
+    expect(out.toolExecutions).toHaveLength(2);
+    expect(out.toolExecutions[1]?.result).toEqual({ error: "tool_call_limit_reached" });
+  });
+});
+
+
+describe("Anthropic native text streaming", () => {
+  it("forwards text_delta events without waiting for the complete response", async () => {
+    const events = [
+      { type: "message_start", message: { usage: { input_tokens: 7 } } },
+      { type: "content_block_delta", delta: { type: "text_delta", text: "تحليل " } },
+      { type: "content_block_delta", delta: { type: "text_delta", text: "واضح" } },
+      { type: "message_delta", usage: { output_tokens: 3 } },
+    ];
+    const body = events.map((value) => `event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`).join("");
+    const provider = new AnthropicLlmProvider({ apiKey: "sk-test", modelFast: "claude-haiku-5-5", fetchFn: async () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }) });
+    const deltas: string[] = [];
+    const result = await provider.streamText("Prompt", "System", (delta) => deltas.push(delta));
+    expect(deltas).toEqual(["تحليل ", "واضح"]);
+    expect(result).toMatchObject({ text: "تحليل واضح", inputTokens: 7, outputTokens: 3, model: "claude-haiku-5-5" });
+  });
+});

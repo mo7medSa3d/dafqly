@@ -4,7 +4,7 @@ import { clickNav } from "./helpers";
 
 /**
  * M4 (F6/F7/F8) over real HTTP against the production build, through the
- * FAKE LLM + synthetic SVG payloads (no Anthropic key exists — the live
+ * FAKE LLM + synthetic PNG payloads (no Anthropic key exists — the live
  * run is a RUNBOOK manual step):
  *  1. Ledger photo: upload a synthetic page in the UI, the review table
  *     shows the extracted row, confirm imports it (source=ledger_photo).
@@ -17,8 +17,54 @@ import { clickNav } from "./helpers";
 const SECRET = "e2e-app-secret-for-tests-only-0123456789";
 const sign = (body: string) => `sha256=${createHmac("sha256", SECRET).update(body, "utf8").digest("hex")}`;
 
-const svgWith = (payload: unknown) =>
-  Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" data-synthetic="true"><desc>TAHSEEL_SYNTHETIC_B64:${Buffer.from(JSON.stringify(payload)).toString("base64")}</desc><text>synthetic</text></svg>`);
+/** CRC-32 (IEEE) — for building structurally valid PNG fixtures. */
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+function crc32(bytes: Uint8Array): number {
+  let c = 0xffffffff;
+  for (const b of bytes) c = CRC_TABLE[(c ^ b) & 0xff]! ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const out = new Uint8Array(12 + data.length);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, data.length);
+  out.set(new TextEncoder().encode(type), 4);
+  out.set(data, 8);
+  const crcInput = new Uint8Array(4 + data.length);
+  crcInput.set(out.subarray(4, 8 + data.length));
+  view.setUint32(8 + data.length, crc32(crcInput));
+  return out;
+}
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((s, p) => s + p.length, 0);
+  const out = new Uint8Array(total);
+  let pos = 0;
+  for (const p of parts) { out.set(p, pos); pos += p.length; }
+  return out;
+}
+/**
+ * M5: a REAL 1×1 PNG carrying the synthetic FakeLlm payload in a private
+ * `synT` chunk (the fake LLM scans raw bytes for the marker) — the old
+ * SVG-as-PNG fixtures are now rejected by the magic-byte check.
+ */
+const pngWith = (payload: unknown) => {
+  const marker = `TAHSEEL_SYNTHETIC_B64:${Buffer.from(JSON.stringify(payload)).toString("base64")}`;
+  const PNG_SIG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const IHDR_1X1 = new Uint8Array([0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]);
+  const IDAT_1X1 = new Uint8Array([0x78, 0x01, 0x01, 0x04, 0x00, 0xfb, 0xff, 0x00, 0xff, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00]);
+  return Buffer.from(concatBytes(
+    PNG_SIG, pngChunk("IHDR", IHDR_1X1), pngChunk("synT", new TextEncoder().encode(marker)),
+    pngChunk("IDAT", IDAT_1X1), pngChunk("IEND", new Uint8Array(0)),
+  ));
+};
 
 async function login(page: Page) {
   await page.goto("/ar/login");
@@ -89,7 +135,7 @@ test("M4 ledger photo -> receipt claim -> confirm pays (UI + API)", async ({ pag
   // F6: ledger photo through the UI.
   await clickNav(page, "nav-ledger-photo");
   await expect(page).toHaveURL(/\/ar\/ledger-photo/);
-  const ledgerSvg = svgWith({
+  const ledgerSvg = pngWith({
     kind: "ledger",
     rows: [{
       name: "عميل دفتر جديد", phone: "01034343434", amount_minor: 40000, date: "2026-11-05",
@@ -97,7 +143,7 @@ test("M4 ledger photo -> receipt claim -> confirm pays (UI + API)", async ({ pag
     }],
     errors: {},
   });
-  await page.getByTestId("ledger-file").setInputFiles({ name: "ledger.svg", mimeType: "image/png", buffer: ledgerSvg });
+  await page.getByTestId("ledger-file").setInputFiles({ name: "ledger.png", mimeType: "image/png", buffer: ledgerSvg });
   await expect(page.getByTestId("ledger-row-1")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("ledger-commit").click();
   await expect(page.getByRole("status").filter({ hasText: /تم الاستيراد/ })).toBeVisible({ timeout: 30_000 });
@@ -111,7 +157,7 @@ test("M4 ledger photo -> receipt claim -> confirm pays (UI + API)", async ({ pag
   await clickNav(page, "nav-ai-inbox");
   await expect(page).toHaveURL(/\/ar\/ai-inbox/);
   await page.getByTestId("receipt-debtor").selectOption(debtor.id);
-  const receiptSvg = svgWith({
+  const receiptSvg = pngWith({
     kind: "receipt",
     extraction: {
       is_receipt: true, amount_minor: 25000, currency: "EGP", datetime: "2026-11-08T10:00:00Z",
@@ -120,8 +166,11 @@ test("M4 ledger photo -> receipt claim -> confirm pays (UI + API)", async ({ pag
     },
     errors: {},
   });
-  await page.getByTestId("receipt-file").setInputFiles({ name: "receipt.svg", mimeType: "image/png", buffer: receiptSvg });
-  await expect(page.getByText(/نتيجة قراءة الإيصال/)).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("receipt-file").setInputFiles({ name: "receipt.png", mimeType: "image/png", buffer: receiptSvg });
+  // Prompt 07: the "نتيجة قراءة الإيصال" message only shows when NO debtor
+  // is recognised; here the receipt matches the debtor by exact amount, so
+  // the client shows the auto-identified message instead — the claim row
+  // itself is the proof the read succeeded.
   const claim = page.locator("[data-testid^='claim-']").first();
   await expect(claim).toBeVisible({ timeout: 30_000 });
   await claim.getByRole("button", { name: "تأكيد" }).click();
@@ -161,9 +210,16 @@ test("M4 replies: signed promise webhook is auto-acted; injection lands in the h
   const injection = all.find((i) => i.debtorId === d2.id);
   expect(injection).toMatchObject({ resolvedBy: "human", actionTaken: "human_inbox" });
 
-  // Debtor 2's partially-paid invoice is untouched (still 3,000.00 outstanding).
-  const detail2 = await trpcQuery<{ totalOutstandingMinor: string }>(page, "debtors.get", { id: d2.id });
-  expect(detail2.totalOutstandingMinor).toBe("300000");
+  // Debtor 2's invoice is untouched by the injection: still 200,000 paid
+  // of 500,000, never settled. Prompt 07: do NOT assert the 300,000
+  // outstanding total here — the M3 spec disputes this same demo invoice
+  // earlier in the run, and a disputed invoice is frozen (H09), so the
+  // collectible total is 0 by design. The intent is "the injection paid
+  // nothing", and paidMinor + status pin exactly that.
+  const detail2 = await trpcQuery<{ invoices: { id: string; reference: string | null; status: string; paidMinor: string }[] }>(page, "debtors.get", { id: d2.id });
+  const inv2 = detail2.invoices.find((i) => i.reference === "INV-2026-002")!;
+  expect(["disputed", "partially_paid"]).toContain(inv2.status);
+  expect(inv2.paidMinor).toBe("200000");
 
   // And the injection is visible to the merchant in the AI inbox UI.
   await clickNav(page, "nav-ai-inbox");

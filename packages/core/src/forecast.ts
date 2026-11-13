@@ -104,7 +104,13 @@ export interface ForecastWeek { weekStart: string; expectedMinor: number; conser
 export interface ForecastResult {
   enoughData: boolean;
   paidInvoiceCount: number;
+  /** The currency every amount in this forecast is in (the tenant's
+   * default — the forecast never sums minor units across currencies). */
+  currency: string;
   weeks: ForecastWeek[];
+  /** M04: amounts whose expected/conservative date falls past the horizon
+   * are reported here, never silently dropped. */
+  beyondHorizon: { expectedMinor: number; conservativeMinor: number };
   explanation: {
     basisByLevel: Record<LatenessLevel, number>;
     tenantMedianDays: number | null;
@@ -113,23 +119,39 @@ export interface ForecastResult {
   };
 }
 
+/**
+ * M04: forecast money is `number` by API contract, so every input amount
+ * must be a safe integer — a bigint above 2^53 would lose precision
+ * silently in Number(). The server enforces this at the conversion
+ * boundary; this is the second line of defence for direct callers.
+ */
+function assertSafeMinor(value: number, what: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Forecast amount is not a safe integer minor-unit value (${what})`);
+  }
+}
+
 export function forecastCashflow(input: {
   openInvoices: readonly OpenInvoiceRow[];
   paidHistory: readonly PaidHistoryRow[];
   today: string;
+  currency: string;
   weeks?: number;
 }): ForecastResult {
+  for (const inv of input.openInvoices) assertSafeMinor(inv.outstandingMinor, `open invoice ${inv.id}`);
+  for (const row of input.paidHistory) assertSafeMinor(row.amountMinor, `paid history ${row.debtorId}/${row.dueOn}`);
   const weekCount = input.weeks ?? 8;
   const weeks: ForecastWeek[] = Array.from({ length: weekCount }, (_, i) => ({
     weekStart: addDays(input.today, i * 7), expectedMinor: 0, conservativeMinor: 0,
   }));
+  const beyondHorizon = { expectedMinor: 0, conservativeMinor: 0 };
   const paidCount = input.paidHistory.length;
   const tenantStats = paidCount > 0 ? latenessStats(input.paidHistory) : null;
   const basisByLevel: Record<LatenessLevel, number> = { debtor: 0, tenant: 0, default: 0 };
 
   if (paidCount < MIN_FORECAST_PAID_INVOICES) {
     return {
-      enoughData: false, paidInvoiceCount: paidCount, weeks,
+      enoughData: false, paidInvoiceCount: paidCount, currency: input.currency, weeks, beyondHorizon,
       explanation: {
         basisByLevel,
         tenantMedianDays: tenantStats?.median ?? null, tenantP80Days: tenantStats?.p80 ?? null,
@@ -150,17 +172,19 @@ export function forecastCashflow(input: {
     basisByLevel[level]++;
     const e = bucket(addDays(inv.dueOn, stats.median));
     if (e < weekCount) weeks[e]!.expectedMinor += inv.outstandingMinor;
+    else beyondHorizon.expectedMinor += inv.outstandingMinor;
     const c = bucket(addDays(inv.dueOn, stats.p80));
     if (c < weekCount) weeks[c]!.conservativeMinor += inv.outstandingMinor;
+    else beyondHorizon.conservativeMinor += inv.outstandingMinor;
   }
   return {
-    enoughData: true, paidInvoiceCount: paidCount, weeks,
+    enoughData: true, paidInvoiceCount: paidCount, currency: input.currency, weeks, beyondHorizon,
     explanation: {
       basisByLevel,
       tenantMedianDays: tenantStats?.median ?? null, tenantP80Days: tenantStats?.p80 ?? null,
       method: "Expected date = due date + median days-late; conservative date = due date + 80th-percentile days-late. "
         + "Per-debtor stats when the debtor has >= 3 paid invoices, else tenant stats, else the conservative default (median 7, p80 21). "
-        + "Weeks are 7-day windows starting today; amounts past the 8-week horizon are excluded.",
+        + "Weeks are 7-day windows starting today; amounts whose expected/conservative date falls past the 8-week horizon are reported in beyondHorizon, never dropped.",
     },
   };
 }
@@ -182,6 +206,7 @@ export function backtestForecast(input: {
   cutoff: string;
   horizonWeeks?: number;
 }): BacktestResult {
+  for (const row of input.history) assertSafeMinor(row.amountMinor, `backtest history ${row.debtorId}/${row.dueOn}`);
   const horizon = input.horizonWeeks ?? 8;
   const training = input.history.filter((r) => r.paidOn <= input.cutoff);
   const future = input.history.filter((r) => r.paidOn > input.cutoff);

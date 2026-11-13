@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { outstandingFor } from "./invoices";
 import type { InvoiceStatus } from "./invoices";
 
 /**
@@ -54,33 +55,74 @@ export function paymobHmacMessage(obj: PaymobTxnLike): string {
 
 // ------------------------------------------------------- callback parsing
 const boolWithDefault = z.boolean().default(false);
+/**
+ * M8: `amount_cents` must survive as an exact integer. A JSON number above
+ * 2^53 is already imprecise when parsed, so numbers must be safe integers;
+ * a string keeps full precision (`BigInt(String(v))` in parsePaymobCallback).
+ * The decision-critical booleans are REQUIRED — a callback that omits
+ * `success`, `pending`, `is_auth`, `is_capture`, `is_refunded`,
+ * `is_voided` or `error_occured` is rejected as BAD_PAYLOAD instead of
+ * silently defaulting to "not refunded / not failed" and fulfilling.
+ * (Paymob signs all 20 fields, so a genuine callback always carries them.)
+ */
+const amountCents = z.union([z.number(), z.string()]).refine((v) => {
+  if (typeof v === "number") return Number.isSafeInteger(v) && v >= 0;
+  if (!/^\d+$/.test(v)) return false;
+  try {
+    return BigInt(v) >= 0n;
+  } catch {
+    return false;
+  }
+}, { message: "amount_cents must be a non-negative integer (use a string above 2^53)" });
+const requiredBool = z.boolean();
 export const paymobTransactionSchema = z.object({
-  amount_cents: z.coerce.number().int().nonnegative(),
+  amount_cents: amountCents,
   created_at: z.string().min(1),
   currency: z.string().min(1).default("EGP"),
-  error_occured: boolWithDefault,
+  error_occured: requiredBool,
   has_parent_transaction: boolWithDefault,
   id: z.union([z.number(), z.string()]),
   integration_id: z.union([z.number(), z.string()]).default(0),
   is_3d_secure: boolWithDefault,
-  is_auth: boolWithDefault,
-  is_capture: boolWithDefault,
-  is_refunded: boolWithDefault,
+  is_auth: requiredBool,
+  is_capture: requiredBool,
+  is_refunded: requiredBool,
   is_standalone_payment: boolWithDefault,
-  is_voided: boolWithDefault,
+  is_voided: requiredBool,
   order: z.object({
     id: z.union([z.number(), z.string()]),
     merchant_order_id: z.string().optional(),
   }),
   owner: z.union([z.number(), z.string()]).default(0),
-  pending: boolWithDefault,
+  pending: requiredBool,
   source_data: z.object({
     pan: z.string().default(""),
     sub_type: z.string().default(""),
     type: z.string().default(""),
   }).default({ pan: "", sub_type: "", type: "" }),
-  success: boolWithDefault,
+  success: requiredBool,
 });
+
+/**
+ * M3: strip card-adjacent data from a Paymob callback before it is stored.
+ * `obj.source_data` carries the (masked) PAN and card metadata — nothing
+ * downstream needs it (fulfilment uses the typed callback, not the raw
+ * payload). Returns a deep copy; the caller's payload is untouched.
+ */
+export function redactPaymobPayload(payload: unknown): unknown {
+  let copy: Record<string, unknown>;
+  try {
+    copy = JSON.parse(JSON.stringify(payload ?? null)) as Record<string, unknown>;
+  } catch {
+    return { redacted: true };
+  }
+  const obj = copy.obj as Record<string, unknown> | undefined;
+  if (obj && typeof obj === "object") {
+    delete obj.source_data;
+    delete obj.card;
+  }
+  return copy;
+}
 
 export const paymobCallbackSchema = z.object({
   type: z.string().optional(),
@@ -112,7 +154,9 @@ export function parsePaymobCallback(payload: unknown): PaymobCallback {
     transactionId: String(o.id),
     orderId: String(o.order.id),
     specialReference: o.order.merchant_order_id ?? null,
-    amountMinor: BigInt(o.amount_cents),
+    // M8: String() first — a string amount keeps full precision; a number
+    // amount was already validated as a safe integer by the schema.
+    amountMinor: BigInt(String(o.amount_cents)),
     currency: o.currency,
     success: o.success,
     pending: o.pending,
@@ -261,6 +305,149 @@ export function reconcileGateway(
   };
 }
 
+// ------------------------------------------------------- ledger reconciliation
+export interface LedgerInvoiceRow { id: string; paidMinor: bigint }
+export interface LedgerPaymentRow {
+  id: string; debtorId: string; amountMinor: bigint; currency: string;
+  status: string; createdAt: string;
+}
+export interface LedgerAllocationRow { paymentId: string; invoiceId: string; amountMinor: bigint }
+export interface LedgerDebtorRow { id: string; creditMinor: bigint; creditCurrency: string }
+export interface LedgerReconciliationDiscrepancy {
+  kind: "invoice_paid_mismatch" | "payment_over_allocated" | "currency_imbalance" | "unattributed_remainder";
+  id: string;
+  detail: string;
+}
+export interface LedgerReconciliation {
+  balanced: boolean;
+  discrepancies: LedgerReconciliationDiscrepancy[];
+  byCurrency: { currency: string; confirmedPaymentsMinor: bigint; allocatedMinor: bigint; storedCreditMinor: bigint }[];
+}
+
+/**
+ * M01: the ledger's own reconciliation — the invariants the money code
+ * maintains by construction, re-checked from the stored rows so a bug (or
+ * a manual edit) shows up as a discrepancy instead of silent drift:
+ *  (a) per invoice, paidMinor == Σ confirmed allocations;
+ *  (b) per payment, allocations never exceed the payment plus the credit
+ *      the debtor held when it landed (reversals: |allocations| never
+ *      exceeds |amount| — credit is reduced by a reversal, never consumed
+ *      by it);
+ *  (c) per (debtor, currency), replaying confirmed payments in order
+ *      (credit += amount − allocations) must end at the stored credit
+ *      when that is the debtor's credit currency — and at zero otherwise.
+ *      A non-zero remainder in a non-credit currency is an
+ *      `unattributed_remainder`: money received but represented in no
+ *      balance (the single-currency credit tag cannot hold it — Batch 2b
+ *      documented limitation, now surfaced instead of silent).
+ * Unconfirmed (claimed/pending) payments are excluded from the replay —
+ * they have not counted toward any balance yet — but their stored
+ * allocations still must not exceed the payment.
+ */
+export function reconcileLedger(
+  invoices: readonly LedgerInvoiceRow[],
+  payments: readonly LedgerPaymentRow[],
+  allocations: readonly LedgerAllocationRow[],
+  debtors: readonly LedgerDebtorRow[],
+): LedgerReconciliation {
+  const discrepancies: LedgerReconciliationDiscrepancy[] = [];
+  const abs = (v: bigint) => (v < 0n ? -v : v);
+  const confirmedIds = new Set(payments.filter((p) => p.status === "confirmed").map((p) => p.id));
+  const allocByPayment = new Map<string, bigint>();
+  const confirmedByInvoice = new Map<string, bigint>();
+  for (const a of allocations) {
+    allocByPayment.set(a.paymentId, (allocByPayment.get(a.paymentId) ?? 0n) + a.amountMinor);
+    if (confirmedIds.has(a.paymentId)) {
+      confirmedByInvoice.set(a.invoiceId, (confirmedByInvoice.get(a.invoiceId) ?? 0n) + a.amountMinor);
+    }
+  }
+  // (a) per invoice.
+  for (const inv of invoices) {
+    const allocated = confirmedByInvoice.get(inv.id) ?? 0n;
+    if (inv.paidMinor !== allocated) {
+      discrepancies.push({ kind: "invoice_paid_mismatch", id: inv.id, detail: `paidMinor is ${inv.paidMinor}, confirmed allocations sum to ${allocated}` });
+    }
+  }
+  // Unconfirmed payments: allocations must not exceed the payment.
+  for (const p of payments) {
+    if (p.status === "confirmed") continue;
+    const alloc = allocByPayment.get(p.id) ?? 0n;
+    if (abs(alloc) > abs(p.amountMinor)) {
+      discrepancies.push({ kind: "payment_over_allocated", id: p.id, detail: `allocations sum to ${alloc}, payment amount is ${p.amountMinor}` });
+    }
+  }
+  // (b)+(c): replay confirmed payments per (debtor, currency).
+  const debtorById = new Map(debtors.map((d) => [d.id, d]));
+  const groups = new Map<string, LedgerPaymentRow[]>();
+  for (const p of payments) {
+    if (p.status !== "confirmed") continue;
+    const key = `${p.debtorId}|${p.currency}`;
+    const list = groups.get(key) ?? [];
+    list.push(p);
+    groups.set(key, list);
+  }
+  for (const [key, pays] of groups) {
+    const [debtorId, currency] = key.split("|") as [string, string];
+    pays.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1));
+    let credit = 0n;
+    for (const p of pays) {
+      const alloc = allocByPayment.get(p.id) ?? 0n;
+      if (p.amountMinor >= 0n) {
+        const available = credit > 0n ? credit : 0n;
+        if (alloc < 0n || alloc > p.amountMinor + available) {
+          discrepancies.push({ kind: "payment_over_allocated", id: p.id, detail: `allocations sum to ${alloc}, payment is ${p.amountMinor} with ${available} credit available` });
+        }
+      } else if (alloc > 0n || alloc < p.amountMinor) {
+        discrepancies.push({ kind: "payment_over_allocated", id: p.id, detail: `reversal allocations sum to ${alloc}, reversal amount is ${p.amountMinor}` });
+      }
+      credit += p.amountMinor - alloc;
+    }
+    const debtor = debtorById.get(debtorId);
+    if (!debtor) {
+      discrepancies.push({ kind: "currency_imbalance", id: debtorId, detail: `${currency}: replayed credit ${credit} but the debtor row is missing` });
+      continue;
+    }
+    if (debtor.creditCurrency === currency) {
+      if (credit !== debtor.creditMinor) {
+        discrepancies.push({ kind: "currency_imbalance", id: debtorId, detail: `${currency}: replayed credit ${credit}, stored credit ${debtor.creditMinor}` });
+      }
+    } else if (credit !== 0n) {
+      discrepancies.push({ kind: "unattributed_remainder", id: debtorId, detail: `${currency}: ${credit} received but neither allocated nor stored as credit (debtor holds credit in ${debtor.creditCurrency})` });
+    }
+  }
+  // Stored credit with no confirmed payments in its currency at all.
+  for (const d of debtors) {
+    if (d.creditMinor === 0n) continue;
+    if (!groups.has(`${d.id}|${d.creditCurrency}`)) {
+      discrepancies.push({ kind: "currency_imbalance", id: d.id, detail: `${d.creditCurrency}: stored credit ${d.creditMinor} with no confirmed payments in that currency` });
+    }
+  }
+  // Tenant-wide per-currency totals (informational — the verdict comes
+  // from the per-debtor replay above).
+  const currencyByPayment = new Map(payments.map((p) => [p.id, p.currency]));
+  const totals = new Map<string, { confirmedPaymentsMinor: bigint; allocatedMinor: bigint; storedCreditMinor: bigint }>();
+  const total = (c: string) => {
+    const t = totals.get(c) ?? { confirmedPaymentsMinor: 0n, allocatedMinor: 0n, storedCreditMinor: 0n };
+    totals.set(c, t);
+    return t;
+  };
+  for (const p of payments) {
+    if (p.status !== "confirmed") continue;
+    total(p.currency).confirmedPaymentsMinor += p.amountMinor;
+  }
+  for (const a of allocations) {
+    if (!confirmedIds.has(a.paymentId)) continue;
+    total(currencyByPayment.get(a.paymentId) ?? "EGP").allocatedMinor += a.amountMinor;
+  }
+  for (const d of debtors) {
+    if (d.creditMinor === 0n) continue;
+    total(d.creditCurrency).storedCreditMinor += d.creditMinor;
+  }
+  const byCurrency = [...totals.entries()].sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([currency, t]) => ({ currency, ...t }));
+  return { balanced: discrepancies.length === 0, discrepancies, byCurrency };
+}
+
 // ----------------------------------------------------------- statement links
 export const STATEMENT_TOKEN_BYTES = 32;
 export const STATEMENT_DEFAULT_EXPIRY_DAYS = 30;
@@ -298,12 +485,11 @@ export interface LinkInvoice {
  * invoices are frozen and never priced into a link.
  */
 export function outstandingForLink(invoices: readonly LinkInvoice[], invoiceId: string | null): bigint {
-  const due = (i: LinkInvoice) => (i.amountMinor - i.paidMinor > 0n ? i.amountMinor - i.paidMinor : 0n);
+  // H09: one rule everywhere — a disputed invoice is frozen, so its link
+  // prices at 0, exactly as the debtor list, KPIs and statement report.
   if (invoiceId !== null) {
     const inv = invoices.find((i) => i.id === invoiceId);
-    return inv ? due(inv) : 0n;
+    return inv ? outstandingFor(inv) : 0n;
   }
-  return invoices
-    .filter((i) => i.status === "open" || i.status === "partially_paid")
-    .reduce((s, i) => s + due(i), 0n);
+  return invoices.reduce((s, i) => s + outstandingFor(i), 0n);
 }

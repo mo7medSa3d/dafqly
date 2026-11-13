@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import {
   auditLog, debtors, invoices, messages, optOuts, plans, reminders, statementLinks, tenants, usageLedger,
   withTenant, type Db, type TenantSettings,
@@ -211,7 +211,7 @@ interface DueRow {
   channel: "whatsapp" | "sms"; template_key: string; due_at: Date; attempts: number;
 }
 
-interface GroupWork {
+export interface GroupWork {
   businessName: string;
   groupKey: string;
   channel: "whatsapp" | "sms";
@@ -486,13 +486,58 @@ export async function ensureStatementLinkUrl(
 }
 
 /** Phase B+C: send one consolidated group message, then persist the outcome. */
-async function sendGroup(deps: EngineDeps, tenantId: string, group: GroupWork, now: Date, summary: DispatchSummary): Promise<void> {
+/**
+ * M05: exported so the regression test can stage a queued group and pay
+ * its invoice in between — through dispatchDue the re-check below is
+ * unreachable, because prepareTenant's sweep + guards run in one
+ * transaction and sendGroup follows immediately.
+ */
+export async function sendGroup(deps: EngineDeps, tenantId: string, group: GroupWork, now: Date, summary: DispatchSummary): Promise<void> {
+  // M05: last-chance re-check. A payment may have landed between
+  // prepareTenant's guard read and this send; a plain re-read would still
+  // miss a payment whose transaction is open at read time, so the group's
+  // invoices are locked FOR UPDATE — same (dueOn, id) order as
+  // lockDebtorInvoices, so lock acquisition matches the payment path —
+  // and re-read. Paid/closed invoices drop out of the group (their
+  // reminders are cancelled, never sent) and the message quotes the live
+  // outstanding, not the stale snapshot. Residual window, inherent to
+  // calling a provider outside a transaction: a payment that starts after
+  // this check commits, during the provider call itself.
+  const live = await withTenant(deps.app, tenantId, async (tx) => {
+    const rows = await tx.select().from(invoices)
+      .where(inArray(invoices.id, group.invoiceIds))
+      .orderBy(asc(invoices.dueOn), asc(invoices.id)).for("update");
+    const open = rows.filter((i) => i.status === "open" || i.status === "partially_paid");
+    const openIds = new Set(open.map((i) => i.id));
+    const remRows = await tx.select({ id: reminders.id, invoiceId: reminders.invoiceId })
+      .from(reminders).where(inArray(reminders.id, group.reminderIds));
+    const statusByInvoice = new Map(rows.map((i) => [i.id, i.status]));
+    const deadByReason = new Map<string, string[]>();
+    for (const r of remRows) {
+      if (openIds.has(r.invoiceId)) continue;
+      const reason = statusByInvoice.get(r.invoiceId) === "paid" ? "invoice_paid" : "invoice_closed";
+      deadByReason.set(reason, [...(deadByReason.get(reason) ?? []), r.id]);
+    }
+    for (const [reason, ids] of deadByReason) {
+      await tx.update(reminders).set({ status: "cancelled", skipReason: reason, updatedAt: now })
+        .where(inArray(reminders.id, ids));
+      bump(summary.skipped, reason);
+    }
+    if (open.length === 0) return null;
+    return {
+      invoiceIds: open.map((i) => i.id),
+      reminderIds: remRows.filter((r) => openIds.has(r.invoiceId)).map((r) => r.id),
+      totalOutstandingMinor: open.reduce((acc, i) => acc + (i.amountMinor - i.paidMinor), 0n),
+      earliestDueOn: open.map((i) => i.dueOn).sort()[0] ?? group.earliestDueOn,
+    };
+  });
+  if (live === null) return;
   const business = group.businessName;
   const variables: Record<string, string> = {
     business,
-    amount: formatEgp(group.totalOutstandingMinor),
-    due_date: group.earliestDueOn,
-    remaining: formatEgp(group.totalOutstandingMinor),
+    amount: formatEgp(live.totalOutstandingMinor),
+    due_date: live.earliestDueOn,
+    remaining: formatEgp(live.totalOutstandingMinor),
   };
   // F10/F5: when the tenant enabled it, the debtor's statement/payment URL
   // rides along as a URL variable. The registry's v1 templates declare no
@@ -525,7 +570,7 @@ async function sendGroup(deps: EngineDeps, tenantId: string, group: GroupWork, n
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     if (providerMessageId) {
       const [msg] = await tx.insert(messages).values({
-        tenantId, debtorId: group.debtorId, invoiceId: group.invoiceIds[0] ?? null,
+        tenantId, debtorId: group.debtorId, invoiceId: live.invoiceIds[0] ?? null,
         direction: "out", channel: group.channel, provider: group.channel === "sms" ? "sms" : "whatsapp",
         providerMessageId, templateKey: group.templateKey,
         bodyText: renderTemplate(group.templateKey as TemplateKey, "ar", variables) + (payLinkUrl ? `\n${payLinkUrl}` : ""),
@@ -543,41 +588,41 @@ async function sendGroup(deps: EngineDeps, tenantId: string, group: GroupWork, n
       await tx.update(reminders).set({
         status: "sent", providerMessageId, nextAttemptAt: null,
         attempts: sql`${reminders.attempts} + 1`, updatedAt: now,
-      }).where(inArray(reminders.id, group.reminderIds));
-      await audit(tx, tenantId, "reminder.sent", "reminder", group.reminderIds[0]!, {
-        providerMessageId, groupKey: group.groupKey, reminderIds: group.reminderIds,
+      }).where(inArray(reminders.id, live.reminderIds));
+      await audit(tx, tenantId, "reminder.sent", "reminder", live.reminderIds[0]!, {
+        providerMessageId, groupKey: group.groupKey, reminderIds: live.reminderIds,
       });
       await tx.update(invoices).set({ lastRemindedAt: now, updatedAt: now })
-        .where(inArray(invoices.id, group.invoiceIds));
+        .where(inArray(invoices.id, live.invoiceIds));
       summary.groupsSent++;
-      summary.remindersSent += group.reminderIds.length;
+      summary.remindersSent += live.reminderIds.length;
       return;
     }
     // Failure path.
     const classified = classifyProviderError(error!.code);
-    const [firstReminder] = await tx.select().from(reminders).where(eq(reminders.id, group.reminderIds[0]!));
+    const [firstReminder] = await tx.select().from(reminders).where(eq(reminders.id, live.reminderIds[0]!));
     const attempts = (firstReminder?.attempts ?? 0) + 1;
     if (classified.retryable && attempts < MAX_SEND_ATTEMPTS) {
       const nextAt = new Date(now.getTime() + backoffDelayMs(attempts - 1, () => 0));
       await tx.update(reminders).set({
         status: "scheduled", attempts, lastErrorCode: error!.code, nextAttemptAt: nextAt, updatedAt: now,
-      }).where(inArray(reminders.id, group.reminderIds));
-      summary.retried += group.reminderIds.length;
+      }).where(inArray(reminders.id, live.reminderIds));
+      summary.retried += live.reminderIds.length;
       return;
     }
     // Final failure.
     await tx.update(reminders).set({
       status: "failed", attempts, lastErrorCode: error!.code, nextAttemptAt: null, updatedAt: now,
-    }).where(inArray(reminders.id, group.reminderIds));
-    await audit(tx, tenantId, "reminder.failed", "reminder", group.reminderIds[0]!, {
-      code: error!.code, kind: classified.kind, reminderIds: group.reminderIds,
+    }).where(inArray(reminders.id, live.reminderIds));
+    await audit(tx, tenantId, "reminder.failed", "reminder", live.reminderIds[0]!, {
+      code: error!.code, kind: classified.kind, reminderIds: live.reminderIds,
     });
-    summary.failed += group.reminderIds.length;
+    summary.failed += live.reminderIds.length;
     if (classified.kind === "not_reachable") {
       await tx.update(debtors).set({ whatsappStatus: "unreachable", updatedAt: now }).where(eq(debtors.id, group.debtorId));
       if (group.channel === "whatsapp" && tenant?.settings.smsFallbackEnabled) {
         // SMS fallback (§7-F3): a sibling SMS step per invoice, due now.
-        for (const rid of group.reminderIds) {
+        for (const rid of live.reminderIds) {
           const [r] = await tx.select().from(reminders).where(eq(reminders.id, rid));
           if (!r) continue;
           await tx.insert(reminders).values({

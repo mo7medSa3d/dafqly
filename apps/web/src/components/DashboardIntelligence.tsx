@@ -10,7 +10,6 @@ import {
   UsersThree,
   WhatsappLogo,
 } from "@phosphor-icons/react";
-import { formatEgp } from "@tahseel/core";
 import { useCurrency } from "./CurrencyContext";
 import type { WorkspaceIntelligenceView } from "@/server/intelligence";
 import { openAiCopilot } from "./AiCopilotDrawer";
@@ -37,7 +36,7 @@ export function DashboardIntelligence({
   intel: WorkspaceIntelligenceView;
 }) {
   const isEn = locale === "en";
-  const { symbol: currencySymbol } = useCurrency();
+  const { symbol: currencySymbol, formatAmountOnly } = useCurrency();
   const top3 = intel.topActions.slice(0, 3);
   const DirArrow = isEn ? ArrowRight : ArrowLeft;
   const risk = intel.portfolioRisk;
@@ -75,7 +74,7 @@ export function DashboardIntelligence({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-bold text-primary">
-                {isEn ? "AI Daily Briefing" : "الملخص التنفيذي الذكي"}
+                {isEn ? "Daily Collections Snapshot" : "ملخص التحصيل اليومي"}
               </span>
               <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${badgeTone}`}>
                 {statusLabel}
@@ -95,6 +94,20 @@ export function DashboardIntelligence({
             <p className="mt-0.5 max-w-3xl text-xs leading-relaxed text-text-muted sm:text-sm">
               {isEn ? intel.summaryEn : intel.summaryAr}
             </p>
+            {(!intel.notificationsSynced || intel.notificationsTruncated.length > 0) && (
+              <p
+                data-testid="notifications-degraded-note"
+                className="mt-1.5 max-w-3xl text-[11px] font-semibold text-status-due-fg"
+              >
+                {isEn
+                  ? intel.notificationsSynced
+                    ? `Some notification categories had more items than one sync covers (${intel.notificationsTruncated.join(", ")}).`
+                    : "Notifications could not be refreshed — the bell may be showing older items."
+                  : intel.notificationsSynced
+                    ? `بعض فئات التنبيهات تجاوزت حد المزامنة (${intel.notificationsTruncated.join("، ")}).`
+                    : "تعذّر تحديث التنبيهات — قد يعرض الجرس عناصر أقدم."}
+              </p>
+            )}
           </div>
         </div>
 
@@ -126,10 +139,8 @@ export function DashboardIntelligence({
           dsoDays={intel.metrics.dsoDays}
           topDebtorSharePct={risk.topDebtorSharePct}
           top3ConcentrationPct={risk.top3ConcentrationPct}
-          expected14dFormatted={formatEgp(BigInt(risk.expectedNext14DaysMinor))}
-          atRiskFormatted={formatEgp(BigInt(risk.atRiskReceivablesMinor))}
-          expected14dMinor={BigInt(risk.expectedNext14DaysMinor)}
-          atRiskMinor={BigInt(risk.atRiskReceivablesMinor)}
+          expected14dFormatted={formatAmountOnly(BigInt(risk.expectedNext14DaysMinor))}
+          atRiskFormatted={formatAmountOnly(BigInt(risk.atRiskReceivablesMinor))}
           isEn={isEn}
         />
       )}
@@ -170,7 +181,7 @@ export function DashboardIntelligence({
                   </div>
                   <p className="mt-1 text-xs font-semibold text-text-muted">
                     <span className="tnum text-text" dir="ltr">
-                      {formatEgp(BigInt(d.outstandingMinor))}
+                      {formatAmountOnly(BigInt(d.outstandingMinor))}
                     </span>{" "}
                     {currencySymbol}
                     {d.maxDaysOverdue > 0 && (
