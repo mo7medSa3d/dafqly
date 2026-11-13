@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowsInSimple,
   ArrowsOutSimple,
@@ -23,7 +24,7 @@ import {
   WhatsappLogo,
   X,
 } from "@phosphor-icons/react";
-import { formatEgp, type NotificationTone } from "@tahseel/core";
+import { formatPct, formatDso, type NotificationTone } from "@tahseel/core";
 import { trpc } from "@/lib/trpc-client";
 import { useCurrency } from "./CurrencyContext";
 
@@ -124,13 +125,16 @@ interface InstallmentPlanPayload {
   }[];
   proposalTextAr: string;
   proposalTextEn: string;
+  settled?: boolean;
+  settledMessageAr?: string;
+  settledMessageEn?: string;
 }
 
 interface ToolCallTraceItem {
   toolName: string;
   titleAr: string;
   titleEn: string;
-  status: "completed";
+  status: "completed" | "failed";
   summaryAr: string;
   summaryEn: string;
 }
@@ -156,13 +160,23 @@ interface CopilotAnswer {
   matchedDebtor?: (DebtorScoreItem & { optimalWindow: OptimalWindowView }) | null;
   suggestedDebtors: DebtorScoreItem[];
   quickLinks: { labelAr: string; labelEn: string; href: string }[];
+  conversationId: string;
+  aiMode: "live" | "fallback";
+  aiModel: string | null;
+  aiFallbackReason: "provider_not_configured" | "daily_token_budget_exceeded" | "provider_error" | "empty_response" | null;
 }
 
-interface ChatTurn {
+
+interface PersistedChatMessage {
   id: string;
-  userPromptAr: string;
-  userPromptEn: string;
-  response: CopilotAnswer;
+  role: "user" | "assistant";
+  content: string;
+  toolCalls?: CopilotAnswer["toolCalls"];
+  aiMode?: "live" | "fallback";
+  aiModel?: string | null;
+  aiFallbackReason?: CopilotAnswer["aiFallbackReason"];
+  matchedDebtor?: CopilotAnswer["matchedDebtor"];
+  quickLinks?: CopilotAnswer["quickLinks"];
 }
 
 function tierBadgeClass(tier: DebtorScoreItem["tier"]) {
@@ -196,7 +210,8 @@ export function AiCopilotDrawer({
   initialMode?: ComposerMode;
 }) {
   const isEn = locale === "en";
-  const { symbol: currencySymbol } = useCurrency();
+  const router = useRouter();
+  const { symbol: currencySymbol, formatAmountOnly } = useCurrency();
   const [tab, setTab] = useState<CopilotTab>(initialTab);
   const [composerMode, setComposerMode] = useState<ComposerMode>(initialMode);
   const [overview, setOverview] = useState<OverviewPayload | null>(null);
@@ -211,6 +226,7 @@ export function AiCopilotDrawer({
   const [tone, setTone] = useState<NotificationTone>(initialTone ?? "polite");
   const [msgLocale, setMsgLocale] = useState<"ar" | "en">(isEn ? "en" : "ar");
   const [draftText, setDraftText] = useState("");
+  const [draftGenerationMode, setDraftGenerationMode] = useState<"ai" | "rules">("rules");
   const [suggestedSendTime, setSuggestedSendTime] = useState("");
   const [generatingMsg, setGeneratingMsg] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -233,49 +249,70 @@ export function AiCopilotDrawer({
   // Multi-turn Q&A Copilot state
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
-  const [copilotAnswer, setCopilotAnswer] = useState<CopilotAnswer | null>(null);
-  const [chatHistory, setChatHistory] = useState<ChatTurn[]>([]);
-  const [streamedText, setStreamedText] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [thinkingPhase, setThinkingPhase] = useState(0);
+  const [_copilotAnswer, setCopilotAnswer] = useState<CopilotAnswer | null>(null);
+  const [conversationId, setConversationId] = useState<string | undefined>();
+  const [conversationList, setConversationList] = useState<{ id: string; title: string; updatedAt: string }[]>([]);
+  // F-18: the server returns only the latest 20 conversations / 60
+  // messages — keep the totals so the drawer can say what is hidden.
+  const [conversationTotal, setConversationTotal] = useState(0);
+  const [totalMessages, setTotalMessages] = useState(0);
+  const [persistedMessages, setPersistedMessages] = useState<PersistedChatMessage[]>([]);
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [loadingConversation, setLoadingConversation] = useState(false);
+  const [copilotError, setCopilotError] = useState<string | null>(null);
+
+  const loadCopilotConversations = useCallback(async () => {
+    try {
+      const res = await trpc.intelligence.listCopilotConversations.query();
+      setConversationList(res.items);
+      setConversationTotal(res.totalCount);
+    } catch {
+      // Conversation history is helpful but must not block the assistant.
+    }
+  }, []);
 
   useEffect(() => {
-    if (!asking) {
-      setThinkingPhase(0);
-      return;
-    }
-    const timer = window.setInterval(() => {
-      setThinkingPhase((p) => (p + 1) % 3);
-    }, 1100);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [asking]);
+    if (isOpen && tab === "assistant") void loadCopilotConversations();
+  }, [isOpen, tab, loadCopilotConversations]);
 
   useEffect(() => {
-    if (!copilotAnswer) {
-      setStreamedText("");
-      setIsStreaming(false);
-      return;
+    if (tab === "assistant") {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-    const fullText = isEn ? copilotAnswer.answerEn : copilotAnswer.answerAr;
-    setIsStreaming(true);
-    let index = 0;
-    const step = Math.max(3, Math.floor(fullText.length / 40));
-    const interval = window.setInterval(() => {
-      index += step;
-      if (index >= fullText.length) {
-        setStreamedText(fullText);
-        setIsStreaming(false);
-        window.clearInterval(interval);
-      } else {
-        setStreamedText(fullText.slice(0, index));
-      }
-    }, 18);
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [copilotAnswer, isEn]);
+  }, [persistedMessages, asking, tab]);
+
+  const startNewConversation = () => {
+    setConversationId(undefined);
+    setPersistedMessages([]);
+    setTotalMessages(0);
+    setCopilotAnswer(null);
+    setQuestion("");
+    setCopilotError(null);
+    setStreamingMessageId(null);
+  };
+
+  const openSavedConversation = async (id: string) => {
+    if (!id || id === conversationId || loadingConversation) return;
+    setLoadingConversation(true);
+    setCopilotError(null);
+    try {
+      const loaded = await trpc.intelligence.getCopilotConversation.query({ conversationId: id });
+      setConversationId(loaded.id);
+      setTotalMessages(loaded.totalMessages);
+      setPersistedMessages(loaded.messages.map((message) => ({
+        id: message.id,
+        role: message.role === "assistant" ? "assistant" : "user",
+        content: message.content,
+      })));
+      setCopilotAnswer(null);
+      setQuestion("");
+    } catch {
+      setCopilotError(isEn ? "Could not load this conversation. Refresh and try again." : "تعذر تحميل المحادثة. حدّث القائمة وحاول مرة أخرى.");
+    } finally {
+      setLoadingConversation(false);
+    }
+  };
 
   const initialToneRef = useRef(initialTone);
   initialToneRef.current = initialTone;
@@ -364,7 +401,14 @@ export function AiCopilotDrawer({
         });
         const typedPlan = res as InstallmentPlanPayload;
         setInstallmentPlan(typedPlan);
-        setDraftText(msgLocale === "en" ? typedPlan.proposalTextEn : typedPlan.proposalTextAr);
+        if (typedPlan.settled) {
+          // Settled account: no schedule to draft — the plan card shows the
+          // settled notice instead.
+          setDraftText("");
+        } else {
+          setDraftText(msgLocale === "en" ? typedPlan.proposalTextEn : typedPlan.proposalTextAr);
+        }
+        setDraftGenerationMode("rules");
         setSuggestedSendTime("10:30 AM (Africa/Cairo)");
       } else {
         const res = await trpc.aiWorkspace.generateNotification.mutate({
@@ -379,6 +423,7 @@ export function AiCopilotDrawer({
         });
         setInstallmentPlan(null);
         setDraftText(res.notificationText);
+        setDraftGenerationMode(res.generationMode === "ai" ? "ai" : "rules");
         setSuggestedSendTime(res.suggestedSendTime);
       }
     } catch {
@@ -412,6 +457,9 @@ export function AiCopilotDrawer({
           messageAr: `تمت جدولة/إرسال التذكير الذكي للعميل «${res.debtorName}» (${res.windowLabelAr}).`,
           messageEn: `Smart reminder queued/dispatched for "${res.debtorName}" (${res.windowLabelEn}).`,
         });
+        // F-10: dispatching mutates reminder state — refresh the page
+        // behind the drawer so its numbers reflect the new state.
+        router.refresh();
       }
     } catch {
       setDispatchFeedback({
@@ -434,6 +482,9 @@ export function AiCopilotDrawer({
         messageAr: res.summaryAr,
         messageEn: res.summaryEn,
       });
+      // F-10: schedule optimization mutates reminder state — refresh the
+      // page behind the drawer.
+      router.refresh();
     } catch {
       setDispatchFeedback({
         ok: false,
@@ -479,31 +530,87 @@ export function AiCopilotDrawer({
     customText?: string,
   ) => {
     setAsking(true);
+    setCopilotError(null);
     const promptAr = customText || INTENT_LABELS[intent]?.ar || "استعلام ذكي";
     const promptEn = customText || INTENT_LABELS[intent]?.en || "AI query";
+    const shownPrompt = isEn ? promptEn : promptAr;
     if (customText) setQuestion("");
 
+    const localAssistantId = `stream-${Date.now()}`;
+    setStreamingMessageId(localAssistantId);
+    setCopilotAnswer(null);
+    setPersistedMessages((prev) => [
+      ...prev,
+      { id: `user-${Date.now()}`, role: "user", content: shownPrompt },
+      { id: localAssistantId, role: "assistant", content: "" },
+    ]);
     try {
-      const res = await trpc.intelligence.askCopilot.mutate({
-        intent,
-        question: customText,
-        locale: isEn ? "en" : "ar",
+      const response = await fetch("/api/ai/copilot/stream", {
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify({ intent, question: customText, conversationId, locale: isEn ? "en" : "ar" }),
       });
-      const typed = res as CopilotAnswer;
+      if (!response.ok || !response.body) throw new Error("stream unavailable");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      // Holder object (not a plain `let`): TS does not track assignments made
+      // inside the `handleEvent` closure, so a plain variable narrows to its
+      // `null` initializer and reads back as `never` here.
+      const finalResponseHolder: { current: CopilotAnswer | null } = { current: null };
+      const handleEvent = (block: string) => {
+        const dataLine = block.split("\n").find((line) => line.startsWith("data: "));
+        if (!dataLine) return;
+        let event: { type: string; text?: string; response?: CopilotAnswer; message?: string };
+        try {
+          event = JSON.parse(dataLine.slice(6)) as { type: string; text?: string; response?: CopilotAnswer; message?: string };
+        } catch {
+          return;
+        }
+        if (event.type === "token" && event.text) {
+          setPersistedMessages((prev) => prev.map((message) => message.id === localAssistantId
+            ? { ...message, content: message.content + event.text } : message));
+        } else if (event.type === "done" && event.response) {
+          finalResponseHolder.current = event.response;
+        } else if (event.type === "error") {
+          throw new Error(event.message ?? "AI request failed");
+        }
+      };
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true }).replace(/\r/g, "");
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary >= 0) {
+          handleEvent(buffer.slice(0, boundary));
+          buffer = buffer.slice(boundary + 2);
+          boundary = buffer.indexOf("\n\n");
+        }
+      }
+      if (buffer.trim()) handleEvent(buffer);
+      const typed = finalResponseHolder.current;
+      if (!typed) throw new Error("No final AI response");
+      setConversationId(typed.conversationId);
       setCopilotAnswer(typed);
-      setChatHistory((prev) => [
-        ...prev.slice(-6),
-        {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          userPromptAr: promptAr,
-          userPromptEn: promptEn,
-          response: typed,
-        },
-      ]);
-    } catch {
-      // Non-fatal
+      setPersistedMessages((prev) => prev.map((message) => message.id === localAssistantId
+        ? {
+            ...message,
+            content: isEn ? typed.answerEn : typed.answerAr,
+            toolCalls: typed.toolCalls,
+            aiMode: typed.aiMode,
+            aiModel: typed.aiModel,
+            aiFallbackReason: typed.aiFallbackReason,
+            matchedDebtor: typed.matchedDebtor,
+            quickLinks: typed.quickLinks,
+          } : message));
+      void loadCopilotConversations();
+    } catch (error) {
+      setCopilotError(error instanceof Error && error.message === "GLOBAL_AI_BUDGET_EXCEEDED"
+        ? (isEn ? "The platform AI monthly budget has been reached." : "تم الوصول إلى سقف إنفاق المنصة الشهري على AI.")
+        : (isEn ? "The assistant could not complete this request. No action was executed." : "تعذر إكمال طلب المساعد. لم يتم تنفيذ أي إجراء."));
+      setPersistedMessages((prev) => prev.filter((message) => message.id !== localAssistantId));
     } finally {
       setAsking(false);
+      setStreamingMessageId(null);
     }
   };
 
@@ -521,7 +628,7 @@ export function AiCopilotDrawer({
         role="dialog"
         aria-modal="false"
         data-testid="ai-copilot-drawer"
-        className="fixed bottom-20 left-5 z-50 flex w-[310px] items-center justify-between gap-2 rounded-2xl border border-primary/35 bg-surface px-4 py-3 shadow-2xl"
+        className="fixed bottom-20 left-4 sm:left-6 z-50 flex w-[320px] items-center justify-between gap-2 rounded-2xl border border-primary/35 bg-surface/98 backdrop-blur-xl px-4 py-3 shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-200"
       >
         <button
           type="button"
@@ -567,7 +674,7 @@ export function AiCopilotDrawer({
       role="dialog"
       aria-modal="false"
       data-testid="ai-copilot-drawer"
-      className={`fixed left-4 z-50 flex flex-col overflow-hidden rounded-3xl border border-border-strong/40 bg-surface/95 dark:bg-surface/95 backdrop-blur-2xl shadow-2xl transition-all duration-200 sm:left-5 ${
+      className={`fixed left-4 z-50 flex flex-col overflow-hidden rounded-3xl border border-border-strong/40 bg-surface/95 dark:bg-surface/95 backdrop-blur-2xl shadow-2xl transition-all duration-200 sm:left-6 ${
         isExpanded
           ? "bottom-20 h-[min(84dvh,760px)] w-[min(94vw,760px)]"
           : "bottom-20 h-[min(76dvh,590px)] w-[min(92vw,430px)]"
@@ -690,7 +797,7 @@ export function AiCopilotDrawer({
       )}
 
       {/* Tab Body */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto p-4 no-scrollbar" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
         {tab === "briefing" && (
           <div className="flex flex-col gap-3.5">
             {loadingOverview && !overview ? (
@@ -737,18 +844,18 @@ export function AiCopilotDrawer({
                   <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border/50 pt-2.5 text-center">
                     <div>
                       <p className="text-[10px] text-text-muted">{isEn ? "Collection" : "نسبة التحصيل"}</p>
-                      <p className="text-xs font-bold text-text sm:text-sm">{overview.metrics.collectionRate}%</p>
+                      <p className="text-xs font-bold text-text sm:text-sm">{formatPct(overview.metrics.collectionRate)}</p>
                     </div>
                     <div>
                       <p className="text-[10px] text-text-muted">{isEn ? "DSO" : "متوسط التحصيل"}</p>
                       <p className="text-xs font-bold text-text sm:text-sm">
-                        {overview.metrics.dsoDays} {isEn ? "d" : "ي"}
+                        {formatDso(overview.metrics.dsoDays)} {isEn ? "d" : "ي"}
                       </p>
                     </div>
                     <div>
                       <p className="text-[10px] text-text-muted">{isEn ? "Overdue" : "المتأخرات"}</p>
                       <p className="text-xs font-bold text-status-overdue-fg sm:text-sm">
-                        {formatEgp(BigInt(overview.metrics.overdueMinor))}
+                        {formatAmountOnly(BigInt(overview.metrics.overdueMinor))}
                       </p>
                     </div>
                   </div>
@@ -796,7 +903,7 @@ export function AiCopilotDrawer({
                           {isEn ? "14-Day Expected Inflow" : "سيولة متوقعة (١٤ يوماً)"}
                         </p>
                         <p className="mt-0.5 text-xs font-extrabold text-status-paid-fg" dir="ltr">
-                          {formatEgp(BigInt(overview.portfolioRisk.expectedNext14DaysMinor))} {currencySymbol}
+                          {formatAmountOnly(BigInt(overview.portfolioRisk.expectedNext14DaysMinor))} {currencySymbol}
                         </p>
                       </div>
                       <div className="rounded-xl bg-surface-muted/50 p-2">
@@ -846,7 +953,7 @@ export function AiCopilotDrawer({
                                 {d.displayName}
                               </Link>
                               <p className="mt-0.5 text-[11px] text-text-muted">
-                                {formatEgp(BigInt(d.outstandingMinor))} {currencySymbol}
+                                {formatAmountOnly(BigInt(d.outstandingMinor))} {currencySymbol}
                                 {d.maxDaysOverdue > 0 &&
                                   ` · ${isEn ? `${d.maxDaysOverdue}d overdue` : `متأخر ${d.maxDaysOverdue} يوم`}`}
                               </p>
@@ -958,7 +1065,7 @@ export function AiCopilotDrawer({
               >
                 {(overview?.debtorScores ?? []).map((d) => (
                   <option key={d.debtorId} value={d.debtorId}>
-                    {d.displayName} — {formatEgp(BigInt(d.outstandingMinor))} {currencySymbol}
+                    {d.displayName} — {formatAmountOnly(BigInt(d.outstandingMinor))} {currencySymbol}
                   </option>
                 ))}
               </select>
@@ -1105,6 +1212,14 @@ export function AiCopilotDrawer({
 
             {installmentPlan && composerMode === "installment" && (
               <div className="rounded-2xl border border-border bg-callout/35 p-3">
+                {installmentPlan.settled ? (
+                  <p className="text-xs font-medium text-text">
+                    {isEn
+                      ? (installmentPlan.settledMessageEn ?? "No outstanding balance — the account is fully settled.")
+                      : (installmentPlan.settledMessageAr ?? "لا يوجد رصيد مستحق — الحساب مسدد بالكامل.")}
+                  </p>
+                ) : (
+                  <>
                 <div className="mb-1.5 flex items-center justify-between text-xs font-bold text-text">
                   <span>
                     {isEn ? "Installment Schedule" : "جدول الدفعات المقترح"} ({installmentPlan.formattedTotal}{" "}
@@ -1131,6 +1246,8 @@ export function AiCopilotDrawer({
                     </li>
                   ))}
                 </ul>
+                  </>
+                )}
               </div>
             )}
 
@@ -1141,7 +1258,11 @@ export function AiCopilotDrawer({
                     {isEn ? "Suggested send window:" : "أفضل وقت للإرسال:"} {suggestedSendTime}
                   </span>
                   <span className="rounded-full bg-callout px-2 py-0.5 font-bold text-primary">
-                    {composerMode === "installment" ? (isEn ? "Settlement" : "جدولة") : tone}
+                    {composerMode === "installment"
+                      ? (isEn ? "Calculated schedule" : "جدول محسوب")
+                      : draftGenerationMode === "ai"
+                        ? (isEn ? "AI-written · fact-checked" : "صياغة AI · حقائق متحققة")
+                        : (isEn ? "Verified template" : "قالب آمن محكوم")}
                   </span>
                 </div>
                 <textarea
@@ -1179,6 +1300,218 @@ export function AiCopilotDrawer({
 
         {tab === "assistant" && (
           <div className="flex flex-col gap-3.5">
+            <div className="flex items-center gap-2">
+              <select
+                aria-label={isEn ? "Saved AI conversations" : "المحادثات المحفوظة"}
+                value={conversationId ?? ""}
+                onChange={(event) => void openSavedConversation(event.target.value)}
+                disabled={loadingConversation || asking}
+                className="min-h-[36px] min-w-0 flex-1 rounded-xl border border-border bg-surface px-2.5 text-xs text-text disabled:opacity-60"
+              >
+                <option value="">{isEn ? "Current conversation" : "المحادثة الحالية"}</option>
+                {conversationList.map((item) => (
+                  <option key={item.id} value={item.id}>{item.title}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={startNewConversation}
+                disabled={asking || loadingConversation}
+                className="min-h-[36px] shrink-0 rounded-xl border border-border px-3 text-xs font-bold text-primary hover:bg-callout disabled:opacity-50"
+              >
+                {isEn ? "New chat" : "محادثة جديدة"}
+              </button>
+            </div>
+            {loadingConversation && <p className="text-[11px] text-text-muted">{isEn ? "Loading conversation…" : "جارٍ تحميل المحادثة…"}</p>}
+            {copilotError && <p role="alert" className="rounded-lg border border-status-overdue-fg/20 bg-status-overdue-bg px-3 py-2 text-xs text-status-overdue-fg">{copilotError}</p>}
+            {conversationTotal > conversationList.length && (
+              <p className="text-[11px] text-text-muted">
+                {isEn
+                  ? `Showing the latest ${conversationList.length} of ${conversationTotal} saved conversations.`
+                  : `عرض أحدث ${conversationList.length} من أصل ${conversationTotal} محادثة محفوظة.`}
+              </p>
+            )}
+            {totalMessages > persistedMessages.length && persistedMessages.length > 0 && (
+              <p className="text-[11px] text-text-muted">
+                {isEn
+                  ? `Showing the latest ${persistedMessages.length} of ${totalMessages} messages in this conversation.`
+                  : `عرض أحدث ${persistedMessages.length} من أصل ${totalMessages} رسالة في هذه المحادثة.`}
+              </p>
+            )}
+            {persistedMessages.length > 24 && (
+              <p className="text-[11px] text-text-muted">
+                {isEn
+                  ? `This view shows the latest 24 of ${persistedMessages.length} loaded messages.`
+                  : `يعرض هذا العرض أحدث 24 من أصل ${persistedMessages.length} رسالة محمّلة.`}
+              </p>
+            )}
+            {/* Unified Conversation Thread */}
+            {persistedMessages.length > 0 && (
+              <div
+                className="flex max-h-[380px] flex-col gap-3 overflow-y-auto rounded-2xl border border-border bg-surface-muted/30 p-3.5 no-scrollbar"
+                style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+              >
+                {persistedMessages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex flex-col gap-1.5 ${message.role === "user" ? "items-end" : "items-start"}`}
+                  >
+                    {/* Tool Calls execution badge attached to assistant message */}
+                    {message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0 && (
+                      <div className="flex flex-col gap-1.5 rounded-2xl border border-primary/25 bg-surface/95 p-2.5 text-[11px] shadow-xs max-w-[95%]">
+                        <span className="flex items-center gap-1.5 font-bold text-primary">
+                          <Cpu size={13} weight="fill" />
+                          <span>
+                            {message.aiMode === "live"
+                              ? isEn
+                                ? `AI used ${message.toolCalls.length} workspace tool(s)`
+                                : `استخدم الـAI عدد ${message.toolCalls.length} من أدوات مساحة العمل`
+                              : isEn
+                                ? "Verified deterministic workspace analysis"
+                                : "تحليل فعلي من محرك النظام الأساسي"}
+                          </span>
+                        </span>
+                        <div className="flex flex-col gap-1">
+                          {message.toolCalls.map((tc, idx) => (
+                            <div
+                              key={`${tc.toolName}-${idx}`}
+                              data-testid={`copilot-tool-call-${tc.toolName}`}
+                              className="flex items-center justify-between gap-2 rounded-lg bg-surface-muted px-2.5 py-1 text-[10px]"
+                            >
+                              <span className="font-bold text-text">
+                                {isEn ? tc.titleEn : tc.titleAr}
+                              </span>
+                              <span className={`truncate ${tc.status === "failed" ? "text-status-overdue-fg" : "text-text-muted"}`}>
+                                {isEn ? tc.summaryEn : tc.summaryAr}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Bubble */}
+                    <div
+                      className={`max-w-[92%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-line shadow-xs ${
+                        message.role === "user"
+                          ? "bg-primary text-primary-fg"
+                          : "border border-border bg-surface text-text"
+                      }`}
+                    >
+                      {message.content}
+                      {asking && message.id === streamingMessageId && (
+                        <span className="inline-block h-3.5 w-1.5 ms-1 bg-primary animate-pulse align-middle" />
+                      )}
+                    </div>
+
+                    {/* Matched Customer Interactive Action Card if present */}
+                    {message.role === "assistant" && message.matchedDebtor && (
+                      <div className="rounded-xl border border-primary/30 bg-callout/40 p-2.5 text-xs flex flex-col gap-1.5 max-w-[92%]">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-text">{message.matchedDebtor.displayName}</span>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                              message.matchedDebtor.optimalWindow?.canSend
+                                ? "bg-status-paid-bg text-status-paid-fg"
+                                : "bg-status-overdue-bg text-status-overdue-fg"
+                            }`}
+                          >
+                            {isEn
+                              ? message.matchedDebtor.optimalWindow?.windowLabelEn
+                              : message.matchedDebtor.optimalWindow?.windowLabelAr}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-text-muted">
+                          {isEn
+                            ? message.matchedDebtor.optimalWindow?.strategyReasonEn
+                            : message.matchedDebtor.optimalWindow?.strategyReasonAr}
+                        </p>
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {message.matchedDebtor.optimalWindow?.canSend && (
+                            <button
+                              type="button"
+                              disabled={dispatchingReminder}
+                              onClick={() =>
+                                void handleDispatchSmartReminder(
+                                  message.matchedDebtor!.debtorId,
+                                  message.matchedDebtor!.optimalWindow.recommendedTone,
+                                )
+                              }
+                              className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[10px] font-bold text-primary-fg hover:bg-primary-hover disabled:opacity-50"
+                            >
+                              <ClockCountdown size={12} weight="fill" aria-hidden />
+                              <span>{isEn ? "Dispatch Smart Reminder" : "إرسال/جدولة تذكير ذكي"}</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleSelectDebtorForComposer(message.matchedDebtor!, "installment")
+                            }
+                            className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted/60 px-2.5 py-1 text-[10px] font-bold text-text hover:border-primary hover:text-primary"
+                          >
+                            <CalendarCheck size={11} weight="fill" aria-hidden />
+                            <span>{isEn ? "Installment Plan" : "خطة تقسيط"}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Quick Action Links if present */}
+                    {message.role === "assistant" && message.quickLinks && message.quickLinks.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        {message.quickLinks.map((lnk) => (
+                          <Link
+                            key={lnk.href}
+                            href={`/${locale}${lnk.href}`}
+                            onClick={onClose}
+                            className="inline-flex items-center gap-1 rounded-full bg-surface px-2.5 py-1 text-[10px] font-bold text-primary border border-primary/20 shadow-2xs hover:bg-primary hover:text-primary-fg transition-colors"
+                          >
+                            <span>{isEn ? lnk.labelEn : lnk.labelAr}</span>
+                            <ArrowSquareOut size={10} weight="fill" aria-hidden />
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Assistant Message Metadata & Copy */}
+                    {message.role === "assistant" && message.content && (
+                      <div className="flex items-center gap-2 px-1 text-[10px] text-text-muted">
+                        <button
+                          type="button"
+                          onClick={() => void navigator.clipboard.writeText(message.content)}
+                          className="hover:text-primary transition-colors flex items-center gap-1"
+                        >
+                          <Copy size={11} />
+                          <span>{isEn ? "Copy" : "نسخ الرد"}</span>
+                        </button>
+                        {message.aiModel && <span className="font-mono text-[9px] text-text-subtle">{message.aiModel}</span>}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {/* Shimmering Radar Thinking Indicator while waiting for initial tokens */}
+                {asking && (!streamingMessageId || persistedMessages.find((m) => m.id === streamingMessageId)?.content === "") && (
+                  <div className="flex items-center gap-3 rounded-2xl border border-primary/25 bg-callout/40 p-3.5 text-xs text-text shadow-xs animate-in fade-in duration-200">
+                    <div className="relative flex size-5 shrink-0 items-center justify-center">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-30" />
+                      <Sparkle size={14} weight="fill" className="text-primary animate-spin" />
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-bold text-text">
+                        {isEn ? "DAFQLY Live AI Reasoning" : "جارٍ استرجاع دفاتر المنشأة وتشغيل الأدوات الذكية..."}
+                      </span>
+                      <span className="text-[10px] text-text-muted">
+                        {isEn ? "Calling workspace tools & checking invoices" : "استدعاء Google Gemini 3.1 وفحص سجلات الفواتير والمتأخرات"}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            )}
+
             {/* Quick Intents */}
             <div className="flex flex-wrap gap-1.5">
               {(
@@ -1218,6 +1551,7 @@ export function AiCopilotDrawer({
                 data-testid="copilot-question-input"
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
+                maxLength={2000}
                 placeholder={
                   isEn
                     ? "Ask about any customer by name, overdue risk, optimal reminder time..."
@@ -1225,6 +1559,7 @@ export function AiCopilotDrawer({
                 }
                 className="min-h-[38px] flex-1 rounded-xl border border-border-strong/60 bg-surface px-3 text-xs text-text placeholder:text-text-subtle focus:border-primary focus:outline-none"
               />
+              <span className="shrink-0 text-[11px] text-text-muted" dir="ltr">{question.length}/2000</span>
               <button
                 type="submit"
                 disabled={!question.trim() || asking}
@@ -1235,197 +1570,6 @@ export function AiCopilotDrawer({
               </button>
             </form>
 
-            {asking && (
-              <div className="flex flex-col gap-2 rounded-2xl border border-primary/25 bg-callout/50 p-4 text-xs animate-in fade-in duration-300">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 font-extrabold text-primary">
-                    <Sparkle size={15} weight="fill" className="animate-spin text-primary" />
-                    <span>{isEn ? "DAFQLY Reasoning Engine" : "محرك التحليل الذكي — دفقلي"}</span>
-                  </div>
-                  <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-bold text-primary">
-                    Gemini 3.1
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-text">
-                  <div className="relative flex size-2 shrink-0">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-                    <span className="relative inline-flex size-2 rounded-full bg-primary" />
-                  </div>
-                  <span className="font-semibold text-xs leading-relaxed transition-all duration-300">
-                    {thinkingPhase === 0
-                      ? isEn
-                        ? "Querying workspace ledger & customer records..."
-                        : "استرجاع دفاتر المنشأة ومطابقة سجلات العملاء..."
-                      : thinkingPhase === 1
-                        ? isEn
-                          ? "Evaluating cashflow forecast & collection risk..."
-                          : "فحص الفواتير وتحليل مخاطر التدفق النقدي..."
-                        : isEn
-                          ? "Synthesizing executive advice & next best actions..."
-                          : "صياغة التوصيات والخطوات التنفيذية الذكية..."}
-                  </span>
-                </div>
-                <div className="h-1 w-full overflow-hidden rounded-full bg-surface/80">
-                  <div
-                    className="h-full bg-primary transition-all duration-500 ease-out"
-                    style={{ width: `${(thinkingPhase + 1) * 33}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Latest Answer + Function Call Trace */}
-            {copilotAnswer && !asking && (
-              <div className="flex flex-col gap-3 rounded-2xl border border-border bg-callout/40 p-3.5">
-                {/* Dynamic Function Calls Trace */}
-                {copilotAnswer.toolCalls && copilotAnswer.toolCalls.length > 0 && (
-                  <div className="flex flex-col gap-1 border-b border-border/50 pb-2">
-                    <span className="flex items-center gap-1 text-[10px] font-bold text-primary">
-                      <Cpu size={11} weight="fill" aria-hidden />
-                      <span>
-                        {isEn
-                          ? `Executed ${copilotAnswer.toolCalls.length} Live Function Call(s)`
-                          : `تم تنفيذ ${copilotAnswer.toolCalls.length} استدعاء دالة حي على بياناتك`}
-                      </span>
-                    </span>
-                    <div className="flex flex-col gap-1">
-                      {copilotAnswer.toolCalls.map((tc, idx) => (
-                        <div
-                          key={`${tc.toolName}-${idx}`}
-                          data-testid={`copilot-tool-call-${tc.toolName}`}
-                          className="flex items-center justify-between gap-2 rounded-lg bg-surface/90 px-2.5 py-1 text-[10px]"
-                        >
-                          <span className="font-bold text-text">
-                            {isEn ? tc.titleEn : tc.titleAr}
-                          </span>
-                          <span className="truncate text-text-muted">
-                            {isEn ? tc.summaryEn : tc.summaryAr}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* AI Synthesized Answer with progressive streaming */}
-                <p className="whitespace-pre-line text-xs leading-relaxed text-text">
-                  {streamedText || (isEn ? copilotAnswer.answerEn : copilotAnswer.answerAr)}
-                  {isStreaming && (
-                    <span className="inline-block h-3.5 w-1.5 rounded-xs bg-primary align-middle opacity-90 animate-pulse ms-1" />
-                  )}
-                </p>
-
-                {/* Matched Customer Interactive Action Card */}
-                {copilotAnswer.matchedDebtor && (
-                  <div className="rounded-xl border border-primary/30 bg-surface p-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-bold text-text">
-                        {copilotAnswer.matchedDebtor.displayName}
-                      </span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                          copilotAnswer.matchedDebtor.optimalWindow.canSend
-                            ? "bg-status-paid-bg text-status-paid-fg"
-                            : "bg-status-overdue-bg text-status-overdue-fg"
-                        }`}
-                      >
-                        {isEn
-                          ? copilotAnswer.matchedDebtor.optimalWindow.windowLabelEn
-                          : copilotAnswer.matchedDebtor.optimalWindow.windowLabelAr}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-text-muted">
-                      {isEn
-                        ? copilotAnswer.matchedDebtor.optimalWindow.strategyReasonEn
-                        : copilotAnswer.matchedDebtor.optimalWindow.strategyReasonAr}
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {copilotAnswer.matchedDebtor.optimalWindow.canSend && (
-                        <button
-                          type="button"
-                          disabled={dispatchingReminder}
-                          onClick={() =>
-                            void handleDispatchSmartReminder(
-                              copilotAnswer.matchedDebtor!.debtorId,
-                              copilotAnswer.matchedDebtor!.optimalWindow.recommendedTone,
-                            )
-                          }
-                          className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[10px] font-bold text-primary-fg hover:bg-primary-hover disabled:opacity-50"
-                        >
-                          <ClockCountdown size={12} weight="fill" aria-hidden />
-                          <span>
-                            {isEn
-                              ? "Dispatch Smart Reminder"
-                              : "إرسال/جدولة تذكير ذكي"}
-                          </span>
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleSelectDebtorForComposer(copilotAnswer.matchedDebtor!, "installment")
-                        }
-                        className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted/60 px-2.5 py-1 text-[10px] font-bold text-text hover:border-primary hover:text-primary"
-                      >
-                        <CalendarCheck size={11} weight="fill" aria-hidden />
-                        <span>{isEn ? "Installment Plan" : "خطة تقسيط"}</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Quick Action Links + Global Reminder Optimizer */}
-                <div className="flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2.5">
-                  {copilotAnswer.quickLinks.map((lnk) => (
-                    <Link
-                      key={lnk.href}
-                      href={`/${locale}${lnk.href}`}
-                      onClick={onClose}
-                      className="inline-flex items-center gap-1 rounded-full bg-surface px-2.5 py-1 text-[10px] font-bold text-primary shadow-2xs hover:bg-primary hover:text-primary-fg"
-                    >
-                      <span>{isEn ? lnk.labelEn : lnk.labelAr}</span>
-                      <ArrowSquareOut size={10} weight="fill" aria-hidden />
-                    </Link>
-                  ))}
-                  <button
-                    type="button"
-                    disabled={optimizingSchedule}
-                    onClick={() => void handleOptimizeAllReminders()}
-                    className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-surface px-2.5 py-1 text-[10px] font-bold text-primary hover:bg-primary hover:text-primary-fg disabled:opacity-50"
-                  >
-                    <ClockCountdown size={11} weight="fill" aria-hidden />
-                    <span>
-                      {isEn ? "Optimize All Reminders" : "جدولة جميع التذكيرات"}
-                    </span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Previous Turns in Session */}
-            {chatHistory.length > 1 && (
-              <div className="flex flex-col gap-1.5 border-t border-border/50 pt-2.5">
-                <p className="text-[10px] font-bold text-text-muted">
-                  {isEn ? "Recent Questions in Session" : "الأسئلة السابقة في هذه الجلسة"}
-                </p>
-                {chatHistory
-                  .slice(0, -1)
-                  .reverse()
-                  .map((turn) => (
-                    <div
-                      key={turn.id}
-                      className="rounded-xl border border-border/60 bg-surface-muted/30 p-2.5 text-xs"
-                    >
-                      <p className="text-[11px] font-bold text-primary">
-                        {isEn ? `You: ${turn.userPromptEn}` : `أنت: ${turn.userPromptAr}`}
-                      </p>
-                      <p className="mt-0.5 line-clamp-2 whitespace-pre-line text-[11px] text-text-muted">
-                        {isEn ? turn.response.answerEn : turn.response.answerAr}
-                      </p>
-                    </div>
-                  ))}
-              </div>
-            )}
 
             <div className="rounded-xl border border-border/60 bg-surface-muted/35 p-2.5 text-[10px] text-text-muted">
               <p className="flex items-center gap-1 font-semibold text-text">

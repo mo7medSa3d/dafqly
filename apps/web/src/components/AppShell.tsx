@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl";
 import {
   Bank,
   CalendarCheck,
+  ClipboardText,
   CaretDoubleRight,
   CaretUp,
   ChatCircleDots,
@@ -48,6 +49,7 @@ const ITEMS = [
   { href: "debtors", key: "debtors", testid: "nav-debtors", Icon: UsersThree, group: "core" },
   { href: "invoices", key: "invoices", testid: "nav-invoices", Icon: Receipt, group: "core" },
   { href: "cheques", key: "cheques", testid: "nav-cheques", Icon: Bank, group: "core" },
+  { href: "tasks", key: "tasks", testid: "nav-tasks", Icon: ClipboardText, group: "core" },
   { href: "ai-inbox", key: "aiInbox", testid: "nav-ai-inbox", Icon: Sparkle, group: "ai", badgeAr: "AI", badgeEn: "AI" },
   { href: "import", key: "import", testid: "nav-import", Icon: CloudArrowUp, group: "ai" },
   { href: "ledger-photo", key: "ledgerPhoto", testid: "nav-ledger-photo", Icon: Scan, group: "ai", badgeAr: "OCR", badgeEn: "OCR" },
@@ -74,12 +76,17 @@ const NAV_GROUPS = [
 ] as const;
 
 export function AppShell({
-  locale, businessName, currency = "EGP", testId, children,
+  locale, businessName, currency = "EGP", testId, demoMode: _demoMode, digits = "latin", children,
 }: {
   locale: string;
   businessName: string;
   currency?: string;
   testId?: string;
+  digits?: "latin" | "eastern";
+  /** Deployment simulation flags (server-computed from env). When any are
+   * on, a non-dismissible banner says so — a demo/dry-run deployment must
+   * never be mistaken for live messaging, live AI, or live payments. */
+  demoMode?: import("@/server/env").RuntimeModeFlags;
   children: React.ReactNode;
 }) {
   const t = useTranslations("nav");
@@ -162,8 +169,8 @@ export function AppShell({
   const activeItem = ITEMS.find((i) => isActive(i.href)) ?? ITEMS[0];
 
   return (
-    <CurrencyProvider currency={currency} locale={locale}>
-      <div className="min-h-dvh bg-bg text-text">
+    <CurrencyProvider currency={currency} locale={locale} digits={digits}>
+      <div className="min-h-dvh glass-canvas text-text">
       {/* Mobile Backdrop Overlay */}
       <div
         className={`fixed inset-0 z-40 bg-navy-950/60 backdrop-blur-xs transition-opacity duration-300 lg:hidden ${
@@ -175,8 +182,8 @@ export function AppShell({
 
       {/* 2026 Enterprise SaaS Sidebar Dock */}
       <aside
-        className={`fixed inset-y-0 start-0 z-50 flex flex-col border-e border-border/60 bg-surface/95 dark:bg-surface/90 backdrop-blur-2xl shadow-lg transition-transform duration-300 ease-in-out lg:z-40 lg:transition-[width] ${
-          collapsed ? "w-[280px] lg:w-[82px]" : "w-[280px] lg:w-[280px]"
+        className={`fixed inset-y-0 start-0 z-50 flex flex-col glass-dock transition-transform duration-300 ease-in-out lg:inset-y-4 lg:start-4 lg:z-40 lg:rounded-[32px] lg:transition-[width] ${
+          collapsed ? "w-[280px] lg:w-[84px]" : "w-[280px] lg:w-[272px]"
         } ${
           mobileOpen
             ? "translate-x-0 pointer-events-auto"
@@ -295,7 +302,7 @@ export function AppShell({
 
         {/* Clean Minimal Workspace Footer */}
         <div className="mt-auto flex shrink-0 flex-col gap-2.5 border-t border-border/50 p-3">
-          <div className="flex items-center gap-2.5 rounded-2xl bg-surface-muted/50 p-2">
+          <div className="glass-recessed flex items-center gap-2.5 rounded-2xl p-2">
             <InitialAvatar name={businessName} size={34} />
             <div className={`min-w-0 flex-1 ${collapsed ? "lg:hidden" : "block"}`}>
               <p className="truncate text-xs font-bold leading-tight text-text">{businessName}</p>
@@ -316,14 +323,15 @@ export function AppShell({
         </div>
       </aside>
 
-      {/* Main Content Area */}
+      {/* Main Floating Frosted Glass Workspace Frame */}
       <div
-        className={`flex min-h-dvh min-w-0 max-w-full flex-col overflow-x-hidden ps-0 transition-[padding] ${
-          collapsed ? "lg:ps-[82px]" : "lg:ps-[280px]"
+        className={`flex min-h-dvh min-w-0 max-w-full flex-col overflow-x-hidden p-0 transition-[padding] lg:py-4 lg:pe-4 ${
+          collapsed ? "lg:ps-[116px]" : "lg:ps-[304px]"
         }`}
       >
-        {/* Clean, Uncluttered 2026 Top Header Bar */}
-        <header className="sticky top-0 z-30 border-b border-border/50 bg-surface/85 dark:bg-surface/80 backdrop-blur-xl">
+        <div className="flex min-h-dvh flex-1 flex-col lg:min-h-[calc(100dvh-2rem)] lg:rounded-[32px] lg:glass-frame lg:overflow-x-clip">
+        {/* Clean, Uncluttered 2026 Frosted Top Header Bar */}
+        <header className="glass-bar sticky top-0 z-30 border-b border-border/50 lg:rounded-t-[32px]">
           <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
             <div className="flex min-w-0 items-center gap-3">
               {/* Mobile Hamburger Button */}
@@ -367,7 +375,7 @@ export function AppShell({
                 type="button"
                 data-testid="global-search-btn"
                 onClick={() => setSearchOpen(true)}
-                className="flex items-center gap-2 rounded-full border border-border/60 bg-surface-muted/50 px-3.5 py-1.5 text-xs font-medium text-text-muted transition-all hover:border-primary/40 hover:bg-surface-muted hover:text-text"
+                className="glass-pill flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-medium text-text-muted transition-all hover:border-primary/40 hover:text-text"
                 title={isEn ? "Quick search & commands (Ctrl+K)" : "بحث سريع وأوامر (Ctrl+K)"}
               >
                 <MagnifyingGlass size={15} weight="bold" className="text-primary" />
@@ -391,10 +399,11 @@ export function AppShell({
         >
           {children}
         </main>
+        </div>
       </div>
 
       {/* Floating Modern AI Assistant Menu & Launcher */}
-      <div className="fixed bottom-5 left-5 z-40 flex flex-col items-start gap-2.5">
+      <div className="fixed bottom-6 left-4 sm:left-6 z-40 flex flex-col items-start gap-2.5">
         {/* Modern 2026 Assistant Command Menu Popover */}
         {aiMenuOpen && !copilotOpen && (
           <div
@@ -408,7 +417,7 @@ export function AppShell({
                   <Sparkle size={16} weight="fill" />
                 </span>
                 <div className="flex flex-col">
-                  <span className="text-xs font-black tracking-tight text-text">
+                  <span className={`text-xs font-black text-text ${isEn ? "tracking-tight" : ""}`}>
                     {isEn ? "DAFQLY AI Copilot" : "مساعد دفقلي الذكي"}
                   </span>
                   <span className="text-[10px] text-text-muted">
@@ -418,8 +427,8 @@ export function AppShell({
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="flex items-center gap-1 rounded-full bg-callout px-2 py-0.5 text-[10px] font-bold text-primary">
-                  <span className="size-1.5 rounded-full bg-primary animate-pulse" />
-                  Gemini 3.1
+                  <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>{isEn ? "Gemini 3.1 Live" : "Gemini 3.1 Live · نشط"}</span>
                 </span>
                 <kbd className="hidden sm:inline-block rounded-md border border-border bg-surface px-1.5 py-0.5 text-[9px] font-bold text-text-muted">
                   Esc
@@ -469,9 +478,7 @@ export function AppShell({
                 <div className="flex min-w-0 flex-1 flex-col">
                   <div className="flex items-center justify-between">
                     <span className="font-extrabold">{isEn ? "Ask AI Assistant" : "محادثة حية مع الذكاء الاصطناعي"}</span>
-                    <span className="rounded-md bg-surface px-1.5 py-0.5 text-[9px] font-bold text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
-                      Gemini
-                    </span>
+
                   </div>
                   <span className="text-[11px] text-text-muted">{isEn ? "Instant answers & ledger deep-dive" : "استفسارات حية عن الدفاتر ومطابقة المعاملات"}</span>
                 </div>

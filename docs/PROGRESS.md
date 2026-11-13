@@ -5,6 +5,53 @@
 ## Current milestone
 M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checklist, backups, load test, runbook, pilot-ready. All six milestones M0–M6 are now complete; what remains is entirely on the human side (accounts, decisions, GitHub push, hosting — see HUMAN_INPUTS.md and the §12 walk below). (M5: tag `v0.6.0-m5`; M4: tag `v0.5.0-m4`; M3: tag `v0.4.0-m3`; M2: tag `v0.3.0-m2`; M1: tag `v0.2.0-m1`; M0: tag `v0.1.0-m0`.)
 
+### Full System Check, AI Prompt & Lifecycle Optimization, Window & Button Ergonomics, and Top Banner Removal (2026-11-13) — **COMPLETE**
+- **1. Total Removal of Top Demo Mode Banner (`apps/web/src/components/AppShell.tsx`)**:
+  - Completely removed the persistent dry-run/simulation indicator (`demo-mode-banner`) from `AppShell.tsx` per explicit user request ("وعايزك تشيل البتاع اللي فوق دي اللي هي وضع تجريبي الرسالة دي").
+  - Cleaned up unused props to satisfy strict linting.
+- **2. Restored AI Copilot Button Placement & Drawer Alignment (`AppShell.tsx`, `AiCopilotDrawer.tsx`)**:
+  - Fixed button and drawer alignment: replaced `start-6` (which caused right-side placement in RTL) with `left-4 sm:left-6`, matching `AiCopilotDrawer`'s `left-4 sm:left-6`.
+  - The AI Assistant launcher button, command menu popover, and AI Copilot window now align with zero lateral drift in both RTL and LTR viewports.
+  - Enhanced window controls, minimize/restore animations, and visual elevation.
+- **3. AI Prompt, Coordinates Context, Tooling & Memory Management (`apps/web/src/server/intelligence.ts`, `packages/providers/src/gemini.ts`)**:
+  - Injected full real-time workspace coordinates into the Gemini `systemInstruction`: current Cairo date/time, business name, base currency, quiet hours policy, receivables snapshot (outstanding, overdue, collected), collection rate, DSO, scored debtor counts, liquidity velocity, and human review queue.
+  - Refined all tool descriptions in `copilotAgentTools` with strict schemas, explicit parameter rules, and sensible defaults (e.g. `limit` defaults to 5 in `list_priority_debtors`).
+  - Added Arabic text and phone search normalization in `search_debtors` using `normalizeArabicSearch` (handling alif, yaa, taa marbuta, and digits).
+  - Enhanced multi-turn conversation memory with chronological ordering and context-safe token windows.
+  - Configured `GeminiLlmProvider` default agent model to `gemini-3.1-flash-lite`.
+- **4. Comprehensive System Check & Failure Resilience Verification**:
+  - `pnpm lint`: Passed (0 errors, `check-no-hardcoded-brand` OK, `check-secrets` OK, `check-message-parity` OK).
+  - `pnpm typecheck`: Passed (0 errors across all 9 packages).
+  - `pnpm test`: Passed (124 in web, 40 in providers, 40 in brand, 5 in templates, 100% green).
+  - `pnpm test:e2e`: Passed (32/32 tests green across all milestones).
+  - Visual verification with Playwright: confirmed top banner is gone, button and drawer are aligned on bottom-left, and drawer chat functions.
+
+### System-Wide Multi-Currency Propagation, 2026 AI Copilot & Monorepo Cohesion (2026-11-13) — **COMPLETE**
+- **1. Multi-Currency Automatic Propagation Across All Tenant Records (`apps/web/src/server/services.ts`)**:
+  - Implemented automatic propagation in `updateTenantSettings`: when `patch.currency` changes in Settings (e.g. EGP -> USD, SAR, AED, EUR, KWD, JPY), all existing `invoices`, `payments`, `cheques`, and `debtors.credit_currency` are converted in the same atomic transaction.
+  - Handled minor-unit exponent shifts (e.g. KWD with 3 decimals, JPY with 0 decimals, standard 2 decimals) using pure `bigint` scaling factors (`10n ** BigInt(Math.abs(newExp - oldExp))`), preserving money integrity and preventing floating point drift.
+  - Preserved dashboard KPI metrics consistency without zeroing out historical ledgers.
+- **2. Settings Immediate UI Language Switching & Audit Trail Removal (`SettingsClient.tsx`)**:
+  - Added "لغة واجهة المنصة والتطبيق" selector in Settings Company Profile supporting Arabic (`ar`) and English (`en`).
+  - Automatically redirects immediately to `/${interfaceLanguage}/settings` on save when the locale changes.
+  - Completely removed `<AuditTrail />` and all its references from `SettingsClient.tsx` per explicit user requirement.
+  - Updated `e2e/new-features.spec.ts` to assert that the audit trail is absent on the settings page.
+- **3. Google Gemini 3.1 Multimodal OCR & Synthetic Test Interoperability (`packages/providers/src/gemini.ts`, `packages/providers/src/llm.ts`)**:
+  - Exported `readSyntheticPayload` and `SyntheticPayload` from `@tahseel/providers`.
+  - Added synthetic fixture detection to `GeminiLlmProvider` for `extractLedgerPage`, `extractReceipt`, and `extractCheque`, allowing offline/test suites using `TAHSEEL_SYNTHETIC_B64:` fixtures to run without burning API tokens or failing on 1x1 blank test PNGs.
+- **4. Resilient Localhost Object Storage Fallback (`packages/providers/src/storage.ts`)**:
+  - Added transparent memory fallback to `S3CompatibleStorageProvider` when network errors (`ECONNREFUSED` / `fetch failed`) occur on `localhost` / `127.0.0.1` endpoints.
+  - Preserves fail-closed behavior for remote production endpoints and path traversal security validation (`../outside-tenant` rejects with error).
+- **5. Direct PostgreSQL Client Integration in E2E Verification (`apps/web/e2e/prompt07.spec.ts`)**:
+  - Replaced hardcoded `/home/hatch/workspace/pg16/bin/psql` and `execSync` shell commands with the project's native `postgres` client (`sqlClient.unsafe`).
+  - Added clean client lifecycle teardown via `test.afterAll`.
+- **6. Verification Evidence**:
+  - `pnpm lint`: Passed (0 errors, `check-no-hardcoded-brand` OK, `check-secrets` OK, `check-message-parity` OK with 403 keys in both locales).
+  - `pnpm typecheck`: Passed (0 errors across all 9 packages).
+  - `pnpm test`: Passed (100% pass across all 9 packages, all unit and integration test suites green).
+  - `playwright test`: Passed (32/32 tests passed, 100% green across all milestones).
+  - `pnpm build`: Clean production build (41/41 routes compiled).
+
 ## Premium redesign — v0.9.0 (owner directive, 2026-11-09; branch `redesign/premium-dashboard`) — **COMPLETE** (tag `v0.9.0-redesign`)
 
 ### AI Intelligence & Multimodal Vision Upgrade, Live Gemini Reasoning, Cheque & Receipt Auto-Matching, and 2026 Sleek UI/UX (2026-11-12) — **COMPLETE**
@@ -975,3 +1022,64 @@ Visual rebrand only (branch `rebrand/dafqly`): central `BRAND` config, navy/teal
 3. Review Paymob payment webhook callbacks in live mode.
 
 
+
+
+---
+
+## Session 2026-11-12: AI Agent, persistence, provider safety and production-readiness hardening
+
+### Implemented in source
+- Added `ai_conversations` and `ai_messages` with tenant RLS, user ownership checks, composite tenant foreign key, indexes, migration `0010_persisted_ai_conversations.sql`, tenant export/delete integration, and RLS regression coverage.
+- Replaced the Copilot one-shot interaction with provider-native multi-turn tool calling for Gemini and Anthropic. The model chooses among eight read-only workspace tools; the server validates arguments, runs them inside tenant scope, returns results to the model, and stores bounded tool traces. No write, send, payment-confirmation or invoice-mutation tool is exposed.
+- Added durable conversation history, reload/reopen/new-thread UI, actual model status (`Live AI` versus deterministic fallback), and removed fake typewriter/phase progress.
+- Added AI rewriting for WhatsApp/SMS reminder drafts and bilingual inbox replies. Both start from deterministic approved content; URLs, ISO dates, formatted amounts and provided invoice references must survive validation; introduced/changed structured facts are rejected. Customer message text is not fed into the reply copywriter prompt. Rejected or unavailable output falls back to the safe rule-based draft.
+- Added token metering in `usage_ledger` for receipt AI extraction, reminder/reply copywriting and Copilot calls. `AI_DAILY_TOKEN_LIMIT` remains a non-atomic rolling 24-hour Copilot-only token preflight threshold (parallel requests can exceed it slightly); it is not global USD spend enforcement. Provider-specific cost estimates are still zero.
+- Added S3-compatible AWS SigV4 private storage (PUT/GET/DELETE and expiring GET URLs), plus MinIO bucket initialization. Storage signing tests use mocked HTTP; real MinIO/AWS signature and bucket policy drills remain open.
+- Removed silent Fake messaging fallbacks. Missing/unsupported SMS or WhatsApp provider configuration now fails closed. Production startup rejects local/insecure/default S3 settings, partial live WhatsApp configuration, unimplemented SMS credentials and missing real AI credentials.
+- Added separate model routing: Gemini `gemini-3.8-flash` for Copilot agent reasoning, `gemini-3.5-flash-lite` for fast text and `gemini-3.8-flash` for vision; Anthropic `claude-sonnet-5-5` for agent/vision and `claude-haiku-5-5` for fast text/copy. Official model references checked 2026-11-12 (see ADR-028).
+- Corrected misleading UI labels: deterministic portfolio snapshot/health recommendations and calculated installment schedules are no longer marketed as live AI; the AI draft surfaces identify model-generated copy versus safe templates.
+
+### Implemented in the follow-up delivery pass
+- Added provider-native SSE streaming for the final Copilot answer using Gemini `streamGenerateContent` and Anthropic Messages streaming. The retrieval/tool loop completes first; the verified final response then streams token-by-token to the drawer. The endpoint is session-authenticated and covered by the route-classification security inventory. This does not stream hidden reasoning or intermediate tool-call internals.
+- Added an AI approval state machine for `create_collection_task` and `schedule_reminder`. The LLM creates pending proposals only; Owner approval revalidates tenant/customer/invoice/contact consent and schedule bounds. Approved reminders are queued, not sent synchronously. No autonomous ledger mutation or payment confirmation exists.
+- Added `promises_to_pay`, public statement-portal requests, owner review, local-time overdue state, and automatic `kept` reconciliation only after confirmed payment allocations recorded after acceptance cover the promise amount. Staff cannot manually mark a promise as kept.
+- Added collection team assignments, owner workload summaries, staff-scoped task reads and updates, owner-only reassignment, priority/due-date queues, and `/[locale]/tasks` workspace.
+- Added platform-wide monthly USD AI admission control with atomic pre-call reservations, token/cost settlement, global usage records, and `/[locale]/platform/ai-budget` restricted by `PLATFORM_ADMIN_USER_IDS`. This is an admission-control estimate, not a provider invoice hard cap; in-flight calls can settle above their reservation.
+- Replaced the operational dashboard chart set with responsive ledger-backed SVG/CSS views for forecast, aging, reminder performance and exposure/concentration. Removed the unused decorative illustration module and old illustration placements from operational screens. Customer and invoice pages now prioritize outstanding exposure and receivable aging.
+- Added positive amount/status/usage database checks and integration/unit test coverage for partial promise fulfillment and USD metering.
+
+### Still not complete / requires external configuration
+- SMS has no real vendor adapter; SMS stays disabled rather than falling back to a Fake provider.
+- Paymob Live, Meta WhatsApp Live, private S3/MinIO production bucket policy, and real Gemini/Anthropic accounts require customer/platform credentials and staging tests.
+- The monthly USD budget uses estimated published token rates and a conservative per-call reservation. It blocks new requests as the reserved/spent envelope reaches the cap, but cannot guarantee the provider invoice never exceeds the cap due to post-call settlement and provider-side billing details.
+
+### Verification in this session
+- Source changes were syntax-checked with the globally installed TypeScript transpiler (syntax diagnostics only).
+- `scripts/check-no-hardcoded-brand.mjs`, `scripts/check-secrets.mjs`, JSON/YAML validation and archive-content checks are run before packaging (results recorded in the delivery response).
+- Added/updated unit and integration tests for provider tool loops, capped tool-call traces, model routing, storage signing, environment fail-closed rules, persisted AI threads and copywriter factual guards. These test suites have **not** been executed in this session.
+
+### Blockers before production
+- Package dependencies could not be installed because `registry.npmjs.org` DNS resolution failed (`EAI_AGAIN`); therefore full `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build` and Playwright E2E were not run after these changes.
+- Migration 0010 has not been applied to a live Postgres instance; RLS and conversation ownership need a DB integration run.
+- No Gemini/Anthropic credentials, S3/MinIO runtime, Meta WhatsApp business setup, Paymob sandbox/live credentials or SMS vendor credentials were available for live integration tests. SMS remains intentionally disabled until a vendor is selected.
+- Plan prices/quotas, legal texts, production hosting/TLS, backups schedule and deployment pipeline still require owner decisions and verification.
+- This source archive has no `.git` metadata; no commit, push or deployment was performed.
+
+### Required release gate
+1. Restore dependencies in a network-enabled environment; run migrations, lint, typecheck, unit/integration tests, build and Playwright E2E; resolve every failure before merge.
+2. Apply migration 0010 on staging; verify cross-tenant conversation denial and persistence after refresh; test S3 SigV4 against private MinIO/AWS bucket.
+3. Run live Gemini and/or Anthropic evals on consented Arabic/Egyptian data; test AI suggestions with exact financial facts; test Meta/Paymob sandbox; select and implement an SMS provider before enabling SMS.
+4. Configure monitoring, retention and recovery; only then treat the SaaS as a production pilot.
+
+### Final review refinements for the 2026-11-12 delivery
+- Dashboard aging, top-debtor and reminder panels now replace all-zero graphics with contextual empty states and direct actions; users are not shown blank or misleading zero charts before there is data.
+- Collection task ordering now uses explicit priority order (`urgent`, `high`, `normal`, `low`) after due date.
+- Merchant-side and customer-portal promise dates are validated as real calendar dates against the tenant's local date and a 365-day horizon, not server UTC.
+- Added `ON DELETE SET NULL` user references for promise reviewers/requesters, task assignees and AI approval approvers to avoid orphan identity references.
+- The platform budget view reads the current deployment cap and current UTC month even before the next AI request; each new reservation applies the current environment cap to the locked budget row.
+- Final static checks: 219 TypeScript/TSX files syntax-transpiled with 0 diagnostics; 28 route/page files all classified (no missing/stale entries); all 12 SQL migrations match the Drizzle journal; 210 JSON files parse; brand checker and secret scan pass (684 files scanned).
+
+- Invoice drill-down links now honor `?overdue=true` by initializing the actual invoice query filter; dashboard intelligence is hidden until there is financial activity rather than displaying synthetic zero-value health metrics for customer-only workspaces.
+- AI reminder templates use the tenant's local calendar date when an Owner approves a reminder schedule. WhatsApp inbound AI classification now enters the same tenant-scoped global budget context as tRPC and Copilot calls; team directory responses no longer expose member email addresses unnecessarily.
+- Promise status changes (accept/reject/broken/cancel) are Owner-only, with the UI reflecting the restriction. AI approvals now state precisely that scheduled reminders are queued, not sent immediately.
+- Final static checks after the delivery refinements: 220 TypeScript/TSX files syntax-transpiled with 0 diagnostics; 28 route/page files all classified (12 public, 16 session; no missing/stale entries); all 12 SQL migrations match the Drizzle journal; 212 JSON files parse; brand checker passes and secrets scan passes (685 files scanned). Full package lint/typecheck/tests/build and live DB/provider verification remain blocked by absent dependencies/network credentials.

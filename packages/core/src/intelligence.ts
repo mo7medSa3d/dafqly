@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { sanitizePromptData, type NotificationTone, type ReplyIntent } from "./ai";
-import { formatEgp } from "./money";
+import { formatCurrencyMinor, getCurrencySymbol, type SupportedCurrency } from "./money";
 import { isInQuietHours, nextAllowedSlot, localDateOf, DEFAULT_POLICY, type SchedulePolicy } from "./time";
 
 /**
@@ -55,6 +55,9 @@ export interface DebtorScoreInput {
   openDisputesCount: number;
   pendingClaimsCount: number;
   todayIso: string;
+  /** Tenant display currency — every formatted amount in the reasons uses
+   * this currency's minor-unit exponent and symbol (F-06), never hardcoded EGP. */
+  currency: SupportedCurrency;
 }
 
 export interface DebtorRecommendation {
@@ -105,6 +108,8 @@ function clampInt(n: number, min: number, max: number): number {
 
 export function scoreDebtorIntelligence(input: DebtorScoreInput): DebtorIntelligence {
   const { debtor, invoices, cheques, openDisputesCount, pendingClaimsCount, todayIso } = input;
+  const symAr = getCurrencySymbol(input.currency, "ar");
+  const symEn = getCurrencySymbol(input.currency, "en");
   const safeName = sanitizePromptData(debtor.displayName) || debtor.displayName;
   const whatsappCapable = debtor.whatsappStatus !== "unreachable";
 
@@ -177,7 +182,7 @@ export function scoreDebtorIntelligence(input: DebtorScoreInput): DebtorIntellig
   if (debtor.riskFlag || hasBouncedCheque) priority += 15;
 
   const priorityScore = clampInt(priority, 0, 100);
-  const formattedOut = formatEgp(outstandingMinor);
+  const formattedOut = formatCurrencyMinor(outstandingMinor, input.currency);
 
   let recommendation: DebtorRecommendation;
   if (pendingClaimsCount > 0) {
@@ -215,8 +220,8 @@ export function scoreDebtorIntelligence(input: DebtorScoreInput): DebtorIntellig
       actionKind: "follow_up_cheque",
       titleAr: `متابعة تحصيل شيك #${dueSoonCheque.number}`,
       titleEn: `Follow up cheque #${dueSoonCheque.number}`,
-      reasonAr: `شيك بقيمة ${formatEgp(dueSoonCheque.amountMinor)} ج.م يستحق بحلول ${dueSoonCheque.dueDate}.`,
-      reasonEn: `Cheque of ${formatEgp(dueSoonCheque.amountMinor)} EGP due on ${dueSoonCheque.dueDate}.`,
+      reasonAr: `شيك بقيمة ${formatCurrencyMinor(dueSoonCheque.amountMinor, input.currency)} ${symAr} يستحق بحلول ${dueSoonCheque.dueDate}.`,
+      reasonEn: `Cheque of ${formatCurrencyMinor(dueSoonCheque.amountMinor, input.currency)} ${symEn} due on ${dueSoonCheque.dueDate}.`,
       suggestedTone: "polite",
       urgency: "high",
     };
@@ -225,8 +230,8 @@ export function scoreDebtorIntelligence(input: DebtorScoreInput): DebtorIntellig
       actionKind: "call_or_update_phone",
       titleAr: "تحديث الهاتف أو اتصال مباشر",
       titleEn: "Call directly or update phone",
-      reasonAr: `الرقم لا يستقبل رسائل واتساب، والمستحق ${formattedOut} ج.م.`,
-      reasonEn: `Phone is unreachable on WhatsApp; ${formattedOut} EGP outstanding.`,
+      reasonAr: `الرقم لا يستقبل رسائل واتساب، والمستحق ${formattedOut} ${symAr}.`,
+      reasonEn: `Phone is unreachable on WhatsApp; ${formattedOut} ${symEn} outstanding.`,
       suggestedTone: "polite",
       urgency: maxDaysOverdue > 7 ? "high" : "medium",
     };
@@ -235,8 +240,8 @@ export function scoreDebtorIntelligence(input: DebtorScoreInput): DebtorIntellig
       actionKind: "resume_reminders",
       titleAr: "مراجعة إيقاف التذكيرات أو التواصل الشخصي",
       titleEn: "Review paused reminders or contact directly",
-      reasonAr: `التذكيرات التلقائية موقوفة مع وجود رصيد مفتوح ${formattedOut} ج.م.`,
-      reasonEn: `Auto-reminders paused with ${formattedOut} EGP balance due.`,
+      reasonAr: `التذكيرات التلقائية موقوفة مع وجود رصيد مفتوح ${formattedOut} ${symAr}.`,
+      reasonEn: `Auto-reminders paused with ${formattedOut} ${symEn} balance due.`,
       suggestedTone: "polite",
       urgency: maxDaysOverdue > 14 ? "high" : "medium",
     };
@@ -245,8 +250,8 @@ export function scoreDebtorIntelligence(input: DebtorScoreInput): DebtorIntellig
       actionKind: "offer_installment_plan",
       titleAr: "إشعار عاجل مع خيار جدولة السداد",
       titleEn: "Urgent notice with payment plan option",
-      reasonAr: `تأخر ${maxDaysOverdue} يوماً على مستحقات ${formattedOut} ج.م — يُنصح بتأمين التزام مجدول.`,
-      reasonEn: `${maxDaysOverdue}d overdue on ${formattedOut} EGP — structured settlement recommended.`,
+      reasonAr: `تأخر ${maxDaysOverdue} يوماً على مستحقات ${formattedOut} ${symAr} — يُنصح بتأمين التزام مجدول.`,
+      reasonEn: `${maxDaysOverdue}d overdue on ${formattedOut} ${symEn} — structured settlement recommended.`,
       suggestedTone: "urgent",
       urgency: "critical",
     };
@@ -255,8 +260,8 @@ export function scoreDebtorIntelligence(input: DebtorScoreInput): DebtorIntellig
       actionKind: "send_smart_reminder",
       titleAr: "إرسال تذكير حازم مع رابط سداد فوري",
       titleEn: "Send firm reminder with instant payment link",
-      reasonAr: `مستحقات متأخرة منذ ${maxDaysOverdue} يوماً بقيمة ${formattedOut} ج.م.`,
-      reasonEn: `${formattedOut} EGP overdue by ${maxDaysOverdue} days.`,
+      reasonAr: `مستحقات متأخرة منذ ${maxDaysOverdue} يوماً بقيمة ${formattedOut} ${symAr}.`,
+      reasonEn: `${formattedOut} ${symEn} overdue by ${maxDaysOverdue} days.`,
       suggestedTone: maxDaysOverdue > 30 ? "urgent" : "firm",
       urgency: maxDaysOverdue > 30 ? "critical" : "high",
     };
@@ -265,8 +270,8 @@ export function scoreDebtorIntelligence(input: DebtorScoreInput): DebtorIntellig
       actionKind: "send_smart_reminder",
       titleAr: "متابعة مهذبة عبر واتساب",
       titleEn: "Send polite WhatsApp follow-up",
-      reasonAr: `تأخر طفيف (${maxDaysOverdue} يوم) على رصيد ${formattedOut} ج.م.`,
-      reasonEn: `Recently due (${maxDaysOverdue}d) with ${formattedOut} EGP open.`,
+      reasonAr: `تأخر طفيف (${maxDaysOverdue} يوم) على رصيد ${formattedOut} ${symAr}.`,
+      reasonEn: `Recently due (${maxDaysOverdue}d) with ${formattedOut} ${symEn} open.`,
       suggestedTone: "polite",
       urgency: "medium",
     };
@@ -275,8 +280,8 @@ export function scoreDebtorIntelligence(input: DebtorScoreInput): DebtorIntellig
       actionKind: "send_smart_reminder",
       titleAr: "تذكير استباقي ودي قبل الاستحقاق",
       titleEn: "Friendly pre-due reminder",
-      reasonAr: `رصيد مفتوح بقيمة ${formattedOut} ج.م ضمن فترة السماح.`,
-      reasonEn: `${formattedOut} EGP open within terms.`,
+      reasonAr: `رصيد مفتوح بقيمة ${formattedOut} ${symAr} ضمن فترة السماح.`,
+      reasonEn: `${formattedOut} ${symEn} open within terms.`,
       suggestedTone: "friendly",
       urgency: "low",
     };
@@ -314,6 +319,8 @@ export interface PortfolioRiskInput {
   collectionRate: number;
   dsoDays: number;
   debtors: readonly DebtorIntelligence[];
+  /** Tenant display currency (F-06). */
+  currency: SupportedCurrency;
 }
 
 export interface PortfolioRiskAnalysis {
@@ -330,6 +337,8 @@ export interface PortfolioRiskAnalysis {
 }
 
 export function analyzePortfolioRisk(input: PortfolioRiskInput): PortfolioRiskAnalysis {
+  const symAr = getCurrencySymbol(input.currency, "ar");
+  const symEn = getCurrencySymbol(input.currency, "en");
   const openDebtors = [...input.debtors]
     .filter((d) => d.outstandingMinor > 0n)
     .sort((a, b) => (b.outstandingMinor > a.outstandingMinor ? 1 : b.outstandingMinor < a.outstandingMinor ? -1 : 0));
@@ -380,10 +389,10 @@ export function analyzePortfolioRisk(input: PortfolioRiskInput): PortfolioRiskAn
   } else {
     if (concentrationLevel === "high_concentration" && topDebtor) {
       insightsAr.push(
-        `تركز ائتماني مرتفع: العميل «${topDebtor.displayName}» يمثل ${topDebtorSharePct}% من إجمالي المديونية المفتوحة (${formatEgp(topDebtor.outstandingMinor)} ج.م).`,
+        `تركز ائتماني مرتفع: العميل «${topDebtor.displayName}» يمثل ${topDebtorSharePct}% من إجمالي المديونية المفتوحة (${formatCurrencyMinor(topDebtor.outstandingMinor, input.currency)} ${symAr}).`,
       );
       insightsEn.push(
-        `High concentration risk: "${topDebtor.displayName}" accounts for ${topDebtorSharePct}% of total open receivables (${formatEgp(topDebtor.outstandingMinor)} EGP).`,
+        `High concentration risk: "${topDebtor.displayName}" accounts for ${topDebtorSharePct}% of total open receivables (${formatCurrencyMinor(topDebtor.outstandingMinor, input.currency)} ${symEn}).`,
       );
     } else if (topDebtor) {
       insightsAr.push(
@@ -396,19 +405,19 @@ export function analyzePortfolioRisk(input: PortfolioRiskInput): PortfolioRiskAn
 
     if (atRiskReceivablesMinor > 0n) {
       insightsAr.push(
-        `سيولة معرضة للمخاطرة: ${formatEgp(atRiskReceivablesMinor)} ج.م ضمن فئة المخاطر المرتفعة/الحرجة يُوصى بجدولتها أو متابعتها فوراً.`,
+        `سيولة معرضة للمخاطرة: ${formatCurrencyMinor(atRiskReceivablesMinor, input.currency)} ${symAr} ضمن فئة المخاطر المرتفعة/الحرجة يُوصى بجدولتها أو متابعتها فوراً.`,
       );
       insightsEn.push(
-        `Receivables at risk: ${formatEgp(atRiskReceivablesMinor)} EGP in high/critical tiers recommended for immediate follow-up or restructuring.`,
+        `Receivables at risk: ${formatCurrencyMinor(atRiskReceivablesMinor, input.currency)} ${symEn} in high/critical tiers recommended for immediate follow-up or restructuring.`,
       );
     }
 
     if (expectedNext14DaysMinor > 0n) {
       insightsAr.push(
-        `تدفقات متوقعة قريباً: يُتوقع تحصيل نحو ${formatEgp(expectedNext14DaysMinor)} ج.م خلال ١٤ يوماً من الحسابات المنتظمة.`,
+        `تدفقات متوقعة قريباً: يُتوقع تحصيل نحو ${formatCurrencyMinor(expectedNext14DaysMinor, input.currency)} ${symAr} خلال ١٤ يوماً من الحسابات المنتظمة.`,
       );
       insightsEn.push(
-        `Near-term liquidity: ~${formatEgp(expectedNext14DaysMinor)} EGP projected within 14 days from healthy/watch accounts.`,
+        `Near-term liquidity: ~${formatCurrencyMinor(expectedNext14DaysMinor, input.currency)} ${symEn} projected within 14 days from healthy/watch accounts.`,
       );
     }
   }
@@ -447,6 +456,9 @@ export interface InstallmentPlanInput {
   debtorName: string;
   businessName: string;
   totalMinor: bigint;
+  /** Tenant display currency (F-06). Tranche formattedAmount stays a bare
+   * number in this currency — the UI appends the symbol itself. */
+  currency: SupportedCurrency;
   installmentsCount: 2 | 3 | 4 | 6;
   interval: InstallmentInterval;
   startDateIso: string;
@@ -472,6 +484,8 @@ export function buildInstallmentPlan(input: InstallmentPlanInput): InstallmentPl
   if (input.totalMinor <= 0n) {
     throw new Error("totalMinor must be > 0n (Hard Rule #1)");
   }
+  const symAr = getCurrencySymbol(input.currency, "ar");
+  const symEn = getCurrencySymbol(input.currency, "en");
   const safeDebtor = sanitizePromptData(input.debtorName) || "العميل";
   const safeBiz = sanitizePromptData(input.businessName) || "دفقلي";
   const count = input.installmentsCount;
@@ -494,7 +508,7 @@ export function buildInstallmentPlan(input: InstallmentPlanInput): InstallmentPl
       labelEn: `Upfront Down Payment (${downPct}%)`,
       dueDate: startIso,
       amountMinor: downMinor,
-      formattedAmount: formatEgp(downMinor),
+      formattedAmount: formatCurrencyMinor(downMinor, input.currency),
       isDownPayment: true,
     });
 
@@ -507,7 +521,7 @@ export function buildInstallmentPlan(input: InstallmentPlanInput): InstallmentPl
         labelEn: `Installment #${i}`,
         dueDate: addDaysIsoPure(startIso, i * stepDays),
         amountMinor: amt,
-        formattedAmount: formatEgp(amt),
+        formattedAmount: formatCurrencyMinor(amt, input.currency),
         isDownPayment: false,
       });
     }
@@ -525,21 +539,21 @@ export function buildInstallmentPlan(input: InstallmentPlanInput): InstallmentPl
         labelEn: `Installment #${i + 1}`,
         dueDate: addDaysIsoPure(startIso, i * stepDays),
         amountMinor: amt,
-        formattedAmount: formatEgp(amt),
+        formattedAmount: formatCurrencyMinor(amt, input.currency),
         isDownPayment: false,
       });
     }
   }
 
-  const formattedTotal = formatEgp(input.totalMinor);
+  const formattedTotal = formatCurrencyMinor(input.totalMinor, input.currency);
   const refNoteAr = input.reference ? ` (${sanitizePromptData(input.reference)})` : "";
   const refNoteEn = input.reference ? ` (${sanitizePromptData(input.reference)})` : "";
 
   const scheduleLinesAr = tranches
-    .map((t) => `• ${t.labelAr}: ${t.formattedAmount} ج.م — بتاريخ ${t.dueDate}`)
+    .map((t) => `• ${t.labelAr}: ${t.formattedAmount} ${symAr} — بتاريخ ${t.dueDate}`)
     .join("\n");
   const scheduleLinesEn = tranches
-    .map((t) => `• ${t.labelEn}: ${t.formattedAmount} EGP — due ${t.dueDate}`)
+    .map((t) => `• ${t.labelEn}: ${t.formattedAmount} ${symEn} — due ${t.dueDate}`)
     .join("\n");
 
   const linkLineAr = input.paymentLink ? `\nرابط السداد وكشف الحساب الآمن: ${input.paymentLink}` : "";
@@ -547,14 +561,14 @@ export function buildInstallmentPlan(input: InstallmentPlanInput): InstallmentPl
 
   const proposalTextAr = [
     `مرحباً ${safeDebtor}، تحية طيبة من ${safeBiz}.`,
-    `حرصاً منا على تيسير سداد المستحقات المفتوحة${refNoteAr} والبالغ إجماليها ${formattedTotal} ج.م، نقترح عليكم خطة جدولة ميسّرة على ${count} دفعات كالتالي:`,
+    `حرصاً منا على تيسير سداد المستحقات المفتوحة${refNoteAr} والبالغ إجماليها ${formattedTotal} ${symAr}، نقترح عليكم خطة جدولة ميسّرة على ${count} دفعات كالتالي:`,
     scheduleLinesAr,
     `يرجى تأكيد الموافقة على الجدول المقترح لاعتماده وإيقاف التذكيرات التلقائية خلال فترة الالتزام.${linkLineAr}`,
   ].join("\n");
 
   const proposalTextEn = [
     `Hello ${safeDebtor}, greetings from ${safeBiz}.`,
-    `To facilitate settling your open balance${refNoteEn} of ${formattedTotal} EGP, we propose the following ${count}-part payment schedule:`,
+    `To facilitate settling your open balance${refNoteEn} of ${formattedTotal} ${symEn}, we propose the following ${count}-part payment schedule:`,
     scheduleLinesEn,
     `Please reply to confirm this schedule so we can lock it in and pause automated reminders while on track.${linkLineEn}`,
   ].join("\n");
@@ -582,6 +596,8 @@ export interface SmartInboxReplyInput {
   debtorName: string;
   businessName: string;
   outstandingMinor: bigint;
+  /** Tenant display currency (F-06). */
+  currency: SupportedCurrency;
   customerMessage?: string | null;
   promisedDate?: string | null;
   offeredAmountMinor?: bigint | null;
@@ -590,6 +606,8 @@ export interface SmartInboxReplyInput {
 }
 
 export interface SmartInboxReplyResult {
+  /** Provenance for the suggested wording; never implies that a message was sent. */
+  generationMode?: "ai" | "rules";
   intent: string;
   replyAr: string;
   replyEn: string;
@@ -599,13 +617,15 @@ export interface SmartInboxReplyResult {
 }
 
 export function generateSmartInboxReply(input: SmartInboxReplyInput): SmartInboxReplyResult {
+  const symAr = getCurrencySymbol(input.currency, "ar");
+  const symEn = getCurrencySymbol(input.currency, "en");
   const safeDebtor = sanitizePromptData(input.debtorName) || "عميلنا العزيز";
   const safeBiz = sanitizePromptData(input.businessName) || "دفقلي";
-  const totalStr = formatEgp(input.outstandingMinor > 0n ? input.outstandingMinor : 0n);
+  const totalStr = formatCurrencyMinor(input.outstandingMinor > 0n ? input.outstandingMinor : 0n, input.currency);
   const promised = input.promisedDate ? sanitizePromptData(input.promisedDate) : null;
   const offeredStr =
     input.offeredAmountMinor && input.offeredAmountMinor > 0n
-      ? formatEgp(input.offeredAmountMinor)
+      ? formatCurrencyMinor(input.offeredAmountMinor, input.currency)
       : null;
 
   let replyAr = "";
@@ -617,11 +637,11 @@ export function generateSmartInboxReply(input: SmartInboxReplyInput): SmartInbox
   switch (input.intent) {
     case "promise_to_pay":
       replyAr = promised
-        ? `شكراً لتواصلكم أستاذ/ة ${safeDebtor}. تم تسجيل وعد السداد بتاريخ ${promised} لمبلغ ${totalStr} ج.م لدى ${safeBiz}، وتأجيل التذكيرات التلقائية حتى ذلك الموعد.${input.paymentLink ? `\nرابط الدفع المباشر: ${input.paymentLink}` : ""}`
-        : `شكراً لتواصلكم أستاذ/ة ${safeDebtor} مع ${safeBiz}. نرجو تحديد اليوم المتوقع للسداد لتسجيله في الحساب وتعليق التذكيرات التلقائية مؤقتاً.`;
+        ? `شكراً لتواصلكم أستاذ/ة ${safeDebtor}. نشكركم على تحديد ${promised} موعداً متوقعاً لسداد مبلغ ${totalStr} ${symAr} لدى ${safeBiz}. سنراجع الموعد ونرتب المتابعة المناسبة.${input.paymentLink ? `\nرابط الدفع المباشر: ${input.paymentLink}` : ""}`
+        : `شكراً لتواصلكم أستاذ/ة ${safeDebtor} مع ${safeBiz}. نرجو تحديد اليوم المتوقع للسداد لمبلغ ${totalStr} ${symAr} حتى نتمكن من مراجعة الطلب وترتيب المتابعة المناسبة.`;
       replyEn = promised
-        ? `Thank you ${safeDebtor}. We have logged your promise to pay ${totalStr} EGP on ${promised} at ${safeBiz} and paused reminders until then.${input.paymentLink ? `\nDirect payment link: ${input.paymentLink}` : ""}`
-        : `Thank you for reaching out to ${safeBiz}, ${safeDebtor}. Please confirm the exact date you plan to settle ${totalStr} EGP so we can schedule accordingly.`;
+        ? `Thank you ${safeDebtor}. We noted your proposed payment date of ${promised} for the ${totalStr} ${symEn} balance at ${safeBiz}. We will review the date and arrange the appropriate follow-up.${input.paymentLink ? `\nDirect payment link: ${input.paymentLink}` : ""}`
+        : `Thank you for reaching out to ${safeBiz}, ${safeDebtor}. Please confirm the date you expect to settle the ${totalStr} ${symEn} balance so we can review and arrange the appropriate follow-up.`;
       recommendedActionAr = promised ? `تأكيد جدولة المتابعة بعد ${promised}` : "طلب تحديد تاريخ سداد محدد";
       recommendedActionEn = promised ? `Confirm follow-up after ${promised}` : "Ask customer for specific payment date";
       followUpDays = 5;
@@ -629,16 +649,16 @@ export function generateSmartInboxReply(input: SmartInboxReplyInput): SmartInbox
 
     case "already_paid":
     case "receipt_image_pending":
-      replyAr = `شكراً لك أستاذ/ة ${safeDebtor}. لتأكيد التسوية وإغلاق الرصيد المفتوح (${totalStr} ج.م) لدى ${safeBiz}، نرجو إرسال صورة إيصال التحويل أو رقم العملية المرجعي لمطابقته مع البنك فوراً.`;
-      replyEn = `Thank you ${safeDebtor}. To reconcile and close your open balance (${totalStr} EGP) at ${safeBiz}, please share a screenshot of the transfer receipt or the reference number.`;
+      replyAr = `شكراً لك أستاذ/ة ${safeDebtor}. لتأكيد التسوية وإغلاق الرصيد المفتوح (${totalStr} ${symAr}) لدى ${safeBiz}، نرجو إرسال صورة إيصال التحويل أو رقم العملية المرجعي لمطابقته مع البنك فوراً.`;
+      replyEn = `Thank you ${safeDebtor}. To reconcile and close your open balance (${totalStr} ${symEn}) at ${safeBiz}, please share a screenshot of the transfer receipt or the reference number.`;
       recommendedActionAr = "طلب صورة إيصال التحويل أو رقم المرجع للمطابقة";
       recommendedActionEn = "Request receipt screenshot or transfer reference number";
       followUpDays = 1;
       break;
 
     case "dispute":
-      replyAr = `نشكركم على الملاحظة أستاذ/ة ${safeDebtor}. تم إيقاف التذكيرات التلقائية فوراً ووضع الفاتورة قيد المراجعة المحاسبية في ${safeBiz}. سنتواصل معكم بتفاصيل المطابقة خلال ساعات العمل.${input.statementLink ? `\nرابط كشف الحساب التفصيلي: ${input.statementLink}` : ""}`;
-      replyEn = `Thank you for flagging this, ${safeDebtor}. We have paused automated reminders and placed your invoice under accounting review at ${safeBiz}. We will follow up shortly with the reconciliation details.${input.statementLink ? `\nDetailed statement link: ${input.statementLink}` : ""}`;
+      replyAr = `نشكركم على الملاحظة أستاذ/ة ${safeDebtor}. سنراجع الاعتراض وبنود الفاتورة لدى ${safeBiz} قبل تحديد الإجراء التالي، وسنوافيكم بنتيجة المراجعة.${input.statementLink ? `\nرابط كشف الحساب التفصيلي: ${input.statementLink}` : ""}`;
+      replyEn = `Thank you for flagging this, ${safeDebtor}. We will review the invoice and your concern with ${safeBiz} before deciding the next step, then share the review outcome.${input.statementLink ? `\nDetailed statement link: ${input.statementLink}` : ""}`;
       recommendedActionAr = "مراجعة بنود الفاتورة وكشف الحساب وحسم الاعتراض";
       recommendedActionEn = "Audit invoice line items and resolve dispute";
       followUpDays = 1;
@@ -646,32 +666,32 @@ export function generateSmartInboxReply(input: SmartInboxReplyInput): SmartInbox
 
     case "request_extension":
       replyAr = promised
-        ? `أهلاً بك أستاذ/ة ${safeDebtor}. تمت الموافقة على تمديد مهلة السداد لرصيد ${totalStr} ج.م لدى ${safeBiz} حتى تاريخ ${promised}. نقدر التزامكم وتعاونكم الدائم.`
-        : `أهلاً بك أستاذ/ة ${safeDebtor}. يسعدنا في ${safeBiz} التيسير عليكم؛ يرجى إفادتنا بالموعد المقترح للسداد أو إمكانية تقسيم المبلغ (${totalStr} ج.م) على دفعتين لاعتماده.`;
+        ? `أهلاً بك أستاذ/ة ${safeDebtor}. استلمنا طلب تمديد موعد سداد رصيد ${totalStr} ${symAr} لدى ${safeBiz} حتى ${promised}. الطلب يحتاج إلى مراجعة واعتماد فريقنا قبل تأكيد أي تعديل.`
+        : `أهلاً بك أستاذ/ة ${safeDebtor}. استلمنا طلب التمديد لدى ${safeBiz}. يرجى تحديد الموعد المقترح للسداد أو ما إذا كان مقترح تقسيم المبلغ (${totalStr} ${symAr}) على دفعتين مناسباً لكم، وسيراجع فريقنا الطلب.`;
       replyEn = promised
-        ? `Hello ${safeDebtor}. We have approved your extension request for ${totalStr} EGP at ${safeBiz} until ${promised}. Thank you for your cooperation.`
-        : `Hello ${safeDebtor}. We are happy to accommodate a short extension at ${safeBiz}; please share your target payment date or let us know if a 2-part installment plan for ${totalStr} EGP works best.`;
-      recommendedActionAr = "اعتماد المهلة الإضافية أو عرض خطة تقسيط";
-      recommendedActionEn = "Approve extension or offer a 2-part installment schedule";
+        ? `Hello ${safeDebtor}. We have received your request to extend the payment date for ${totalStr} ${symEn} at ${safeBiz} until ${promised}. The request is subject to review and confirmation by our team.`
+        : `Hello ${safeDebtor}. We have received your extension request at ${safeBiz}. Please share your proposed payment date or whether a 2-part installment proposal for ${totalStr} ${symEn} would be useful; our team will review it.`;
+      recommendedActionAr = "مراجعة طلب التمديد وتحديد القرار";
+      recommendedActionEn = "Review the extension request and decide";
       followUpDays = 7;
       break;
 
     case "partial_payment_offer":
       replyAr = offeredStr
-        ? `مرحباً ${safeDebtor}، نرحب باستلام دفعة جزئية بقيمة ${offeredStr} ج.م تحت الحساب لدى ${safeBiz}، على أن يتم جدولة المتبقي من إجمالي ${totalStr} ج.م في موعد محدد.${input.paymentLink ? `\nرابط السداد: ${input.paymentLink}` : ""}`
-        : `مرحباً ${safeDebtor}، لا مانع لدى ${safeBiz} من سداد دفعة جزئية الآن من إجمالي المستحق (${totalStr} ج.م) وجدولة المتبقي. يرجى إرسال إيصال الدفعة الأولى فور التحويل.`;
+        ? `مرحباً ${safeDebtor}، وصلنا اقتراحكم بسداد دفعة جزئية بقيمة ${offeredStr} ${symAr} من إجمالي ${totalStr} ${symAr} لدى ${safeBiz}. سنراجع إمكانية اعتمادها وجدولة المتبقي ونؤكد لكم القرار قبل التنفيذ.${input.paymentLink ? `\nرابط السداد: ${input.paymentLink}` : ""}`
+        : `مرحباً ${safeDebtor}، يمكننا مراجعة طلب سداد دفعة جزئية من إجمالي المستحق (${totalStr} ${symAr}) وجدولة المتبقي. يرجى تحديد قيمة الدفعة المقترحة حتى يراجعها فريقنا.`;
       replyEn = offeredStr
-        ? `Hello ${safeDebtor}, we gladly accept a partial payment of ${offeredStr} EGP toward your ${totalStr} EGP balance at ${safeBiz}, with the remainder scheduled on an agreed date.${input.paymentLink ? `\nPayment link: ${input.paymentLink}` : ""}`
-        : `Hello ${safeDebtor}, ${safeBiz} can accept a partial payment now toward your ${totalStr} EGP balance and schedule the rest. Please share the receipt once transferred.`;
-      recommendedActionAr = "قبول الدفعة الجزئية وجدولة الرصيد المتبقي";
-      recommendedActionEn = "Accept partial payment and schedule remaining balance";
+        ? `Hello ${safeDebtor}, we received your proposal to pay ${offeredStr} ${symEn} toward the ${totalStr} ${symEn} balance at ${safeBiz}. Our team will review the proposal and confirm whether the remainder can be scheduled before any change is made.${input.paymentLink ? `\nPayment link: ${input.paymentLink}` : ""}`
+        : `Hello ${safeDebtor}, we can review a partial-payment proposal for your ${totalStr} ${symEn} balance at ${safeBiz}. Please share the amount you propose so our team can review it.`;
+      recommendedActionAr = "مراجعة عرض الدفعة الجزئية وشروطه";
+      recommendedActionEn = "Review the partial-payment proposal and terms";
       followUpDays = 3;
       break;
 
     case "question":
     default:
-      replyAr = `مرحباً ${safeDebtor}، بخصوص استفساركم لدى ${safeBiz}: إجمالي الرصيد المفتوح حالياً هو ${totalStr} ج.م.${input.statementLink ? ` يمكنكم الاطلاع على كشف الحساب الكامل والفواتير عبر الرابط: ${input.statementLink}` : " يسعدنا توضيح أي تفاصيل إضافية عبر هذه المحادثة."}`;
-      replyEn = `Hello ${safeDebtor}, regarding your inquiry with ${safeBiz}: your current open balance is ${totalStr} EGP.${input.statementLink ? ` You can view your full itemized statement here: ${input.statementLink}` : " Please let us know if you need any invoice details."}`;
+      replyAr = `مرحباً ${safeDebtor}، بخصوص استفساركم لدى ${safeBiz}: إجمالي الرصيد المفتوح حالياً هو ${totalStr} ${symAr}.${input.statementLink ? ` يمكنكم الاطلاع على كشف الحساب الكامل والفواتير عبر الرابط: ${input.statementLink}` : " يسعدنا توضيح أي تفاصيل إضافية عبر هذه المحادثة."}`;
+      replyEn = `Hello ${safeDebtor}, regarding your inquiry with ${safeBiz}: your current open balance is ${totalStr} ${symEn}.${input.statementLink ? ` You can view your full itemized statement here: ${input.statementLink}` : " Please let us know if you need any invoice details."}`;
       recommendedActionAr = "إرسال كشف الحساب التفصيلي والرد على استفسار العميل";
       recommendedActionEn = "Share itemized statement link and answer customer inquiry";
       followUpDays = 2;
@@ -679,6 +699,7 @@ export function generateSmartInboxReply(input: SmartInboxReplyInput): SmartInbox
   }
 
   return {
+    generationMode: "rules",
     intent: input.intent,
     replyAr,
     replyEn,
@@ -711,6 +732,8 @@ export interface CollectionsBriefingInput {
   bouncedChequesCount: number;
   debtors: readonly DebtorIntelligence[];
   llmNarration?: unknown;
+  /** Tenant display currency (F-06). */
+  currency: SupportedCurrency;
 }
 
 export interface CollectionsBriefing {
@@ -738,6 +761,8 @@ export interface CollectionsBriefing {
 }
 
 export function buildCollectionsBriefing(input: CollectionsBriefingInput): CollectionsBriefing {
+  const symAr = getCurrencySymbol(input.currency, "ar");
+  const symEn = getCurrencySymbol(input.currency, "en");
   const safeBiz = sanitizePromptData(input.businessName) || input.businessName;
   const actionable = [...input.debtors]
     .filter((d) => d.recommendation.actionKind !== "no_action")
@@ -754,6 +779,7 @@ export function buildCollectionsBriefing(input: CollectionsBriefingInput): Colle
     collectionRate: input.collectionRate,
     dsoDays: input.dsoDays,
     debtors: input.debtors,
+    currency: input.currency,
   });
 
   const attentionCount =
@@ -770,9 +796,9 @@ export function buildCollectionsBriefing(input: CollectionsBriefingInput): Colle
         ? "attention"
         : "strong";
 
-  const outStr = formatEgp(input.totalOutstandingMinor);
-  const ovStr = formatEgp(input.overdueMinor);
-  const colStr = formatEgp(input.collectedThisMonthMinor);
+  const outStr = formatCurrencyMinor(input.totalOutstandingMinor, input.currency);
+  const ovStr = formatCurrencyMinor(input.overdueMinor, input.currency);
+  const colStr = formatCurrencyMinor(input.collectedThisMonthMinor, input.currency);
 
   let headlineAr = "";
   let headlineEn = "";
@@ -782,15 +808,15 @@ export function buildCollectionsBriefing(input: CollectionsBriefingInput): Colle
   if (input.totalOutstandingMinor === 0n && attentionCount === 0) {
     headlineAr = "السيولة مستقرة — لا توجد متأخرات عاجلة اليوم";
     headlineEn = "Healthy cash position — no urgent overdue items today";
-    summaryAr = `تم تحصيل ${colStr} ج.م هذا الشهر بنجاح في ${safeBiz}. يمكنك إضافة فواتير جديدة أو استيراد كشوف الحسابات لجدولة المتابعة التلقائية.`;
-    summaryEn = `${colStr} EGP collected this month at ${safeBiz}. Add new invoices or import ledgers to automate follow-ups.`;
+    summaryAr = `تم تحصيل ${colStr} ${symAr} هذا الشهر بنجاح في ${safeBiz}. يمكنك إضافة فواتير جديدة أو استيراد كشوف الحسابات لجدولة المتابعة التلقائية.`;
+    summaryEn = `${colStr} ${symEn} collected this month at ${safeBiz}. Add new invoices or import ledgers to automate follow-ups.`;
   } else {
     if (input.bouncedChequesCount > 0) {
       headlineAr = `تنبيه مصرفي عاجل: ${input.bouncedChequesCount} شيك مرتد يتطلب متابعة فورية`;
       headlineEn = `Urgent Banking Alert: ${input.bouncedChequesCount} bounced cheque(s) require action`;
     } else if (input.overdueMinor > 0n) {
-      headlineAr = `أولوية تحصيل عاجلة: ${ovStr} ج.م متأخرات تتطلب متابعة اليوم`;
-      headlineEn = `Urgent Collections Priority: ${ovStr} EGP overdue requires action today`;
+      headlineAr = `أولوية تحصيل عاجلة: ${ovStr} ${symAr} متأخرات تتطلب متابعة اليوم`;
+      headlineEn = `Urgent Collections Priority: ${ovStr} ${symEn} overdue requires action today`;
     } else if (input.openDisputesCount > 0) {
       headlineAr = `أولوية متابعة: ${input.openDisputesCount} اعتراض مفتوح على فاتورة يتطلب الحسم`;
       headlineEn = `Action Required: ${input.openDisputesCount} open invoice dispute(s) require resolution`;
@@ -804,15 +830,15 @@ export function buildCollectionsBriefing(input: CollectionsBriefingInput): Colle
       headlineAr = `متابعة تشغيلية: توجد إجراءات مقترحة لتحسين التدفقات النقدية`;
       headlineEn = `Operational Briefing: proactive actions recommended to protect cash flow`;
     } else {
-      headlineAr = `ملخص التحصيل اليومي: ${outStr} ج.م إجمالي المستحقات النشطة`;
-      headlineEn = `Daily Collections Briefing: ${outStr} EGP active receivables`;
+      headlineAr = `ملخص التحصيل اليومي: ${outStr} ${symAr} إجمالي المستحقات النشطة`;
+      headlineEn = `Daily Collections Briefing: ${outStr} ${symEn} active receivables`;
     }
 
     const partsAr: string[] = [
-      `إجمالي المستحقات الحالية ${outStr} ج.م (منها ${ovStr} ج.م متأخرة السداد)، بينما بلغ المحصّل هذا الشهر ${colStr} ج.م.`,
+      `إجمالي المستحقات الحالية ${outStr} ${symAr} (منها ${ovStr} ${symAr} متأخرة السداد)، بينما بلغ المحصّل هذا الشهر ${colStr} ${symAr}.`,
     ];
     const partsEn: string[] = [
-      `Total open receivables stand at ${outStr} EGP (${ovStr} EGP overdue), with ${colStr} EGP collected this month.`,
+      `Total open receivables stand at ${outStr} ${symEn} (${ovStr} ${symEn} overdue), with ${colStr} ${symEn} collected this month.`,
     ];
     if (attentionCount > 0 || input.upcomingChequesCount > 0) {
       const pendingItemsAr: string[] = [];
@@ -918,22 +944,26 @@ export interface OperationalSignalsInput {
   quotaRatio: number | null;
   briefingSummaryAr?: string;
   briefingSummaryEn?: string;
+  /** Tenant display currency (F-06). */
+  currency: SupportedCurrency;
 }
 
 export function buildOperationalNotificationCandidates(input: OperationalSignalsInput): NotificationCandidate[] {
+  const symAr = getCurrencySymbol(input.currency, "ar");
+  const symEn = getCurrencySymbol(input.currency, "en");
   const out: NotificationCandidate[] = [];
   const monthKey = input.todayIso.slice(0, 7);
 
   for (const claim of input.pendingClaims.slice(0, 5)) {
     const safeName = sanitizePromptData(claim.debtorName) || claim.debtorName;
-    const amt = formatEgp(claim.amountMinor);
+    const amt = formatCurrencyMinor(claim.amountMinor, input.currency);
     out.push({
       kind: "receipt_claim",
       severity: "warning",
       titleAr: `إيصال سداد بانتظار التأكيد — ${safeName}`,
       titleEn: `Payment receipt claim pending review — ${safeName}`,
-      bodyAr: `تم تسجيل مطالبة سداد بقيمة ${amt} ج.م. راجع الإيصال واعتمد التسوية.`,
-      bodyEn: `Receipt claim of ${amt} EGP awaiting bank verification and confirmation.`,
+      bodyAr: `تم تسجيل مطالبة سداد بقيمة ${amt} ${symAr}. راجع الإيصال واعتمد التسوية.`,
+      bodyEn: `Receipt claim of ${amt} ${symEn} awaiting bank verification and confirmation.`,
       actionUrl: "/ai-inbox",
       entityType: "payment",
       entityId: claim.id,
@@ -975,15 +1005,15 @@ export function buildOperationalNotificationCandidates(input: OperationalSignals
 
   for (const chq of input.upcomingCheques.slice(0, 5)) {
     const safeName = sanitizePromptData(chq.debtorName) || chq.debtorName;
-    const amt = formatEgp(chq.amountMinor);
+    const amt = formatCurrencyMinor(chq.amountMinor, input.currency);
     const isBounced = chq.status === "bounced";
     out.push({
       kind: "cheque_alert",
       severity: isBounced ? "urgent" : "warning",
       titleAr: isBounced ? `تنبيه: ارتداد شيك #${chq.number}` : `استحقاق شيك #${chq.number} قريباً`,
       titleEn: isBounced ? `Alert: Cheque #${chq.number} bounced` : `Cheque #${chq.number} due soon`,
-      bodyAr: `${safeName} — ${amt} ج.م (تاريخ الاستحقاق ${chq.dueDate}).`,
-      bodyEn: `${safeName} — ${amt} EGP (due ${chq.dueDate}).`,
+      bodyAr: `${safeName} — ${amt} ${symAr} (تاريخ الاستحقاق ${chq.dueDate}).`,
+      bodyEn: `${safeName} — ${amt} ${symEn} (due ${chq.dueDate}).`,
       actionUrl: "/cheques",
       entityType: "cheque",
       entityId: chq.id,
@@ -993,14 +1023,14 @@ export function buildOperationalNotificationCandidates(input: OperationalSignals
 
   for (const deb of input.severeOverdueDebtors.slice(0, 3)) {
     const safeName = sanitizePromptData(deb.displayName) || deb.displayName;
-    const amt = formatEgp(deb.overdueMinor);
+    const amt = formatCurrencyMinor(deb.overdueMinor, input.currency);
     out.push({
       kind: "overdue_alert",
       severity: deb.maxDaysOverdue > 30 ? "urgent" : "warning",
       titleAr: `تأخر سداد (${deb.maxDaysOverdue} يوم) — ${safeName}`,
       titleEn: `Overdue alert (${deb.maxDaysOverdue}d) — ${safeName}`,
-      bodyAr: `رصيد متأخر بقيمة ${amt} ج.م. يُنصح بإرسال تذكير حازم مع رابط سداد.`,
-      bodyEn: `${amt} EGP overdue. Recommended: send firm reminder with payment link.`,
+      bodyAr: `رصيد متأخر بقيمة ${amt} ${symAr}. يُنصح بإرسال تذكير حازم مع رابط سداد.`,
+      bodyEn: `${amt} ${symEn} overdue. Recommended: send firm reminder with payment link.`,
       actionUrl: `/debtors/${deb.debtorId}`,
       entityType: "debtor",
       entityId: deb.debtorId,
@@ -1252,7 +1282,7 @@ export interface CopilotToolPlanResult {
   plannedTools: PlannedCopilotToolCall[];
 }
 
-function normalizeArabicSearch(text: string): string {
+export function normalizeArabicSearch(text: string): string {
   return text
     .replace(/[أإآ]/g, "ا")
     .replace(/ة/g, "ه")
