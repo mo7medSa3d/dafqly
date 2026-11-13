@@ -5,6 +5,31 @@
 ## Current milestone
 M6 — **COMPLETE** (2026-11-09, tag `v0.7.0-m6`): Hardening — security checklist, backups, load test, runbook, pilot-ready. All six milestones M0–M6 are now complete; what remains is entirely on the human side (accounts, decisions, GitHub push, hosting — see HUMAN_INPUTS.md and the §12 walk below). (M5: tag `v0.6.0-m5`; M4: tag `v0.5.0-m4`; M3: tag `v0.4.0-m3`; M2: tag `v0.3.0-m2`; M1: tag `v0.2.0-m1`; M0: tag `v0.1.0-m0`.)
 
+### Visual Simplification, Pure-Black Numbers, Gradient Elimination, In-App Confirmation, AI Identity ("Rased" / Gemini 3.1), and Test Data Seeding (2026-11-13) — **COMPLETE**
+- **1. Elimination of Background & Card Gradients (`apps/web/app/globals.css`, `apps/web/src/components/AiCopilotDrawer.tsx`)**:
+  - Replaced all `radial-gradient` and `linear-gradient` backdrops across `.glass-canvas`, `.brand-pattern`, `.brand-pattern-light`, `.hero-band`, `.yaseir-stage`, `.kpi-glow-primary`, `.kpi-glow-danger`, and `.kpi-glow-paid` with flat, clean 2026 solid surfaces (`var(--bg)`, `var(--surface)`, `var(--navy-800)`).
+  - Replaced gradient header in `AiCopilotDrawer.tsx` (`bg-gradient-to-r`) with solid `bg-surface border-b border-border/80`.
+- **2. Platform-Wide Neutral Numbers (`text-text` Pure Black in Light / Pure White in Dark)**:
+  - Eliminated colored digits across Dashboard KPIs (`kpi-overdue`, `kpi-collected`, top debtors), Invoices list (counts, paid, remaining, reference), Cheques summary cards (held, cleared, bounced amounts), Debtors summary cards (settled, opted-out counts, ledger balances), Debtor detail views, Statement portal, AI Inbox claims, and Financial charts.
+  - Colors are strictly reserved for accompanying indicators, icons, and status badges, keeping numeric values pure neutral `text-text`.
+- **3. In-App Confirmation Modal Replacing Native Browser Confirm (`apps/web/src/components/SettingsClient.tsx`)**:
+  - Eliminated native browser `window.confirm` popup ("localhost:3000 says: سيتم تسجيل خروجك...").
+  - Implemented an accessible in-app confirmation modal dialog with red warning badge, clear explanation, cancel button, and destructive "تأكيد تسجيل الخروج" button.
+- **4. AI Assistant Explicit Identity ("راصد" / Rased) and Model Visibility (`intelligence.ts`, `AppShell.tsx`, `AiCopilotDrawer.tsx`)**:
+  - Embedded the explicit persona and identity into system instructions: **"راصد" (Rased)** — المستشار المالي الرقمي واستراتيجي التحصيل لمنصة دفقلي (DAFQLY) powered by `gemini-3.1-flash-lite`.
+  - Prominently displayed the active model badge `gemini-3.1-flash-lite` and the name "راصد" on the launcher button, pop-up command menu, and copilot window header.
+- **5. Proportional Illustrations & Responsive Framing (`InvoicesClient.tsx`)**:
+  - Refined layout and sizing of `ReceivablesIllustration` inside the invoice controls panel with balanced padding, subtle border, and responsive grid alignment.
+- **6. Rich Multi-Scenario Test Data Generator (`apps/web/src/server/seed-rich.ts`, `routers.ts`, `SettingsClient.tsx`)**:
+  - Built `seedComprehensiveTestData` and exposed `tenant.seedComprehensive`: seeds 8 realistic Egyptian enterprises across governorates, 9 invoices across aging buckets (>60d, 31-60d, 8-30d, 1-7d, current, disputed, partially paid, paid), 4 lifecycle cheques (held, cleared, bounced, deposited), payment claims, promises to pay, and collection tasks.
+  - Added "إضافة بيانات تجريبية متكاملة للاختبار" one-click action in Settings under "بيانات الاختبار والمحاكاة".
+- **7. Verification Evidence**:
+  - `pnpm lint`: Passed (0 errors, `check-no-hardcoded-brand` OK, `check-secrets` OK, `check-message-parity` OK).
+  - `pnpm typecheck`: Passed (0 errors across all 9 packages).
+  - `pnpm test`: Passed (124 in web, 40 in providers, 40 in brand, 5 in templates, 100% green).
+  - `pnpm test:e2e`: Passed (32/32 tests passed 100%).
+  - `playwright test e2e/verify-rased-modal-numbers.spec.ts`: Passed (1/1 passed, capturing visual evidence for black numbers, in-app modal, model tag, and rich data seeding).
+
 ### Full System Check, AI Prompt & Lifecycle Optimization, Window & Button Ergonomics, and Top Banner Removal (2026-11-13) — **COMPLETE**
 - **1. Total Removal of Top Demo Mode Banner (`apps/web/src/components/AppShell.tsx`)**:
   - Completely removed the persistent dry-run/simulation indicator (`demo-mode-banner`) from `AppShell.tsx` per explicit user request ("وعايزك تشيل البتاع اللي فوق دي اللي هي وضع تجريبي الرسالة دي").

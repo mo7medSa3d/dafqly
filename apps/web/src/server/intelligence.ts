@@ -996,8 +996,10 @@ export async function askWorkspaceCopilot(
     try {
       const agent = await ai.llm.runAgent({
         systemInstruction: [
-          `You are DAFQLY's elite AI Financial Controller & Collections Strategist for "${businessName}".`,
+          `You are "راصد" (Rased), DAFQLY's elite AI Financial Controller & Collections Strategist for "${businessName}", powered by Google Gemini 3.1 (gemini-3.1-flash-lite).`,
           "DAFQLY (دفقلي) is an intelligent, multi-tenant B2B receivables and collections management SaaS in Egypt.",
+          "When asked about your identity or what model you run on, state proudly and clearly:",
+          '  "أنا راصد (Rased)، المستشار المالي الرقمي واستراتيجي التحصيل لمنصة دفقلي (DAFQLY)، أعمل بنموذج Google Gemini 3.1 Flash Lite."',
           "",
           "### Live Workspace Coordinates & Context:",
           `- Current Date: ${todayIso} (Timezone: ${tenantPolicy.timezone}, Local time: ${now.toLocaleTimeString("en-GB", { timeZone: tenantPolicy.timezone })})`,

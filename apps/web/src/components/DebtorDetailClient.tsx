@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
-import { formatEgp } from "@tahseel/core";
+import { formatCurrencyMinor } from "@tahseel/core";
 import { useCurrency } from "./CurrencyContext";
 import {
   BellRinging, BellSlash, CalendarCheck, Check, CheckCircle, Clock, FileText, HandCoins, LinkSimple, PaperPlaneTilt, PencilSimple,
@@ -17,17 +17,18 @@ import { WhatsAppShareButton, invoiceShareMessage, totalShareMessage } from "./W
 interface Invoice { id: string; reference: string | null; amountMinor: string; paidMinor: string; outstandingMinor: string; status: string; dueOn: string; currencyWarning: boolean }
 interface Detail {
   id: string; displayName: string; phoneE164: string; notes: string | null; optedOut: boolean; riskFlag?: boolean;
-  creditMinor: string; totalOutstandingMinor: string;
+  creditMinor: string; totalOutstandingMinor: string; totalDisputedMinor: string; disputedInvoicesCount: number;
   invoices: Invoice[];
   payments: { id: string; amountMinor: string; method: string; receivedOn: string; status: string; source: string; gatewayTransactionId: string | null; reversalOf: string | null }[];
 }
 interface StatementLink { id: string; expiresAt: string; revokedAt: string | null; lastViewedAt: string | null; state: string }
-interface PaymentLink { id: string; invoiceId: string | null; amountMinor: string; checkoutUrl: string; status: string; expiresAt: string }
+interface PaymentLink { id: string; invoiceId: string | null; amountMinor: string; checkoutUrl: string; status: string; expiresAt: string; provider?: "paymob" | "fake" }
 interface Dispute { id: string; invoiceId: string; raisedBy: string; reason: string; status: string; createdAt: string }
 interface Recon { gatewayTotalMinor: string; balanced: boolean; discrepancies: { kind: string; id: string }[] }
+interface LedgerRecon { balanced: boolean; discrepancies: { kind: string; id: string; detail: string }[] }
 interface TimelineEvent { id: string; kind: string; at: string; summary: string; amountMinor?: string; status?: string }
 
-const fmt = (minor: string) => formatEgp(BigInt(minor));
+
 
 function copyTextSafe(text: string) {
   try {
@@ -49,7 +50,9 @@ function copyTextSafe(text: string) {
 }
 
 export function DebtorDetailClient({ debtorId, businessName }: { debtorId: string; businessName?: string }) {
-  const { symbol: currencySymbol } = useCurrency();
+  const { currency, symbol: currencySymbol, formatAmountOnly } = useCurrency();
+  // F-06: amounts render in the tenant currency, not hardcoded EGP.
+  const fmt = (minor: string) => formatAmountOnly(BigInt(minor));
   const t = useTranslations("debtors");
   const tc = useTranslations("common");
   const ti = useTranslations("invoices");
@@ -68,6 +71,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   const [paymentLinks, setPaymentLinks] = useState<PaymentLink[]>([]);
   const [disputes, setDisputes] = useState<Dispute[]>([]);
   const [recon, setRecon] = useState<Recon | null>(null);
+  const [ledgerRecon, setLedgerRecon] = useState<LedgerRecon | null>(null);
   const [debtorIntel, setDebtorIntel] = useState<DebtorIntelligenceView | null>(null);
   const [gwMsg, setGwMsg] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
@@ -91,13 +95,14 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   const load = useCallback(async () => {
     try {
       setLoadError(null);
-      const [d, tl, sl, pl, dp, rc, intelRes] = await Promise.all([
+      const [d, tl, sl, pl, dp, rc, lrc, intelRes] = await Promise.all([
         trpc.debtors.get.query({ id: debtorId }),
         trpc.debtors.timeline.query({ id: debtorId }),
         trpc.statements.list.query({ debtorId }),
         trpc.payments.links.query({ debtorId }),
         trpc.statements.disputes.query({ debtorId }),
         trpc.payments.reconciliation.query(),
+        trpc.payments.ledgerReconciliation.query(),
         trpc.intelligence.forDebtor.query({ debtorId }).catch(() => null),
       ]);
       const det = d as Detail;
@@ -110,6 +115,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
       setPaymentLinks(pl as PaymentLink[]);
       setDisputes(dp as Dispute[]);
       setRecon(rc as Recon);
+      setLedgerRecon(lrc as LedgerRecon);
       setDebtorIntel(intelRes as DebtorIntelligenceView | null);
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : (locale === "en" ? "Debtor not found" : "تعذّر تحميل بيانات العميل"));
@@ -423,6 +429,12 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               <span className="tnum" dir="ltr" data-testid="debtor-outstanding">{fmt(detail.totalOutstandingMinor)}</span>
               <span className="ms-1.5 text-xs font-bold text-text-muted">{currencySymbol}</span>
             </dd>
+            {BigInt(detail.totalDisputedMinor || "0") > 0n && (
+              <dd className="text-sm font-semibold text-text-muted">
+                <span className="tnum" dir="ltr" data-testid="debtor-disputed">{fmt(detail.totalDisputedMinor)}</span>
+                <span className="ms-1.5 text-xs font-bold">{currencySymbol} — {locale === "ar" ? `متنازع عليه ومجمّد (${detail.disputedInvoicesCount})` : `disputed, frozen (${detail.disputedInvoicesCount})`}</span>
+              </dd>
+            )}
           </div>
           <div className="flex flex-col gap-1 bg-surface p-5 sm:p-6">
             <dt className="flex items-center gap-2 text-sm font-semibold text-text-muted">
@@ -445,7 +457,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                 {hasBalance && (
                   <button
                     type="button"
-                    onClick={() => setAmount((Number(detail.totalOutstandingMinor) / 100).toFixed(2))}
+                    onClick={() => setAmount(formatCurrencyMinor(BigInt(detail.totalOutstandingMinor), currency).replace(/,/g, ""))}
                     className="rounded-full bg-callout px-2.5 py-0.5 text-[11px] font-bold text-primary transition-colors hover:bg-primary hover:text-primary-fg"
                   >
                     {locale === "en" ? "Full Balance" : "كامل المستحق"} ({fmt(detail.totalOutstandingMinor)})
@@ -502,8 +514,11 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             <ul className="flex flex-col divide-y divide-border">
               {paymentLinks.map((l) => (
                 <li key={l.id} data-testid="gw-link" className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
-                  <span className="tnum font-extrabold text-primary" dir="ltr">{fmt(l.amountMinor)}</span>
+                  <span className="tnum font-black text-text" dir="ltr">{fmt(l.amountMinor)}</span>
                   <span className="rounded-full bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{l.status}</span>
+                  {l.provider === "fake" && (
+                    <span data-testid="gw-link-simulated" className="rounded-full bg-status-due-bg px-2.5 py-0.5 text-xs font-bold text-status-due-fg">{tg("simulated")}</span>
+                  )}
                   <span className="text-text-muted">{tg("expires")}: <span dir="ltr">{l.expiresAt.slice(0, 16).replace("T", " ")}</span></span>
                   <a data-testid="gw-link-open" href={l.checkoutUrl} target="_blank" rel="noreferrer" className={`${linkAction} ms-auto`}>{tg("openLink")}</a>
                 </li>
@@ -514,6 +529,15 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             <p data-testid="gw-recon" className="rounded-xl bg-callout px-4 py-3 text-sm text-text-muted">
               {tg("reconciliation")}: {tg("gatewayTotal")} <span className="tnum font-bold text-text" dir="ltr">{fmt(recon.gatewayTotalMinor)}</span> ·{" "}
               <span className="font-bold text-primary">{recon.balanced ? tg("balanced") : tg("discrepancies")}</span>
+            </p>
+          )}
+          {ledgerRecon && (
+            <p data-testid="ledger-recon" className="rounded-xl bg-callout px-4 py-3 text-sm text-text-muted">
+              {tg("ledgerReconciliation")}:{" "}
+              <span className="font-bold text-primary">{ledgerRecon.balanced ? tg("balanced") : tg("discrepancies")}</span>
+              {!ledgerRecon.balanced && (
+                <span> — {ledgerRecon.discrepancies.map((d) => d.kind).join(", ")}</span>
+              )}
             </p>
           )}
           <SecurityNotice
@@ -606,11 +630,11 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
           {detail.invoices.map((i) => (
             <li key={i.id} data-testid="detail-invoice" className="flex flex-col gap-1.5 p-4 transition-colors hover:bg-callout/40 sm:px-6">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-extrabold text-primary" dir="ltr">{i.reference ?? "—"}</span>
+                <span className="font-black text-text" dir="ltr">{i.reference ?? "—"}</span>
                 <span className="ms-auto"><StatusPill status={i.status} label={ti(`statuses.${i.status}`)} testId={`detail-invoice-status-${i.id}`} /></span>
               </div>
               <p className="text-sm text-text-muted">
-                {ti("amount")}: <span className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor)}</span> · {ti("paid")}: <span className="tnum font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor)}</span> · {ti("dueOn")}: <span dir="ltr">{i.dueOn}</span>
+                {ti("amount")}: <span className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor)}</span> · {ti("paid")}: <span className="tnum font-bold text-text" dir="ltr">{fmt(i.paidMinor)}</span> · {ti("dueOn")}: <span dir="ltr">{i.dueOn}</span>
               </p>
               {i.currencyWarning && <p className="text-sm font-semibold text-status-due-fg">{ti("currencyWarning")}</p>}
               <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -623,7 +647,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                   phone={detail.phoneE164}
                   message={invoiceShareMessage({
                     businessName: effectiveBusinessName,
-                    amount: fmt(i.outstandingMinor),
+                    amount: `${fmt(i.outstandingMinor)} ${currencySymbol}`,
                     dueDate: i.dueOn,
                     locale,
                   })}
@@ -708,7 +732,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                   <span className="font-bold">{e.kind}</span>
                   {" · "}<span className="text-text-muted" dir="ltr">{e.at.slice(0, 10)}</span>
                   {" · "}{e.summary}
-                  {e.amountMinor && <> · <span className="tnum font-bold text-primary" dir="ltr">{fmt(e.amountMinor)}</span></>}
+                  {e.amountMinor && <> · <span className="tnum font-black text-text" dir="ltr">{fmt(e.amountMinor)}</span></>}
                 </p>
               </li>
             );

@@ -2,13 +2,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
-import { formatEgp, canTransition, type InvoiceStatus } from "@tahseel/core";
+import { canTransition, formatCurrencyMinor, type InvoiceStatus } from "@tahseel/core";
 import { useCurrency } from "./CurrencyContext";
 import { Check, MagnifyingGlass, PencilSimple, Plus, Sparkle, WarningCircle, X } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
-import { EmptyInvoicesIllustration, ReceivablesIllustration } from "./illustrations";
-import { EmptyState, Panel, SecurityNotice, StatusPill, btnGhost, btnPrimary, btnSmall, inputCls, labelCls } from "./ui";
+import { EmptyState, LoadingState, Panel, StatusPill, btnGhost, btnPrimary, btnSmall, inputCls, labelCls } from "./ui";
 import { WhatsAppShareButton, invoiceShareMessage } from "./WhatsAppShare";
+import { EmptyInvoicesIllustration, ReceivablesIllustration } from "./illustrations";
 
 interface Invoice {
   id: string; debtorId: string; reference: string | null; description: string | null;
@@ -19,8 +19,6 @@ interface DebtorLite { id: string; displayName: string; phoneE164?: string }
 
 const STATUSES = ["open", "partially_paid", "paid", "disputed", "written_off", "cancelled"] as const;
 const BUCKETS = ["current", "0-7", "8-30", "31-60", "60+"] as const;
-const fmt = (minor: string) => formatEgp(BigInt(minor));
-
 function addDaysIso(baseIso: string, days: number): string {
   const d = new Date(`${baseIso}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return baseIso;
@@ -28,20 +26,22 @@ function addDaysIso(baseIso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-export function InvoicesClient({ businessName }: { businessName?: string }) {
+export function InvoicesClient({ businessName, initialOverdueOnly = false }: { businessName?: string; initialOverdueOnly?: boolean }) {
   const router = useRouter();
   const t = useTranslations("invoices");
   const tc = useTranslations("common");
   const locale = useLocale();
   const isAr = locale === "ar";
-  const { symbol: currencySymbol } = useCurrency();
+  const { currency, symbol: currencySymbol, formatAmountOnly } = useCurrency();
+  // F-06: amounts render in the tenant currency, not hardcoded EGP.
+  const fmt = (minor: string) => formatAmountOnly(BigInt(minor));
   const effectiveBusinessName = businessName || (isAr ? "منشأتك" : "Your Business");
   const [items, setItems] = useState<Invoice[]>([]);
   const [debtors, setDebtors] = useState<DebtorLite[]>([]);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [status, setStatus] = useState<string>("");
-  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [overdueOnly, setOverdueOnly] = useState(initialOverdueOnly);
   const [bucket, setBucket] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkTo, setBulkTo] = useState<string>("cancelled");
@@ -65,6 +65,12 @@ export function InvoicesClient({ businessName }: { businessName?: string }) {
     return () => clearTimeout(timer);
   }, [search]);
 
+  // F-15: the aging panel sums the loaded page (first 100); the server
+  // total says whether that page is the whole filtered set or a subset.
+  const [totalCount, setTotalCount] = useState<number | null>(null);
+  const truncated = totalCount !== null && totalCount > items.length;
+  // F-17: first-load flag only — see DebtorsClient.
+  const [loading, setLoading] = useState(true);
   const load = useCallback(async () => {
     try {
       const page = await trpc.invoices.list.query({
@@ -75,8 +81,11 @@ export function InvoicesClient({ businessName }: { businessName?: string }) {
         agingBucket: bucket || undefined,
       });
       setItems(page.items as Invoice[]);
+      setTotalCount(typeof page.totalCount === "number" ? page.totalCount : null);
     } catch {
       /* ignore */
+    } finally {
+      setLoading(false);
     }
   }, [debouncedSearch, status, overdueOnly, bucket]);
   useEffect(() => { void load(); }, [load]);
@@ -110,7 +119,7 @@ export function InvoicesClient({ businessName }: { businessName?: string }) {
     setEditForm({
       reference: inv.reference ?? "",
       description: inv.description ?? "",
-      amount: (Number(inv.amountMinor) / 100).toFixed(2),
+      amount: formatCurrencyMinor(BigInt(inv.amountMinor), inv.currency ?? currency).replace(/,/g, ""),
       dueOn: inv.dueOn,
     });
   }
@@ -233,15 +242,26 @@ export function InvoicesClient({ businessName }: { businessName?: string }) {
         </div>
 
         <div className="panel-shadow flex flex-col justify-between gap-4 rounded-2xl border border-border bg-surface p-5 sm:p-6 lg:col-span-4">
-          <div className="flex justify-center">
-            <ReceivablesIllustration size={220} />
+          <div className="flex items-center justify-center overflow-hidden rounded-xl bg-surface-muted/30 p-2">
+            <ReceivablesIllustration size={190} />
           </div>
-          <SecurityNotice
-            compact
-            body={isAr
-              ? "يُنشأ رقم الفاتورة تلقائيًا وتُجدول تذكيرات السداد للعميل في مواعيدها دون أي إعداد يدوي."
-              : "Invoice IDs are generated automatically and reminders are scheduled on time with zero manual setup."}
-          />
+          <div>
+            <p className="text-xs font-bold text-primary">{isAr ? "ضوابط الفوترة" : "Invoice controls"}</p>
+            <h2 className="mt-1 text-base font-black text-text">{isAr ? "متابعة قابلة للتدقيق" : "Auditable follow-up"}</h2>
+            <p className="mt-1.5 text-xs leading-relaxed text-text-muted">
+              {isAr ? "كل فاتورة مرتبطة بعميل وتاريخ استحقاق وحالة سداد. تعديل الحالة لا يثبت وصول الأموال؛ تسجيل الدفعة المؤكدة هو الذي يحدّث الرصيد." : "Every invoice has a customer, due date and payment state. Changing status does not prove funds were received; only a confirmed ledger payment updates the balance."}
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-xl border border-border/60 bg-surface-muted/60 p-2.5">
+              <span className="font-semibold text-text-muted">{isAr ? "تذكيرات" : "Reminders"}</span>
+              <p className="mt-0.5 font-black text-text">{isAr ? "حسب السياسة" : "Policy-based"}</p>
+            </div>
+            <div className="rounded-xl border border-border/60 bg-surface-muted/60 p-2.5">
+              <span className="font-semibold text-text-muted">{isAr ? "التحصيل" : "Collections"}</span>
+              <p className="mt-0.5 font-black text-text">{isAr ? "دفعات مؤكدة" : "Confirmed payments"}</p>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -254,39 +274,23 @@ export function InvoicesClient({ businessName }: { businessName?: string }) {
         </div>
       )}
 
-      {/* Live Receivables Status & Volume Distribution Visual Strip */}
+      {/* Invoice aging analysis: balances grouped by aging bucket, not a decorative status strip. */}
       {items.length > 0 && (() => {
-        const totalAmt = items.reduce((s, x) => s + BigInt(x.amountMinor || "0"), 0n);
-        const totalPaid = items.reduce((s, x) => s + BigInt(x.paidMinor || "0"), 0n);
-        const totalOpen = items.reduce((s, x) => s + BigInt(x.outstandingMinor || "0"), 0n);
-        const overdueItems = items.filter((x) => x.overdue);
-        const overdueAmt = overdueItems.reduce((s, x) => s + BigInt(x.outstandingMinor || "0"), 0n);
-        const paidPct = totalAmt > 0n ? Number((totalPaid * 100n) / totalAmt) : 0;
-        const overduePct = totalAmt > 0n ? Number((overdueAmt * 100n) / totalAmt) : 0;
-        const currentOpenPct = Math.max(0, 100 - paidPct - overduePct);
-        return (
-          <div data-testid="inv-visual-summary" className="panel-shadow flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4 sm:p-5">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="flex items-center justify-between rounded-xl bg-surface-muted/50 px-3.5 py-2.5">
-                <span className="text-xs font-semibold text-text-muted">{isAr ? "الرصيد المفتوح" : "Open Receivables"}</span>
-                <span className="tnum text-sm font-extrabold text-primary" dir="ltr">{formatEgp(totalOpen)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
-              </div>
-              <div className="flex items-center justify-between rounded-xl bg-surface-muted/50 px-3.5 py-2.5">
-                <span className="text-xs font-semibold text-text-muted">{isAr ? "المتأخرات" : "Overdue Amount"}</span>
-                <span className="tnum text-sm font-extrabold text-status-overdue-fg" dir="ltr">{formatEgp(overdueAmt)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
-              </div>
-              <div className="flex items-center justify-between rounded-xl bg-surface-muted/50 px-3.5 py-2.5">
-                <span className="text-xs font-semibold text-text-muted">{isAr ? "المحصّل" : "Collected Amount"}</span>
-                <span className="tnum text-sm font-extrabold text-status-paid-fg" dir="ltr">{formatEgp(totalPaid)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
-              </div>
-            </div>
-            <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-surface-muted p-0.5">
-              {paidPct > 0 && <div style={{ width: `${Math.max(4, paidPct)}%` }} className="h-full bg-status-paid-fg first:rounded-s-full last:rounded-e-full" />}
-              {currentOpenPct > 0 && <div style={{ width: `${Math.max(4, currentOpenPct)}%` }} className="h-full bg-primary first:rounded-s-full last:rounded-e-full" />}
-              {overduePct > 0 && <div style={{ width: `${Math.max(4, overduePct)}%` }} className="h-full bg-status-overdue-fg first:rounded-s-full last:rounded-e-full" />}
-            </div>
-          </div>
-        );
+        const definitions = [
+          { key: "current", label: isAr ? "غير مستحقة" : "Current" },
+          { key: "0-7", label: isAr ? "1–7 أيام" : "1–7 days" },
+          { key: "8-30", label: isAr ? "8–30 يومًا" : "8–30 days" },
+          { key: "31-60", label: isAr ? "31–60 يومًا" : "31–60 days" },
+          { key: "60+", label: isAr ? "أكثر من 60 يومًا" : "60+ days" },
+        ];
+        const rows = definitions.map((bucket) => ({ ...bucket, amount: items.filter((invoice) => invoice.agingBucket === bucket.key && invoice.status !== "paid" && invoice.status !== "cancelled" && invoice.status !== "written_off").reduce((sum, invoice) => sum + BigInt(invoice.outstandingMinor || "0"), 0n) }));
+        const total = rows.reduce((sum, row) => sum + row.amount, 0n);
+        const tones = ["bg-emerald-500", "bg-primary", "bg-amber-500", "bg-orange-500", "bg-red-500"];
+        return <section data-testid="inv-aging-analysis" className="panel-shadow flex flex-col gap-4 rounded-2xl border border-border bg-surface p-4 sm:p-5">
+          <div className="flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-sm font-extrabold">{isAr ? "أعمار الأرصدة المفتوحة" : "Open receivables aging"}</h2><p className="mt-1 text-xs text-text-muted">{isAr ? "قيمة المتبقي حسب مدة التأخير ضمن النتائج الحالية" : "Outstanding balance by age in the current filtered results"}{truncated && (isAr ? ` — عرض ${items.length} من أصل ${totalCount} فاتورة` : ` — showing ${items.length} of ${totalCount} invoices`)}</p></div><strong className="tnum text-base" dir="ltr">{formatAmountOnly(total)} {currencySymbol}</strong></div>
+          <div className="flex h-3 w-full overflow-hidden rounded-full bg-surface-muted">{rows.map((row, i) => row.amount > 0n && <div key={row.key} className={`${tones[i]} h-full`} style={{ width: `${Number((row.amount * 10000n) / (total || 1n)) / 100}%` }} />)}</div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{rows.map((row, i) => <div key={row.key} className="min-w-0"><div className="flex items-center gap-2 text-xs font-semibold text-text-muted"><span className={`size-2.5 shrink-0 rounded-sm ${tones[i]}`} />{row.label}</div><p className="mt-1 truncate text-sm font-extrabold" dir="ltr">{formatAmountOnly(row.amount)} {currencySymbol}</p><p className="mt-0.5 text-[11px] text-text-muted">{total > 0n ? `${Number((row.amount * 10000n) / total) / 100}%` : "0%"}</p></div>)}</div>
+        </section>;
       })()}
 
       {/* Filters bar */}
@@ -326,18 +330,20 @@ export function InvoicesClient({ businessName }: { businessName?: string }) {
 
       {/* Bulk actions & count */}
       <div className="flex flex-wrap items-center gap-2.5">
-        <select data-testid="inv-bulk-to" className="min-h-[40px] rounded-full border border-border-strong/60 bg-surface px-4 text-xs font-medium" value={bulkTo} onChange={(e) => setBulkTo(e.target.value)}>
+        <select data-testid="inv-bulk-to" aria-label={t("bulkTargetStatus")} className="min-h-[40px] rounded-full border border-border-strong/60 bg-surface px-4 text-xs font-medium" value={bulkTo} onChange={(e) => setBulkTo(e.target.value)}>
           {STATUSES.map((s) => <option key={s} value={s}>{t(`statuses.${s}`)}</option>)}
         </select>
         <button data-testid="inv-bulk-apply" onClick={() => void onBulk()} className={btnGhost}>{t("bulkApply")}</button>
         <span className="ms-auto inline-flex items-center gap-2 rounded-full bg-callout px-3.5 py-1.5 text-xs font-medium text-text-muted">
           <span>{t("title")}:</span>
-          <span data-testid="inv-count" className="tnum font-bold text-primary" dir="ltr">{items.length}</span>
+          <span data-testid="inv-count" className="tnum font-black text-text" dir="ltr">{items.length}</span>
         </span>
       </div>
 
-      {items.length === 0 ? (
-        <EmptyState testId="invoices-empty" illustration={<EmptyInvoicesIllustration size={140} />} title={t("empty")} />
+      {loading ? (
+        <LoadingState isAr={isAr} />
+      ) : items.length === 0 ? (
+        <EmptyState illustration={<EmptyInvoicesIllustration size={190} />} testId="invoices-empty" title={t("empty")} body={isAr ? "أنشئ فاتورة أو استورد ملفاً لبدء متابعة الاستحقاقات والتحصيل." : "Create an invoice or import a file to start tracking due dates and collections."} />
       ) : (
         <div className="panel-shadow overflow-hidden rounded-2xl border border-border bg-surface">
           <ul className="flex flex-col divide-y divide-border">
@@ -419,9 +425,9 @@ export function InvoicesClient({ businessName }: { businessName?: string }) {
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span>{t("amount")}: <b className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
                     <span>·</span>
-                    <span>{t("paid")}: <b className="tnum font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
+                    <span>{t("paid")}: <b className="tnum font-bold text-text" dir="ltr">{fmt(i.paidMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
                     <span>·</span>
-                    <span>{t("remaining")}: <b className="tnum font-bold text-primary" dir="ltr">{fmt(i.outstandingMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
+                    <span>{t("remaining")}: <b className="tnum font-bold text-text" dir="ltr">{fmt(i.outstandingMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
                     <span>·</span>
                     <span>{t("dueOn")}: <span className="font-semibold text-text" dir="ltr">{i.dueOn}</span></span>
                   </div>

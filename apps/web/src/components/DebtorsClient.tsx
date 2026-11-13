@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
-import { formatEgp } from "@tahseel/core";
+import { formatCurrencyMinor } from "@tahseel/core";
 import {
   ArrowLeft, BellRinging, BellSlash, CheckCircle, CurrencyCircleDollar,
   MagnifyingGlass, Phone, Plus, SortAscending, Sparkle, Users,
@@ -13,7 +13,7 @@ import { trpc } from "@/lib/trpc-client";
 import type { DebtorIntelligenceView } from "@/server/intelligence";
 import { openAiCopilot } from "./AiCopilotDrawer";
 import { useCurrency } from "./CurrencyContext";
-import { EmptyState, InitialAvatar, Panel, btnPrimary, inputCls, labelCls } from "./ui";
+import { EmptyState, InitialAvatar, LoadingState, Panel, btnPrimary, inputCls, labelCls } from "./ui";
 
 interface Debtor {
   id: string;
@@ -27,23 +27,32 @@ interface Debtor {
   totalPaidMinor?: string;
   openInvoicesCount?: number;
   totalInvoicesCount?: number;
+  /** H09: the frozen remainder of disputed invoices (never part of the
+   * outstanding balance above). */
+  totalDisputedMinor?: string;
+  disputedInvoicesCount?: number;
+  /** F02: per-currency outstanding; the headline balance is the
+   * default-currency subtotal when the debtor is mixed-currency. */
+  outstandingByCurrency?: { currency: string; minor: string }[];
 }
 
 type FilterType = "all" | "ai_priority" | "has_balance" | "settled" | "opted_out" | "risk";
 type SortType = "default" | "ai_priority" | "balance_desc" | "newest" | "name_asc";
-
-const fmt = (minor: string | undefined) => formatEgp(BigInt(minor || "0"));
 
 export function DebtorsClient({ businessName }: { businessName?: string }) {
   const router = useRouter();
   const t = useTranslations("debtors");
   const locale = useLocale();
   const isAr = locale === "ar";
-  const { symbol: currencySymbol } = useCurrency();
+  const { symbol: currencySymbol, currency, formatAmountOnly } = useCurrency();
+  // F-06: amounts render in the tenant currency (exponent-aware: KWD 3
+  // decimals, JPY 0), not hardcoded EGP.
+  const fmt = (minor: string | undefined) => formatAmountOnly(minor || "0");
   const effectiveBusinessName = businessName || (isAr ? "منشأتك" : "Your Business");
 
   const [items, setItems] = useState<Debtor[]>([]);
   const [intelById, setIntelById] = useState<Record<string, DebtorIntelligenceView>>({});
+  const [intelTruncated, setIntelTruncated] = useState<{ shown: number; total: number } | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterType>("all");
   const [sort, setSort] = useState<SortType>("default");
@@ -64,6 +73,13 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
           map[score.debtorId] = score;
         }
         setIntelById(map);
+        // The intelligence list is capped at the 500 highest-outstanding
+        // debtors; say so instead of silently leaving the rest unscored.
+        setIntelTruncated(
+          intelRes.debtorScoresTruncated
+            ? { shown: intelRes.debtorScoresShown, total: intelRes.debtorTotalCount }
+            : null,
+        );
       }
     } catch {
       /* ignore */
@@ -74,12 +90,23 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
     void loadIntel();
   }, [loadIntel]);
 
+  // F-15: the list loads the first 200 rows; the header aggregates below
+  // are computed from those rows, so the server total is needed to say
+  // whether the numbers cover the whole ledger or only the rows shown.
+  const [totalCount, setTotalCount] = useState<number | null>(null);
+  const truncated = totalCount !== null && totalCount > items.length;
+  // F-17: first-load flag only — the list must not flash its empty state
+  // before the first round-trip; later refetches keep the stale list.
+  const [loading, setLoading] = useState(true);
   const load = useCallback(async (q: string) => {
     try {
       const page = await trpc.debtors.list.query({ search: q || undefined, limit: 200 });
       setItems((page.items as unknown) as Debtor[]);
+      setTotalCount(typeof page.totalCount === "number" ? page.totalCount : null);
     } catch {
       /* ignore */
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -217,7 +244,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <CurrencyCircleDollar size={18} weight="fill" className="text-primary" />
           </div>
           <span className="tnum text-xl font-black text-text" dir="ltr">
-            {formatEgp(totalOutstandingMinor)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span>
+            {formatAmountOnly(totalOutstandingMinor)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span>
           </span>
           <span className="text-[11px] text-text-muted">
             {isAr ? `على ${debtCount} عميل مدين` : `Across ${debtCount} debtors`}
@@ -229,7 +256,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <span className="text-xs font-semibold">{isAr ? "مسددين بالكامل" : "Fully Settled"}</span>
             <CheckCircle size={18} weight="fill" className="text-emerald-500" />
           </div>
-          <span className="tnum text-xl font-black text-emerald-600 dark:text-emerald-400" dir="ltr">
+          <span className="tnum text-xl font-black text-text" dir="ltr">
             {settledCount}
           </span>
           <span className="text-[11px] text-text-muted">
@@ -243,11 +270,25 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <Users size={18} weight="fill" className="text-primary" />
           </div>
           <span className="tnum text-xl font-black text-text" dir="ltr">
-            {items.length}
+            {totalCount ?? items.length}
           </span>
           <span className="text-[11px] text-text-muted">
             {isAr ? "مسجلين بالنظام" : "In the ledger"}
           </span>
+          {truncated && (
+            <span className="text-[11px] text-amber-600 dark:text-amber-400">
+              {isAr
+                ? `عرض ${items.length} من أصل ${totalCount} — الإجماليات أعلاه تغطي الصفوف المعروضة فقط`
+                : `Showing ${items.length} of ${totalCount} — the totals above cover only the rows shown`}
+            </span>
+          )}
+          {intelTruncated && (
+            <span className="text-[11px] text-amber-600 dark:text-amber-400">
+              {isAr
+                ? `تقييم الذكاء يشمل أعلى ${intelTruncated.shown} عميل من أصل ${intelTruncated.total} حسب الرصيد`
+                : `Intelligence scores cover the top ${intelTruncated.shown} of ${intelTruncated.total} debtors by balance`}
+            </span>
+          )}
         </div>
 
         <div className="panel-shadow flex flex-col gap-1 rounded-2xl border border-border bg-surface p-4">
@@ -255,7 +296,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <span className="text-xs font-semibold">{isAr ? "تذكيرات متوقفة" : "Paused Reminders"}</span>
             <BellSlash size={18} weight="fill" className="text-amber-500" />
           </div>
-          <span className="tnum text-xl font-black text-amber-600 dark:text-amber-400" dir="ltr">
+          <span className="tnum text-xl font-black text-text" dir="ltr">
             {optedOutCount}
           </span>
           <span className="text-[11px] text-text-muted">
@@ -264,47 +305,34 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
         </div>
       </div>
 
-      {/* Live Customer Portfolio Health & Risk Distribution Chart */}
-      {items.length > 0 && (() => {
-        const scores = Object.values(intelById);
-        const healthyCnt = scores.filter((s) => s.tier === "healthy").length || settledCount;
-        const watchCnt = scores.filter((s) => s.tier === "watch").length;
-        const atRiskCnt = scores.filter((s) => s.tier === "at_risk").length;
-        const criticalCnt = scores.filter((s) => s.tier === "critical").length;
-        const total = Math.max(1, healthyCnt + watchCnt + atRiskCnt + criticalCnt);
-        return (
-          <div data-testid="debtors-health-distribution" className="panel-shadow flex flex-col gap-2.5 rounded-2xl border border-border bg-surface p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <span className="font-bold text-text">
-                {isAr ? "توزيع الصحة الائتمانية ومخاطر العملاء" : "Customer Credit Health & Risk Distribution"}
-              </span>
-              <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold text-text-muted">
-                <span className="inline-flex items-center gap-1">
-                  <span className="size-2 rounded-full bg-status-paid-fg" aria-hidden />
-                  {isAr ? `منتظم (${healthyCnt})` : `Healthy (${healthyCnt})`}
+      {/* Ranked customer exposure: a directly actionable view, based on ledger balances. */}
+      {items.some((item) => BigInt(item.totalOutstandingMinor || "0") > 0n) && (() => {
+        const ranked = [...items]
+          .filter((item) => BigInt(item.totalOutstandingMinor || "0") > 0n)
+          .sort((a, b) => {
+            const aa = BigInt(a.totalOutstandingMinor || "0");
+            const bb = BigInt(b.totalOutstandingMinor || "0");
+            return aa === bb ? a.displayName.localeCompare(b.displayName) : aa > bb ? -1 : 1;
+          }).slice(0, 5);
+        const max = BigInt(ranked[0]?.totalOutstandingMinor || "1");
+        return <section data-testid="debtors-top-exposure" className="panel-shadow flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4 sm:p-5">
+          <div className="flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-sm font-extrabold text-text">{isAr ? "أكبر أرصدة تحتاج متابعة" : "Largest customer exposures"}</h2><p className="mt-1 text-xs text-text-muted">{isAr ? "أعلى خمسة أرصدة مفتوحة في النتائج الحالية، مرتبة حسب القيمة" : "Top five open balances in the current result set, ranked by value"}</p></div><span className="text-xs font-semibold text-text-muted">{isAr ? "الرصيد المفتوح" : "Open balance"}</span></div>
+          <div className="flex flex-col gap-3">{ranked.map((item, index) => {
+            const balance = BigInt(item.totalOutstandingMinor || "0");
+            const width = max > 0n ? Math.max(3, Number((balance * 10000n) / max) / 100) : 0;
+            const otherCurrencies = (item.outstandingByCurrency ?? []).filter((b) => b.currency !== currency);
+            return <div key={item.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5">
+              <Link href={`/${locale}/debtors/${item.id}`} className="min-w-0 truncate text-sm font-bold text-text hover:text-primary">{index + 1}. {item.displayName}</Link>
+              <span className="tnum text-sm font-extrabold text-text" dir="ltr">{fmt(item.totalOutstandingMinor)}</span>
+              {otherCurrencies.length > 0 && (
+                <span className="col-span-2 text-xs text-text-muted" dir="ltr">
+                  + {otherCurrencies.map((b) => `${formatCurrencyMinor(BigInt(b.minor), b.currency)} ${b.currency}`).join(" · ")}
                 </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="size-2 rounded-full bg-primary" aria-hidden />
-                  {isAr ? `مراقبة (${watchCnt})` : `Watch (${watchCnt})`}
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="size-2 rounded-full bg-yaseir-yellow" aria-hidden />
-                  {isAr ? `مخاطرة (${atRiskCnt})` : `At Risk (${atRiskCnt})`}
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="size-2 rounded-full bg-status-overdue-fg" aria-hidden />
-                  {isAr ? `حرج (${criticalCnt})` : `Critical (${criticalCnt})`}
-                </span>
-              </div>
-            </div>
-            <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-surface-muted p-0.5">
-              {healthyCnt > 0 && <div style={{ width: `${Math.max(5, Math.round((healthyCnt / total) * 100))}%` }} className="h-full bg-status-paid-fg first:rounded-s-full last:rounded-e-full" />}
-              {watchCnt > 0 && <div style={{ width: `${Math.max(5, Math.round((watchCnt / total) * 100))}%` }} className="h-full bg-primary first:rounded-s-full last:rounded-e-full" />}
-              {atRiskCnt > 0 && <div style={{ width: `${Math.max(5, Math.round((atRiskCnt / total) * 100))}%` }} className="h-full bg-yaseir-yellow first:rounded-s-full last:rounded-e-full" />}
-              {criticalCnt > 0 && <div style={{ width: `${Math.max(5, Math.round((criticalCnt / total) * 100))}%` }} className="h-full bg-status-overdue-fg first:rounded-s-full last:rounded-e-full" />}
-            </div>
-          </div>
-        );
+              )}
+              <div className="col-span-2 h-2 overflow-hidden rounded-full bg-surface-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${width}%` }} /></div>
+            </div>;
+          })}</div>
+        </section>;
       })()}
 
       {feedbackMsg && (
@@ -459,6 +487,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <div className="flex items-center gap-2">
               <SortAscending size={16} weight="bold" className="text-text-muted" />
               <select
+                aria-label={t("sortLabel")}
                 value={sort}
                 onChange={(e) => setSort(e.target.value as SortType)}
                 className="rounded-xl border border-border bg-surface px-3 py-2 text-xs font-semibold text-text focus:border-primary focus:outline-hidden"
@@ -472,7 +501,9 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
           </div>
 
           {/* Debtors List */}
-          {filteredItems.length === 0 ? (
+          {loading ? (
+            <LoadingState isAr={isAr} />
+          ) : filteredItems.length === 0 ? (
             <EmptyState
               testId="debtors-empty"
               title={
@@ -540,7 +571,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                               </span>
                             )}
 
-                            {/* AI Health Score Pill */}
+                            {/* Deterministic portfolio health score */}
                             {intelById[d.id] && (
                               <span
                                 className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${
@@ -559,7 +590,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                             )}
                           </div>
 
-                          {/* AI Suggested Next Action */}
+                          {/* Rules-based next action recommendation */}
                           {intelById[d.id] && hasDebt && (
                             <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-primary">
                               <Sparkle size={12} weight="fill" aria-hidden className="shrink-0" />
@@ -585,6 +616,11 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                             {d.totalPaidMinor && BigInt(d.totalPaidMinor) > 0n && (
                               <span>
                                 • {isAr ? `مسدد: ${fmt(d.totalPaidMinor)} ${currencySymbol}` : `Paid: ${fmt(d.totalPaidMinor)} ${currencySymbol}`}
+                              </span>
+                            )}
+                            {d.totalDisputedMinor && BigInt(d.totalDisputedMinor) > 0n && (
+                              <span>
+                                • {isAr ? `متنازع عليه (مجمّد): ${fmt(d.totalDisputedMinor)} ${currencySymbol}` : `Disputed (frozen): ${fmt(d.totalDisputedMinor)} ${currencySymbol}`}
                               </span>
                             )}
                           </div>

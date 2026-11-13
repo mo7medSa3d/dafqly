@@ -1,17 +1,21 @@
 import { z } from "zod";
-import { decodeCursor, encodeCursor, type InvoiceStatus } from "@tahseel/core";
+import { AppError, decodeCursor, encodeCursor, type InvoiceStatus } from "@tahseel/core";
+import { decodeBase64Upload, MAX_UPLOAD_BASE64_CHARS } from "@tahseel/core/files-crypto";
 import { applyOptOut, resumeReminders } from "@tahseel/reminders";
-import { router, publicProcedure, protectedProcedure, tenantProcedure } from "./trpc";
+import { router, publicProcedure, protectedProcedure, tenantProcedure, ownerProcedure } from "./trpc";
+import { auth } from "./auth";
 import { createTenantInput, createTenantForUser, listTenantsForUser, getDashboardSummary, todayInTimezone, getTenantSettingsAndIntegrations, updateTenantSettings, updateTenantSettingsInput } from "./services";
 import {
   createDebtor, createDebtorInput, updateDebtor, softDeleteDebtor, listDebtorsPage2,
   createInvoice, createInvoiceInput, listInvoicesPage, updateInvoice, transitionInvoice,
   bulkTransitionInvoices, recordPayment, recordPaymentInput, getDebtorDetail, getDebtorTimeline,
+  getLedgerReconciliation,
 } from "./ledger";
 import { createImportPreview, createImportPreviewInput, updateImportMapping, getImportJob, listImportJobs, commitImport, undoImport, deleteImportJob } from "./imports";
 import {
   createGatewayLink, createGatewayLinkInput, listPaymentLinks, refundGatewayPayment, refundInput,
-  confirmClaimedPayment, rejectClaimedPayment, getReconciliation, gatewayDeps,
+  confirmClaimedPayment, rejectClaimedPayment, confirmRefundIntent, rejectRefundIntent,
+  getReconciliation, gatewayDeps,
 } from "./gateway";
 import {
   createStatementLink, listStatementLinks, revokeStatementLink,
@@ -28,9 +32,10 @@ import {
 import { getKpis, getForecast, exportInvoicesCsv, exportPaymentsCsv, exportDebtorsCsv } from "./reports";
 import {
   getPlanCatalogue, getQuotaStatus, changePlan, changePlanInput, listSubscriptionInvoices,
-  generateSubscriptionInvoices,
 } from "./billing";
 import { exportTenantData, deleteTenantData } from "./tenant-data";
+import { seedComprehensiveTestData } from "./seed-rich";
+import { createTaskInput, updateTaskInput, createPromiseInput, listTeamMembers, listCollectionTasks, createCollectionTask, updateCollectionTask, listPromisesToPay, createMerchantPromise, decidePromiseToPay, listAiActionApprovals, decideAiActionApproval, getCollectionWorkspaceSummary } from "./workflows";
 import { FakePaymentProvider } from "@tahseel/providers";
 import { paymentProviderFromEnv, realGatewayConfigured } from "./gateway";
 import { globalSearch, listAuditTrail } from "./search";
@@ -50,6 +55,7 @@ import {
 } from "./notifications";
 import {
   getWorkspaceIntelligence, getDebtorIntelligence, askWorkspaceCopilot, copilotQueryInput,
+  listCopilotConversations, getCopilotConversation,
 } from "./intelligence";
 
 const pageArgs = (input: { cursor?: string; limit?: number } | undefined) => ({
@@ -76,20 +82,58 @@ async function tenantToday(ctx: { ownerDb: Parameters<typeof listTenantsForUser>
 
 export const appRouter = router({
   health: publicProcedure.query(() => ({ ok: true })),
+  auth: {
+    // H5: session revocation — signs the caller out everywhere, including
+    // the current session (use after a password change or a suspected
+    // compromise). Thin passthrough to Better Auth's /revoke-sessions.
+    revokeAllSessions: protectedProcedure.mutation(async ({ ctx }) => {
+      await auth.api.revokeSessions({ headers: ctx.headers });
+      return { ok: true };
+    }),
+  },
   tenant: {
     mine: protectedProcedure.query(async ({ ctx }) => listTenantsForUser(ctx.ownerDb, ctx.user.id)),
     create: protectedProcedure
       .input(createTenantInput)
       .mutation(async ({ ctx, input }) => createTenantForUser(ctx.appDb, ctx.user.id, input)),
     integrations: tenantProcedure.query(async ({ ctx }) => getTenantSettingsAndIntegrations(ctx.appDb, ctx.tenantId)),
-    updateSettings: tenantProcedure
+    updateSettings: ownerProcedure
       .input(updateTenantSettingsInput)
       .mutation(async ({ ctx, input }) => updateTenantSettings(ctx.appDb, ctx.tenantId, ctx.user.id, input)),
+    seedComprehensive: ownerProcedure
+      .mutation(async ({ ctx }) => seedComprehensiveTestData(ctx.appDb, ctx.tenantId, ctx.user.id)),
   },
   dashboard: {
     summary: tenantProcedure.query(async ({ ctx }) => {
       return getDashboardSummary(ctx.appDb, ctx.tenantId, await tenantToday(ctx));
     }),
+  },
+  collections: {
+    team: tenantProcedure.query(async ({ ctx }) => listTeamMembers(ctx.appDb, ctx.tenantId)),
+    tasks: tenantProcedure.input(z.object({ status: z.enum(["open", "in_progress", "done", "cancelled"]).optional(), assignedToUserId: z.string().optional() }).optional())
+      .query(async ({ ctx, input }) => listCollectionTasks(ctx.appDb, ctx.tenantId, ctx.role === "owner" ? (input ?? {}) : { ...(input ?? {}), assignedToUserId: ctx.user.id })),
+    createTask: tenantProcedure.input(createTaskInput).mutation(async ({ ctx, input }) => createCollectionTask(ctx.appDb, ctx.tenantId, ctx.user.id, {
+      ...input, assignedToUserId: ctx.role === "owner" ? input.assignedToUserId : ctx.user.id,
+    })),
+    updateTask: tenantProcedure.input(updateTaskInput).mutation(async ({ ctx, input }) => updateCollectionTask(ctx.appDb, ctx.tenantId, ctx.user.id, ctx.role, input)),
+    promises: tenantProcedure.query(async ({ ctx }) => listPromisesToPay(ctx.appDb, ctx.tenantId, await tenantToday(ctx))),
+    createPromise: tenantProcedure.input(createPromiseInput).mutation(async ({ ctx, input }) => createMerchantPromise(ctx.appDb, ctx.tenantId, ctx.user.id, input, await tenantToday(ctx))),
+    decidePromise: tenantProcedure.input(z.object({ id: z.string().uuid(), status: z.enum(["accepted", "rejected", "broken", "cancelled"]) }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.role !== "owner") {
+          throw new AppError("FORBIDDEN", "Only workspace owners can approve or change customer promise status", 403);
+        }
+        return decidePromiseToPay(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input.status, await tenantToday(ctx));
+      }),
+    summary: tenantProcedure.query(async ({ ctx }) => getCollectionWorkspaceSummary(ctx.appDb, ctx.tenantId, await tenantToday(ctx))),
+  },
+  aiActions: {
+    list: tenantProcedure.query(async ({ ctx }) => listAiActionApprovals(ctx.appDb, ctx.tenantId)),
+    decide: tenantProcedure.input(z.object({ id: z.string().uuid(), decision: z.enum(["approve", "reject"]) }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.role !== "owner") throw new AppError("FORBIDDEN", "Only workspace owners can approve AI actions", 403);
+        return decideAiActionApproval(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input.decision);
+      }),
   },
   debtors: {
     list: tenantProcedure
@@ -165,17 +209,27 @@ export const appRouter = router({
     links: tenantProcedure
       .input(z.object({ debtorId: z.string().uuid() }))
       .query(async ({ ctx, input }) => listPaymentLinks(ctx.appDb, ctx.tenantId, input.debtorId)),
-    refund: tenantProcedure
+    refund: ownerProcedure
       .input(refundInput)
       .mutation(async ({ ctx, input }) => refundGatewayPayment(gatewayDeps(), ctx.tenantId, ctx.user.id, input)),
-    confirm: tenantProcedure
+    // H3 crash recovery for refund intents stuck in CLAIMED.
+    confirmRefundIntent: ownerProcedure
+      .input(z.object({ reversalId: z.string().uuid(), refundTransactionId: z.string().trim().min(1).max(128) }))
+      .mutation(async ({ ctx, input }) => confirmRefundIntent(ctx.appDb, ctx.tenantId, ctx.user.id, input.reversalId, input.refundTransactionId)),
+    rejectRefundIntent: ownerProcedure
+      .input(z.object({ reversalId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => { await rejectRefundIntent(ctx.appDb, ctx.tenantId, ctx.user.id, input.reversalId); return { ok: true }; }),
+    confirm: ownerProcedure
       .input(z.object({ paymentId: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => { await confirmClaimedPayment(ctx.appDb, ctx.tenantId, ctx.user.id, input.paymentId); return { ok: true }; }),
-    reject: tenantProcedure
+    reject: ownerProcedure
       .input(z.object({ paymentId: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => { await rejectClaimedPayment(ctx.appDb, ctx.tenantId, ctx.user.id, input.paymentId); return { ok: true }; }),
     reconciliation: tenantProcedure
       .query(async ({ ctx }) => getReconciliation(ctx.appDb, ctx.tenantId)),
+    // M01: ledger reconciliation, same shape/surfacing as the gateway one.
+    ledgerReconciliation: tenantProcedure
+      .query(async ({ ctx }) => getLedgerReconciliation(ctx.appDb, ctx.tenantId)),
   },
   statements: {
     // F10: the raw token is returned exactly once, by create.
@@ -191,7 +245,7 @@ export const appRouter = router({
     disputes: tenantProcedure
       .input(z.object({ debtorId: z.string().uuid() }))
       .query(async ({ ctx, input }) => listDisputes(ctx.appDb, ctx.tenantId, input.debtorId)),
-    resolveDispute: tenantProcedure
+    resolveDispute: ownerProcedure
       .input(resolveDisputeInput)
       .mutation(async ({ ctx, input }) => resolveStatementDispute(ctx.appDb, ctx.tenantId, ctx.user.id, input, new Date())),
   },
@@ -248,7 +302,7 @@ export const appRouter = router({
         debtorId: z.string().uuid().optional(),
         fileName: z.string().trim().min(1).max(200),
         mime: z.string().trim().min(3).max(80),
-        contentBase64: z.string().min(4),
+        contentBase64: z.string().min(4).max(MAX_UPLOAD_BASE64_CHARS),
       }))
       .mutation(async ({ ctx, input }) => {
         const ai = aiDeps();
@@ -259,7 +313,7 @@ export const appRouter = router({
             deps.providers.whatsapp.sendText({ toE164, body, idempotencyKey }).then(() => undefined),
         }, {
           debtorId: input.debtorId,
-          bytes: new Uint8Array(Buffer.from(input.contentBase64, "base64")),
+          bytes: decodeBase64Upload(input.contentBase64),
           mime: input.mime,
         });
       }),
@@ -296,12 +350,12 @@ export const appRouter = router({
       .input(z.object({
         fileName: z.string().trim().min(1).max(200),
         mime: z.string().trim().min(3).max(80),
-        contentBase64: z.string().min(4),
+        contentBase64: z.string().min(4).max(MAX_UPLOAD_BASE64_CHARS),
       }))
       .mutation(async ({ ctx, input }) => {
         const ai = aiDeps();
         return extractChequePhoto(ctx.appDb, ctx.tenantId, ctx.user.id, { llm: ai.llm, storage: ai.storage }, {
-          bytes: new Uint8Array(Buffer.from(input.contentBase64, "base64")), mime: input.mime,
+          bytes: decodeBase64Upload(input.contentBase64), mime: input.mime,
         });
       }),
   },
@@ -314,6 +368,7 @@ export const appRouter = router({
         totalOutstandingMinor: String(k.totalOutstandingMinor),
         overdueAmountMinor: String(k.overdueAmountMinor),
         collectedInMonthMinor: String(k.collectedInMonthMinor),
+        refundedInMonthMinor: String(k.refundedInMonthMinor),
         agingBuckets: Object.fromEntries(Object.entries(k.agingBuckets).map(([b, v]) => [b, String(v)])),
         topDebtors: k.topDebtors.map((d) => ({ ...d, outstandingMinor: String(d.outstandingMinor) })),
       };
@@ -323,11 +378,12 @@ export const appRouter = router({
       return {
         ...f,
         weeks: f.weeks.map((w) => ({ ...w, expectedMinor: String(w.expectedMinor), conservativeMinor: String(w.conservativeMinor) })),
+        beyondHorizon: { expectedMinor: String(f.beyondHorizon.expectedMinor), conservativeMinor: String(f.beyondHorizon.conservativeMinor) },
       };
     }),
-    exportInvoices: tenantProcedure.query(async ({ ctx }) => exportInvoicesCsv(ctx.appDb, ctx.tenantId)),
-    exportPayments: tenantProcedure.query(async ({ ctx }) => exportPaymentsCsv(ctx.appDb, ctx.tenantId)),
-    exportDebtors: tenantProcedure.query(async ({ ctx }) => exportDebtorsCsv(ctx.appDb, ctx.tenantId)),
+    exportInvoices: ownerProcedure.query(async ({ ctx }) => exportInvoicesCsv(ctx.appDb, ctx.tenantId)),
+    exportPayments: ownerProcedure.query(async ({ ctx }) => exportPaymentsCsv(ctx.appDb, ctx.tenantId)),
+    exportDebtors: ownerProcedure.query(async ({ ctx }) => exportDebtorsCsv(ctx.appDb, ctx.tenantId)),
   },
   billing: {
     // F13: plans catalogue (config table; PLACEHOLDER prices), quota, plan change, subscription invoices.
@@ -339,7 +395,7 @@ export const appRouter = router({
       const q = await getQuotaStatus(ctx.appDb, ctx.tenantId, new Date());
       return { ...q, ratio: Math.round(q.ratio * 1000) / 1000 };
     }),
-    changePlan: tenantProcedure
+    changePlan: ownerProcedure
       .input(changePlanInput)
       .mutation(async ({ ctx, input }) => {
         const provider = paymentProviderFromEnv();
@@ -349,13 +405,14 @@ export const appRouter = router({
         );
       }),
     invoices: tenantProcedure.query(async ({ ctx }) => listSubscriptionInvoices(ctx.appDb, ctx.tenantId)),
-    generateInvoices: tenantProcedure
-      .mutation(async ({ ctx }) => generateSubscriptionInvoices(ctx.ownerDb, ctx.appDb, new Date())),
+    // NOTE: generateSubscriptionInvoices is a platform job, not a tenant
+    // action — it must never be callable through tRPC (it invoices ALL
+    // tenants). Call the service function from the worker/scheduler.
   },
   tenantData: {
     // §8 (M6): export everything / delete everything. Owner-only enforced
     // in the service for delete (ctx.role comes from the caller's membership).
-    export: tenantProcedure.query(async ({ ctx }) => exportTenantData(ctx.appDb, ctx.tenantId)),
+    export: ownerProcedure.query(async ({ ctx }) => exportTenantData(ctx.appDb, ctx.tenantId)),
     deleteAll: tenantProcedure
       .input(z.object({ confirmation: z.string().min(1).max(200) }))
       .mutation(async ({ ctx, input }) => deleteTenantData(ctx.ownerDb, ctx.tenantId, { userId: ctx.user.id, role: ctx.role }, input.confirmation)),
@@ -366,7 +423,8 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => globalSearch(ctx.appDb, ctx.tenantId, input.q)),
   },
   audit: {
-    list: tenantProcedure
+    // M6: the audit trail is owner-only (it names actors and entities).
+    list: ownerProcedure
       .input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional())
       .query(async ({ ctx, input }) => listAuditTrail(ctx.appDb, ctx.tenantId, input?.limit ?? 25)),
   },
@@ -438,6 +496,11 @@ export const appRouter = router({
     forDebtor: tenantProcedure
       .input(z.object({ debtorId: z.string().uuid() }))
       .query(async ({ ctx, input }) => getDebtorIntelligence(ctx.appDb, ctx.tenantId, input.debtorId, await tenantToday(ctx))),
+    listCopilotConversations: tenantProcedure
+      .query(async ({ ctx }) => listCopilotConversations(ctx.appDb, ctx.tenantId, ctx.user.id)),
+    getCopilotConversation: tenantProcedure
+      .input(z.object({ conversationId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => getCopilotConversation(ctx.appDb, ctx.tenantId, ctx.user.id, input.conversationId)),
     askCopilot: tenantProcedure
       .input(copilotQueryInput)
       .mutation(async ({ ctx, input }) => {

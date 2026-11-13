@@ -77,16 +77,21 @@ html, body, *, *::before, *::after {
   scrollbar-width: none !important;
   -ms-overflow-style: none !important;
 }
-::-webkit-scrollbar {
+::-webkit-scrollbar,
+*::-webkit-scrollbar {
   display: none !important;
   width: 0px !important;
   height: 0px !important;
   background: transparent !important;
 }
 ::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track,
 ::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb,
 ::-webkit-scrollbar-corner,
-::-webkit-scrollbar-button {
+*::-webkit-scrollbar-corner,
+::-webkit-scrollbar-button,
+*::-webkit-scrollbar-button {
   display: none !important;
   width: 0px !important;
   height: 0px !important;
@@ -115,24 +120,97 @@ html, body, *, *::before, *::after {
       0 1px 2px color-mix(in srgb, var(--navy-700) 4%, transparent),
       0 4px 12px color-mix(in srgb, var(--navy-700) 6%, transparent);
   }
-  /* Dot pattern in Yaseir cyan at low opacity, for hero/header zones. */
+  /* Flat clean pattern surfaces without gradients */
   .brand-pattern {
-    background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--teal-400) 24%, transparent) 1.5px, transparent 0);
-    background-size: 24px 24px;
+    background-color: var(--bg);
   }
   .brand-pattern-light {
-    background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--navy-500) 10%, transparent) 1.5px, transparent 0);
-    background-size: 24px 24px;
+    background-color: var(--bg);
   }
-  /* Yaseir Ink & UI Blue gradient band */
+  /* Pure solid surfaces - no gradients (2026 solid clean standard) */
   .hero-band {
-    background: linear-gradient(135deg, var(--navy-700) 0%, var(--navy-600) 48%, var(--navy-500) 100%);
+    background-color: var(--navy-800);
   }
   .yaseir-stage {
-    background: linear-gradient(135deg, var(--navy-100) 0%, var(--navy-50) 100%);
+    background-color: var(--surface-muted);
   }
   .no-scrollbar { scrollbar-width: none; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
+
+  /* 2026 Fintech SaaS elevation & Bento modular card utilities */
+
+  /* Unified 2026 Clean Solid Canvas */
+  .glass-canvas {
+    background-color: var(--bg);
+  }
+  .glass-frame {
+    background: color-mix(in srgb, var(--surface) 80%, transparent);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+    border: 1px solid color-mix(in srgb, var(--border) 75%, white);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 70%, transparent),
+      0 10px 34px -10px color-mix(in srgb, var(--navy-700) 9%, transparent),
+      0 2px 8px -2px color-mix(in srgb, var(--navy-700) 5%, transparent);
+  }
+  .glass-dock {
+    background: color-mix(in srgb, var(--surface) 84%, transparent);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid color-mix(in srgb, var(--border) 72%, white);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 75%, transparent),
+      0 14px 36px -12px color-mix(in srgb, var(--navy-700) 11%, transparent),
+      0 4px 12px -4px color-mix(in srgb, var(--navy-700) 5%, transparent);
+  }
+  .glass-pill {
+    background: color-mix(in srgb, var(--surface) 86%, transparent);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid color-mix(in srgb, var(--border) 80%, white);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 75%, transparent),
+      0 4px 12px -3px color-mix(in srgb, var(--navy-700) 8%, transparent);
+  }
+  .glass-recessed {
+    background: color-mix(in srgb, var(--surface-muted) 68%, transparent);
+    border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+    box-shadow:
+      inset 0 2px 6px color-mix(in srgb, var(--navy-700) 5%, transparent),
+      0 1px 0 color-mix(in srgb, white 55%, transparent);
+  }
+  .bento-card {
+    background: color-mix(in srgb, var(--surface) 86%, transparent);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid color-mix(in srgb, var(--border) 78%, white);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 65%, transparent),
+      0 2px 6px -1px color-mix(in srgb, var(--navy-700) 4%, transparent),
+      0 10px 24px -8px color-mix(in srgb, var(--navy-700) 8%, transparent);
+    transition: transform var(--dur-base) var(--ease), box-shadow var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease);
+  }
+  .bento-card:hover {
+    border-color: color-mix(in srgb, var(--primary) 26%, var(--border));
+    box-shadow:
+      0 2px 6px color-mix(in srgb, var(--navy-700) 5%, transparent),
+      0 12px 28px -6px color-mix(in srgb, var(--navy-700) 10%, transparent);
+  }
+  .glass-bar {
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  /* Flat clean surfaces - no gradient glow */
+  .kpi-glow-primary {
+    background-image: none;
+  }
+  .kpi-glow-danger {
+    background-image: none;
+  }
+  .kpi-glow-paid {
+    background-image: none;
+  }
 }
 
 @keyframes reveal-in {
@@ -165,4 +243,11 @@ html.switching-locale *::after {
   outline: none !important;
   box-shadow: none !important;
   border: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal, .bento-card {
+    animation: none !important;
+    transition: none !important;
+  }
 }

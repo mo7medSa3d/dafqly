@@ -1,12 +1,12 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
-import { formatEgp } from "@tahseel/core";
+import { formatCurrencyMinor } from "@tahseel/core";
 import { useCurrency } from "./CurrencyContext";
 import { BellRinging, CalendarBlank, Camera, Checks, ShieldCheck, Sparkle } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
+import { EmptyState, LoadingState, Panel, StatusPill, btnGhost, btnPrimary, inputCls, labelCls } from "./ui";
 import { ChequesIllustration } from "./illustrations";
-import { EmptyState, Panel, StatusPill, btnGhost, btnPrimary, inputCls, labelCls } from "./ui";
 
 /**
  * F9 cheques UI: manual registration, photo pre-fill (extraction fills the
@@ -41,7 +41,7 @@ export function ChequesClient() {
   const t = useTranslations("cheques");
   const locale = useLocale();
   const isAr = locale === "ar";
-  const { symbol: currencySymbol } = useCurrency();
+  const { currency, symbol: currencySymbol, formatAmountOnly } = useCurrency();
   const [cheques, setCheques] = useState<ChequeRow[]>([]);
   const [calendar, setCalendar] = useState<WeekGroup[]>([]);
   const [alerts, setAlerts] = useState<AlertRow[]>([]);
@@ -60,15 +60,21 @@ export function ChequesClient() {
     issueDate: todayIso, dueDate: due30Iso, invoiceId: "", imageFileId: "",
   });
 
+  // F-17: first-load flag only — see DebtorsClient.
+  const [loading, setLoading] = useState(true);
   const load = useCallback(async () => {
-    const [list, cal, al, ds] = await Promise.all([
-      trpc.cheques.list.query(), trpc.cheques.calendar.query(),
-      trpc.cheques.alerts.query(), trpc.debtors.list.query({ limit: 50 }),
-    ]);
-    setCheques(list as ChequeRow[]);
-    setCalendar(cal as WeekGroup[]);
-    setAlerts(al as AlertRow[]);
-    setDebtors((ds.items as DebtorLite[]).map((x) => ({ id: x.id, displayName: x.displayName })));
+    try {
+      const [list, cal, al, ds] = await Promise.all([
+        trpc.cheques.list.query(), trpc.cheques.calendar.query(),
+        trpc.cheques.alerts.query(), trpc.debtors.list.query({ limit: 50 }),
+      ]);
+      setCheques(list as ChequeRow[]);
+      setCalendar(cal as WeekGroup[]);
+      setAlerts(al as AlertRow[]);
+      setDebtors((ds.items as DebtorLite[]).map((x) => ({ id: x.id, displayName: x.displayName })));
+    } finally {
+      setLoading(false);
+    }
   }, []);
   useEffect(() => { void load(); }, [load]);
 
@@ -98,7 +104,7 @@ export function ChequesClient() {
           invoiceId: matchedInvoiceId || f.invoiceId,
           number: out.extraction!.number ?? f.number,
           bank: out.extraction!.bank ?? f.bank,
-          amount: out.extraction!.amount_minor !== null ? (out.extraction!.amount_minor / 100).toFixed(2) : f.amount,
+          amount: out.extraction!.amount_minor !== null ? formatCurrencyMinor(BigInt(out.extraction!.amount_minor), currency).replace(/,/g, "") : f.amount,
           issueDate: out.extraction!.issue_date ?? f.issueDate,
           dueDate: out.extraction!.due_date ?? f.dueDate,
           imageFileId: out.fileId,
@@ -156,7 +162,7 @@ export function ChequesClient() {
   const debtorName = (id: string) => debtors.find((d) => d.id === id)?.displayName ?? id;
   const money = (minor: string) => (
     <span className="tnum" dir="ltr">
-      {formatEgp(BigInt(minor))} <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span>
+      {formatAmountOnly(BigInt(minor))} <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span>
     </span>
   );
 
@@ -174,16 +180,25 @@ export function ChequesClient() {
           return (
             <div data-testid="cheques-visual-summary" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="panel-shadow flex flex-col gap-1 rounded-2xl border border-border bg-surface p-4">
-                <span className="text-xs font-semibold text-text-muted">{isAr ? "شيكات برسم التحصيل" : "Held & Deposited"}</span>
-                <span className="tnum text-lg font-extrabold text-primary" dir="ltr">{formatEgp(heldAmt)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
+                <div className="flex items-center gap-1.5">
+                  <span className="size-2 rounded-full bg-primary" />
+                  <span className="text-xs font-semibold text-text-muted">{isAr ? "شيكات برسم التحصيل" : "Held & Deposited"}</span>
+                </div>
+                <span className="tnum text-lg font-black text-text" dir="ltr">{formatAmountOnly(heldAmt)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
               </div>
               <div className="panel-shadow flex flex-col gap-1 rounded-2xl border border-border bg-surface p-4">
-                <span className="text-xs font-semibold text-text-muted">{isAr ? "شيكات محصّلة" : "Cleared Cheques"}</span>
-                <span className="tnum text-lg font-extrabold text-status-paid-fg" dir="ltr">{formatEgp(clearedAmt)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
+                <div className="flex items-center gap-1.5">
+                  <span className="size-2 rounded-full bg-status-paid-fg" />
+                  <span className="text-xs font-semibold text-text-muted">{isAr ? "شيكات محصّلة" : "Cleared Cheques"}</span>
+                </div>
+                <span className="tnum text-lg font-black text-text" dir="ltr">{formatAmountOnly(clearedAmt)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
               </div>
               <div className="panel-shadow flex flex-col gap-1 rounded-2xl border border-border bg-surface p-4">
-                <span className="text-xs font-semibold text-text-muted">{isAr ? "شيكات مرتدة" : "Bounced Cheques"}</span>
-                <span className="tnum text-lg font-extrabold text-status-overdue-fg" dir="ltr">{formatEgp(bouncedAmt)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
+                <div className="flex items-center gap-1.5">
+                  <span className="size-2 rounded-full bg-status-overdue-fg" />
+                  <span className="text-xs font-semibold text-text-muted">{isAr ? "شيكات مرتدة" : "Bounced Cheques"}</span>
+                </div>
+                <span className="tnum text-lg font-black text-text" dir="ltr">{formatAmountOnly(bouncedAmt)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span></span>
               </div>
             </div>
           );
@@ -195,7 +210,9 @@ export function ChequesClient() {
           icon={BellRinging}
           actions={<button data-testid="cheque-run-alerts" onClick={onRunAlerts} disabled={busy} className={btnGhost}>{t("runAlerts")}</button>}
         >
-          {alerts.length === 0 ? (
+          {loading ? (
+            <LoadingState isAr={isAr} />
+          ) : alerts.length === 0 ? (
             <div className="flex items-center gap-2.5 rounded-xl bg-surface-muted/60 px-4 py-3 text-xs text-text-muted">
               <BellRinging size={16} weight="fill" className="shrink-0 text-teal-600 dark:text-teal-300" />
               <span>{isAr ? "لا توجد تنبيهات استحقاق عاجلة حالياً — جميع الشيكات في مواعيدها." : "No urgent cheque alerts at the moment."}</span>
@@ -221,8 +238,10 @@ export function ChequesClient() {
             </span>
           </div>
 
-          {cheques.length === 0 ? (
-            <EmptyState illustration={<ChequesIllustration size={84} />} title={t("empty")} />
+          {loading ? (
+            <LoadingState isAr={isAr} />
+          ) : cheques.length === 0 ? (
+            <EmptyState illustration={<ChequesIllustration size={150} />} title={t("empty")} body={isAr ? "سجّل أول شيك لبدء متابعة مواعيد التحصيل والإيداع والارتداد." : "Register a cheque to track collection, deposit and bounce dates."} />
           ) : (
             <div className="panel-shadow overflow-hidden rounded-2xl border border-border bg-surface">
               <ul className="flex flex-col divide-y divide-border">
@@ -267,7 +286,9 @@ export function ChequesClient() {
             <CalendarBlank size={20} weight="fill" className="text-primary" />
             <h2 className="text-lg font-extrabold">{t("calendarTitle")}</h2>
           </div>
-          {calendar.length === 0 ? (
+          {loading ? (
+            <LoadingState isAr={isAr} />
+          ) : calendar.length === 0 ? (
             <div className="rounded-xl border border-border bg-surface p-5 text-center text-xs text-text-muted">
               {isAr ? "لا توجد شيكات مجدولة للأسابيع القادمة." : "No scheduled cheques for upcoming weeks."}
             </div>
@@ -311,7 +332,7 @@ export function ChequesClient() {
               >
                 <div className="flex items-center gap-1.5 font-extrabold text-primary">
                   <Sparkle size={15} weight="fill" />
-                  <span>{isAr ? "مطابقة ذكية بالذكاء الاصطناعي" : "AI Smart Match"}</span>
+                  <span>{isAr ? "استخراج AI ومطابقة تلقائية" : "AI extraction · automatic matching"}</span>
                 </div>
                 <p className="leading-relaxed text-text">
                   {isAr
@@ -359,13 +380,13 @@ export function ChequesClient() {
                     setForm({
                       ...form,
                       invoiceId: invId,
-                      amount: inv && !form.amount ? (Number(inv.amountMinor) / 100).toFixed(2) : form.amount,
+                      amount: inv && !form.amount ? formatCurrencyMinor(BigInt(inv.amountMinor), currency).replace(/,/g, "") : form.amount,
                     });
                   }}
                   className={inputCls}
                 >
                   <option value="">{t("none")}</option>
-                  {invoices.map((i) => <option key={i.id} value={i.id}>{i.reference ?? i.id} — {formatEgp(BigInt(i.amountMinor))}</option>)}
+                  {invoices.map((i) => <option key={i.id} value={i.id}>{i.reference ?? i.id} — {formatAmountOnly(BigInt(i.amountMinor))}</option>)}
                 </select></label>
               <label className={labelCls}><span>{t("issueDate")}</span>
                 <input data-testid="cheque-issue" required type="date" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} className={inputCls} /></label>

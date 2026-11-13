@@ -418,7 +418,7 @@ export function AppShell({
                 </span>
                 <div className="flex flex-col">
                   <span className={`text-xs font-black text-text ${isEn ? "tracking-tight" : ""}`}>
-                    {isEn ? "DAFQLY AI Copilot" : "مساعد دفقلي الذكي"}
+                    {isEn ? "Rased · DAFQLY Copilot" : "راصد · مستشار دفقلي المالي الذكي"}
                   </span>
                   <span className="text-[10px] text-text-muted">
                     {isEn ? "Autonomous Collections & Liquidity" : "التحصيل الذكي وإدارة السيولة"}
@@ -426,9 +426,9 @@ export function AppShell({
                 </div>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="flex items-center gap-1 rounded-full bg-callout px-2 py-0.5 text-[10px] font-bold text-primary">
+                <span className="flex items-center gap-1 rounded-full border border-border/70 bg-surface-muted px-2 py-0.5 text-[10px] font-mono font-bold text-text-muted">
                   <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>{isEn ? "Gemini 3.1 Live" : "Gemini 3.1 Live · نشط"}</span>
+                  <span>gemini-3.1-flash-lite</span>
                 </span>
                 <kbd className="hidden sm:inline-block rounded-md border border-border bg-surface px-1.5 py-0.5 text-[9px] font-bold text-text-muted">
                   Esc
@@ -586,7 +586,7 @@ export function AppShell({
           <span className="flex flex-col items-start text-start">
             <span className="flex items-center gap-1.5 text-xs font-black leading-tight">
               <Sparkle size={12} weight="fill" aria-hidden />
-              <span>{isEn ? "DAFQLY Copilot" : "المساعد الذكي"}</span>
+              <span>{isEn ? "Rased · Copilot" : "راصد · المساعد الذكي"}</span>
               {priorityCount > 0 && (
                 <span
                   className={`rounded-full px-1.5 py-0.2 text-[10px] font-black ${

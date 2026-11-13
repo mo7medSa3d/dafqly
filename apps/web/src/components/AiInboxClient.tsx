@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useTranslations, useLocale } from "next-intl";
-import { formatEgp } from "@tahseel/core";
+import { useCurrency } from "./CurrencyContext";
 import {
   ChatCircleDots,
   Check,
@@ -17,7 +17,7 @@ import {
   XCircle,
 } from "@phosphor-icons/react";
 import { trpc } from "@/lib/trpc-client";
-import { InitialAvatar, Panel, btnPrimary, inputCls, labelCls } from "./ui";
+import { InitialAvatar, LoadingState, Panel, btnPrimary, inputCls, labelCls } from "./ui";
 
 /**
  * The AI inbox (F7/F8): reply classifications a human must review, receipt
@@ -35,6 +35,7 @@ interface ClaimRow {
 }
 interface DebtorLite { id: string; displayName: string }
 interface SuggestedReplyState {
+  generationMode: "ai" | "rules";
   replyAr: string;
   replyEn: string;
   recommendedActionAr: string;
@@ -54,6 +55,7 @@ export function AiInboxClient() {
   const t = useTranslations("aiInbox");
   const locale = useLocale();
   const isAr = locale === "ar";
+  const { formatAmountOnly } = useCurrency();
   const [intents, setIntents] = useState<IntentRow[]>([]);
   const [claims, setClaims] = useState<ClaimRow[]>([]);
   const [debtors, setDebtors] = useState<DebtorLite[]>([]);
@@ -64,15 +66,21 @@ export function AiInboxClient() {
   const [generatingReplyFor, setGeneratingReplyFor] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // F-17: first-load flag only — see DebtorsClient.
+  const [loading, setLoading] = useState(true);
   const load = useCallback(async () => {
-    const [i, c, ds] = await Promise.all([
-      trpc.replies.listIntents.query({ onlyHuman: true }),
-      trpc.receipts.listClaims.query(),
-      trpc.debtors.list.query({ limit: 50 }),
-    ]);
-    setIntents(i as IntentRow[]);
-    setClaims(c as ClaimRow[]);
-    setDebtors((ds.items as DebtorLite[]).map((x) => ({ id: x.id, displayName: x.displayName })));
+    try {
+      const [i, c, ds] = await Promise.all([
+        trpc.replies.listIntents.query({ onlyHuman: true }),
+        trpc.receipts.listClaims.query(),
+        trpc.debtors.list.query({ limit: 50 }),
+      ]);
+      setIntents(i as IntentRow[]);
+      setClaims(c as ClaimRow[]);
+      setDebtors((ds.items as DebtorLite[]).map((x) => ({ id: x.id, displayName: x.displayName })));
+    } finally {
+      setLoading(false);
+    }
   }, []);
   useEffect(() => { void load(); }, [load]);
 
@@ -129,6 +137,7 @@ export function AiInboxClient() {
       setAiReplies((prev) => ({
         ...prev,
         [item.id]: {
+          generationMode: res.generationMode === "ai" ? "ai" : "rules",
           replyAr: res.replyAr,
           replyEn: res.replyEn,
           recommendedActionAr: res.recommendedActionAr,
@@ -167,7 +176,9 @@ export function AiInboxClient() {
             </span>
           </div>
 
-          {claims.length === 0 ? (
+          {loading ? (
+            <LoadingState isAr={isAr} />
+          ) : claims.length === 0 ? (
             <div className="panel-shadow flex items-center gap-3 rounded-2xl border border-border bg-surface p-6 text-sm text-text-muted">
               <Clock size={22} weight="fill" className="shrink-0 text-text-subtle" />
               <span>{t("claimsEmpty")}</span>
@@ -185,7 +196,7 @@ export function AiInboxClient() {
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      <span className="tnum text-lg font-extrabold text-primary" dir="ltr">{formatEgp(BigInt(c.amountMinor))}</span>
+                      <span className="tnum text-lg font-black text-text" dir="ltr">{formatAmountOnly(BigInt(c.amountMinor))}</span>
                       <div className="flex gap-2">
                         <button
                           type="button"
@@ -226,7 +237,9 @@ export function AiInboxClient() {
             </span>
           </div>
 
-          {intents.length === 0 ? (
+          {loading ? (
+            <LoadingState isAr={isAr} />
+          ) : intents.length === 0 ? (
             <div className="panel-shadow flex items-center gap-3 rounded-2xl border border-border bg-surface p-6 text-sm text-text-muted">
               <CheckCircle size={22} weight="fill" className="shrink-0 text-status-paid-fg" />
               <span>{t("intentsEmpty")}</span>
@@ -260,10 +273,13 @@ export function AiInboxClient() {
                           data-testid={`intent-ai-reply-${i.id}`}
                           className="flex flex-col gap-2 rounded-xl border border-primary/30 bg-callout/50 p-3.5 text-xs"
                         >
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="inline-flex items-center gap-1 font-bold text-primary">
                               <Sparkle size={13} weight="fill" aria-hidden />
-                              {isAr ? "الرد الذكي المقترح:" : "AI Suggested Reply:"}
+                              {isAr ? "الرد المقترح:" : "Suggested Reply:"}
+                              <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-semibold text-text-muted">
+                                {suggested.generationMode === "ai" ? (isAr ? "صياغة AI" : "AI-written") : (isAr ? "قالب آمن" : "Safe template")}
+                              </span>
                             </span>
                             <span className="rounded-full bg-surface px-2.5 py-0.5 text-[11px] font-semibold text-text-muted">
                               {isAr ? suggested.recommendedActionAr : suggested.recommendedActionEn}

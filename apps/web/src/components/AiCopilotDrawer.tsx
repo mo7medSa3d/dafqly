@@ -681,25 +681,25 @@ export function AiCopilotDrawer({
       }`}
     >
       {/* Pop-up Window Header with Minimize, Expand/Restore & Close Controls */}
-      <div className="flex shrink-0 items-center justify-between border-b border-border/70 bg-gradient-to-r from-primary/10 via-callout/40 to-transparent px-4 py-3">
+      <div className="flex shrink-0 items-center justify-between border-b border-border/80 bg-surface px-4 py-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-fg shadow-xs">
             <Sparkle size={16} weight="fill" aria-hidden />
           </span>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <h2 className="truncate text-xs font-extrabold text-text sm:text-sm">
-                {isEn ? "DAFQLY AI Copilot" : "مساعد دفقلي الذكي"}
+              <h2 className="truncate text-xs font-black text-text sm:text-sm">
+                {isEn ? "Rased · DAFQLY Copilot" : "راصد · المستشار المالي"}
               </h2>
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-callout px-2 py-0.5 text-[10px] font-bold text-primary">
-                <Cpu size={10} weight="fill" aria-hidden />
-                <span>{isEn ? "Live Agent" : "متصل ببياناتك"}</span>
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-surface-muted px-2 py-0.5 text-[10px] font-mono font-bold text-text-muted">
+                <Cpu size={10} weight="fill" className="text-primary" aria-hidden />
+                <span>gemini-3.1-flash-lite</span>
               </span>
             </div>
             <p className="truncate text-[10px] text-text-muted">
               {isEn
-                ? "Ask questions, draft messages & schedule reminders"
-                : "تحليل فوري، صياغة ذكية، وجدولة تذكيرات في أفضل وقت"}
+                ? "Autonomous Financial Intelligence & Cashflow Strategy"
+                : "التحليل المالي الذكي، كشف فجوات السيولة، وتسريع التحصيل"}
             </p>
           </div>
         </div>
@@ -1239,7 +1239,7 @@ export function AiCopilotDrawer({
                         <span className="text-[11px] text-text-muted" dir="ltr">
                           {tr.dueDate}
                         </span>
-                        <span className="tnum font-bold text-primary" dir="ltr">
+                        <span className="tnum font-extrabold text-text" dir="ltr">
                           {tr.formattedAmount}
                         </span>
                       </div>
