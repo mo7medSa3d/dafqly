@@ -1,25 +1,27 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
+import { inputVariants } from "@/components/ui/input";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
-import { formatCurrencyMinor } from "@tahseel/core";
 import { useCurrency } from "./CurrencyContext";
-import {
-  BellRinging, BellSlash, CalendarCheck, Check, CheckCircle, Clock, FileText, HandCoins, LinkSimple, PaperPlaneTilt, PencilSimple,
-  Receipt, Sparkle, Trash, Wallet, WarningCircle, XCircle,
-} from "@phosphor-icons/react";
+import { BellRinging, BellSlash, CalendarCheck, Check, CheckCircle, Clock, FileText, HandCoins, LinkSimple, PaperPlaneTilt, PencilSimple, Receipt, Sparkle, Trash, Wallet, WarningCircle, XCircle } from "@/components/ui/solid-icons";
+import { normalizeCurrencyCode } from "@tahseel/core";
 import { trpc } from "@/lib/trpc-client";
 import type { DebtorIntelligenceView } from "@/server/intelligence";
 import { openAiCopilot } from "./AiCopilotDrawer";
 import { Panel, SecurityNotice, StatusPill, btnGhost, btnPrimary, btnSmall, inputCls, labelCls, linkAction } from "./ui";
 import { WhatsAppShareButton, invoiceShareMessage, totalShareMessage } from "./WhatsAppShare";
 
-interface Invoice { id: string; reference: string | null; amountMinor: string; paidMinor: string; outstandingMinor: string; status: string; dueOn: string; currencyWarning: boolean }
+interface Invoice { id: string; reference: string | null; amountMinor: string; paidMinor: string; outstandingMinor: string; currency: string; status: string; dueOn: string; currencyWarning: boolean }
 interface Detail {
   id: string; displayName: string; phoneE164: string; notes: string | null; optedOut: boolean; riskFlag?: boolean;
-  creditMinor: string; totalOutstandingMinor: string; totalDisputedMinor: string; disputedInvoicesCount: number;
+  creditMinor: string; creditCurrency: string; defaultCurrency: string;
+  totalOutstandingMinor: string; totalDisputedMinor: string; disputedInvoicesCount: number;
+  outstandingByCurrency?: { currency: string; minor: string }[];
   invoices: Invoice[];
-  payments: { id: string; amountMinor: string; method: string; receivedOn: string; status: string; source: string; gatewayTransactionId: string | null; reversalOf: string | null }[];
+  payments: { id: string; amountMinor: string; currency: string; method: string; receivedOn: string; status: string; source: string; gatewayTransactionId: string | null; reversalOf: string | null }[];
 }
 interface StatementLink { id: string; expiresAt: string; revokedAt: string | null; lastViewedAt: string | null; state: string }
 interface PaymentLink { id: string; invoiceId: string | null; amountMinor: string; checkoutUrl: string; status: string; expiresAt: string; provider?: "paymob" | "fake" }
@@ -50,9 +52,9 @@ function copyTextSafe(text: string) {
 }
 
 export function DebtorDetailClient({ debtorId, businessName }: { debtorId: string; businessName?: string }) {
-  const { currency, symbol: currencySymbol, formatAmountOnly } = useCurrency();
+  const { formatAmountOnly } = useCurrency();
   // F-06: amounts render in the tenant currency, not hardcoded EGP.
-  const fmt = (minor: string) => formatAmountOnly(BigInt(minor));
+  const fmt = (minor: string, currency?: string) => formatAmountOnly(BigInt(minor), currency ? { currency } : undefined);
   const t = useTranslations("debtors");
   const tc = useTranslations("common");
   const ti = useTranslations("invoices");
@@ -75,6 +77,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   const [debtorIntel, setDebtorIntel] = useState<DebtorIntelligenceView | null>(null);
   const [gwMsg, setGwMsg] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
+  const [paymentCurrency, setPaymentCurrency] = useState("");
   const [method, setMethod] = useState<"cash" | "instapay" | "bank" | "wallet" | "cheque" | "gateway" | "other">("cash");
   const [receivedOn, setReceivedOn] = useState(() => new Date().toISOString().slice(0, 10));
   const [alloc, setAlloc] = useState<Record<string, string>>({});
@@ -107,6 +110,21 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
       ]);
       const det = d as Detail;
       setDetail(det);
+      const openCurrency = det.invoices.find((i) =>
+        (i.status === "open" || i.status === "partially_paid") && BigInt(i.outstandingMinor) > 0n,
+      )?.currency;
+      setPaymentCurrency((current) => {
+        const available = new Set([
+          ...det.invoices.filter((i) =>
+            (i.status === "open" || i.status === "partially_paid") && BigInt(i.outstandingMinor) > 0n,
+          ).map((i) => i.currency),
+          ...(BigInt(det.creditMinor) > 0n ? [det.creditCurrency] : []),
+          det.defaultCurrency,
+        ]);
+        return current && available.has(current)
+          ? current
+          : (openCurrency ?? det.creditCurrency ?? det.defaultCurrency ?? "EGP");
+      });
       setEditName(det.displayName);
       setEditNotes(det.notes ?? "");
       setEditRisk(Boolean(det.riskFlag));
@@ -144,7 +162,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
         .filter(([, v]) => v.trim() !== "")
         .map(([invoiceId, v]) => ({ invoiceId, amount: v.trim() }));
       await trpc.payments.record.mutate({
-        debtorId, amount, method, receivedOn,
+        debtorId, amount, currency: normalizeCurrencyCode(paymentCurrency || detail?.defaultCurrency || "EGP"), method, receivedOn,
         allocations: allocations.length > 0 ? allocations : undefined,
       });
       setAmount(""); setAlloc({});
@@ -241,8 +259,8 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
 
   if (loadError) {
     return (
-      <div className="panel-shadow flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-8 text-center">
-        <WarningCircle size={40} weight="fill" className="text-status-overdue-fg" />
+      <div className="panel-shadow flex flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-8 text-center">
+        <WarningCircle size={40} className="text-status-overdue-fg" />
         <p className="font-bold text-text">{locale === "en" ? "Debtor not found or has been deleted" : "العميل غير موجود أو تم حذفه"}</p>
         <button
           type="button"
@@ -256,13 +274,29 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   }
 
   if (!detail) return <p className="text-text-muted">…</p>;
-  const openInvoices = detail.invoices.filter((i) => i.status === "open" || i.status === "partially_paid");
-  const hasBalance = BigInt(detail.totalOutstandingMinor) > 0n;
+  const allOpenInvoices = detail.invoices.filter((i) =>
+    (i.status === "open" || i.status === "partially_paid") && BigInt(i.outstandingMinor) > 0n,
+  );
+  const paymentCurrencies = [...new Set([
+    ...allOpenInvoices.map((i) => i.currency),
+    ...(BigInt(detail.creditMinor) !== 0n ? [detail.creditCurrency] : []),
+    detail.defaultCurrency,
+    // A customer can send an advance in a currency with no open invoice.
+    // The ledger supports it explicitly, subject to its single-credit-
+    // currency guard, so do not hide valid payment currencies in the UI.
+    "EGP", "SAR", "USD", "AED", "EUR", "KWD", "JPY",
+  ])];
+  const selectedPaymentCurrency = paymentCurrencies.includes(paymentCurrency)
+    ? paymentCurrency
+    : (allOpenInvoices[0]?.currency ?? detail.creditCurrency ?? detail.defaultCurrency ?? "EGP");
+  const openInvoices = allOpenInvoices.filter((i) => i.currency === selectedPaymentCurrency);
+  const selectedOutstandingMinor = detail.outstandingByCurrency?.find((b) => b.currency === selectedPaymentCurrency)?.minor ?? "0";
+  const hasBalance = BigInt(selectedOutstandingMinor) > 0n;
 
   return (
     <section className="flex flex-col gap-6">
       {/* Identity + balance strip */}
-      <section className="panel-shadow overflow-hidden rounded-2xl border border-border bg-surface">
+      <section className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
         <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6">
           <div className="flex flex-col gap-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -270,7 +304,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               {debtorIntel && (
                 <span
                   data-testid="debtor-health-pill"
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                  className={`inline-flex items-center gap-1 rounded px-2.5 py-0.5 text-xs font-bold ${
                     debtorIntel.tier === "critical"
                       ? "bg-status-overdue-bg text-status-overdue-fg"
                       : debtorIntel.tier === "at_risk"
@@ -280,13 +314,13 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                           : "bg-status-paid-bg text-status-paid-fg"
                   }`}
                 >
-                  <Sparkle size={12} weight="fill" aria-hidden />
+                  <Sparkle size={12} aria-hidden />
                   {isAr ? `الصحة الائتمانية ${debtorIntel.healthScore}/100` : `Health ${debtorIntel.healthScore}/100`}
                 </span>
               )}
               {detail.riskFlag && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-status-overdue-bg px-2.5 py-0.5 text-xs font-bold text-status-overdue-fg">
-                  <WarningCircle size={13} weight="fill" aria-hidden />
+                <span className="inline-flex items-center gap-1 rounded bg-status-overdue-bg px-2.5 py-0.5 text-xs font-bold text-status-overdue-fg">
+                  <WarningCircle size={13} aria-hidden />
                   {locale === "ar" ? "شيك مرتد / مخاطرة" : "Bounced Cheque / High Risk"}
                 </span>
               )}
@@ -300,16 +334,16 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                   data-testid="debtor-resume-reminders"
                   disabled={busy}
                   onClick={() => void onToggleReminders(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-status-paid-bg px-3 py-1.5 font-bold text-status-paid-fg shadow-xs hover:opacity-90 active:scale-95 transition-all"
+                  className={cn(buttonVariants({ variant: "success", size: "default" }), "text-status-paid-fg")}
                 >
-                  <BellRinging size={14} weight="fill" />
+                  <BellRinging size={14} />
                   <span>{isAr ? "تفعيل التذكيرات الآن" : "Re-enable Reminders Now"}</span>
                 </button>
               </div>
             ) : (
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-text-muted">
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-status-paid-bg px-2.5 py-1 font-bold text-status-paid-fg">
-                  <BellRinging size={13} weight="fill" />
+                <span className="inline-flex items-center gap-1.5 rounded bg-status-paid-bg px-2.5 py-1 font-bold text-status-paid-fg">
+                  <BellRinging size={13} />
                   <span>{isAr ? "التذكيرات التلقائية مفعلة" : "Auto Reminders Active"}</span>
                 </span>
                 <button
@@ -317,10 +351,10 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                   data-testid="debtor-pause-reminders"
                   disabled={busy}
                   onClick={() => void onToggleReminders(false)}
-                  className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[11px] font-semibold text-text-muted hover:border-danger hover:text-danger active:scale-95 transition-all"
+                  className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
                   title={isAr ? "إيقاف التذكيرات التلقائية لهذا العميل مؤقتاً" : "Pause Automatic Reminders"}
                 >
-                  <BellSlash size={12} weight="fill" />
+                  <BellSlash size={12} />
                   <span>{isAr ? "إيقاف التذكيرات" : "Pause Reminders"}</span>
                 </button>
               </div>
@@ -328,7 +362,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             {detail.notes && <p className="text-sm text-text-muted">{detail.notes}</p>}
             {debtorIntel && (
               <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-callout/45 px-3 py-2 text-xs">
-                <Sparkle size={14} weight="fill" className="shrink-0 text-primary" aria-hidden />
+                <Sparkle size={14} className="shrink-0 text-primary" aria-hidden />
                 <span className="font-bold text-primary">
                   {isAr ? debtorIntel.recommendation.titleAr : debtorIntel.recommendation.titleEn}:
                 </span>
@@ -351,9 +385,9 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                     mode: "reminder",
                   })
                 }
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-callout px-5 text-sm font-bold text-primary transition-colors hover:bg-primary hover:text-primary-fg"
+                className={cn(buttonVariants({ variant: "secondary", size: "default" }))}
               >
-                <Sparkle size={16} weight="fill" aria-hidden />
+                <Sparkle size={16} aria-hidden />
                 <span>{isAr ? "صياغة تذكير ذكي" : "Draft AI Reminder"}</span>
               </button>
             )}
@@ -368,9 +402,9 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                     mode: "installment",
                   })
                 }
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-border bg-surface-muted/60 px-4 text-sm font-bold text-text transition-colors hover:border-primary hover:text-primary"
+                className={cn(buttonVariants({ variant: "secondary", size: "default" }))}
               >
-                <CalendarCheck size={16} weight="fill" aria-hidden />
+                <CalendarCheck size={16} aria-hidden />
                 <span>{isAr ? "جدولة أقساط" : "Installment Plan"}</span>
               </button>
             )}
@@ -378,7 +412,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               phone={detail.phoneE164}
               message={totalShareMessage({
                 businessName: effectiveBusinessName,
-                totalAmount: `${fmt(detail.totalOutstandingMinor)} ${currencySymbol}`,
+                totalAmount: `${fmt(detail.totalOutstandingMinor, detail.defaultCurrency)} ${detail.defaultCurrency}`,
                 locale,
               })}
               size="md"
@@ -390,11 +424,11 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               onClick={() => setEditingDebtor((v) => !v)}
               className={btnGhost}
             >
-              <PencilSimple size={17} weight="fill" aria-hidden />
+              <PencilSimple size={17} aria-hidden />
               {tc("save")}
             </button>
-            <button data-testid="debtor-delete" onClick={() => void onDelete()} className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-status-overdue-fg/40 px-5 text-sm font-bold text-status-overdue-fg transition-colors hover:bg-danger-bg">
-              <Trash size={17} weight="fill" aria-hidden />
+            <button data-testid="debtor-delete" onClick={() => void onDelete()} className={cn(buttonVariants({ variant: "outline", size: "default" }), "border-status-overdue-fg/40 text-status-overdue-fg")}>
+              <Trash size={17} aria-hidden />
               {t("delete")}
             </button>
           </div>
@@ -414,7 +448,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                 <span>{locale === "ar" ? "علامة مخاطرة ائتمانية (شيك مرتد / تأخر متكرر)" : "Credit Risk Flag (Bounced Cheque / Chronic Late Payer)"}</span>
               </label>
               <button type="button" disabled={busy} onClick={() => void onSaveDebtor()} className={btnPrimary}>
-                <Check size={16} weight="bold" aria-hidden /> {tc("save")}
+                <Check size={16} strokeWidth={2.5} aria-hidden /> {tc("save")}
               </button>
             </div>
           </div>
@@ -423,44 +457,57 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
         <dl className="grid grid-cols-2 gap-px border-t border-border bg-border">
           <div className="flex flex-col gap-1 bg-surface p-5 sm:p-6">
             <dt className="flex items-center gap-2 text-sm font-semibold text-text-muted">
-              <Wallet size={16} weight="fill" aria-hidden className="text-primary" /> {t("outstanding")}
+              <Wallet size={16} aria-hidden className="text-primary" /> {t("outstanding")}
             </dt>
             <dd className="text-2xl font-extrabold text-primary">
-              <span className="tnum" dir="ltr" data-testid="debtor-outstanding">{fmt(detail.totalOutstandingMinor)}</span>
-              <span className="ms-1.5 text-xs font-bold text-text-muted">{currencySymbol}</span>
+              <span className="tnum" dir="ltr" data-testid="debtor-outstanding">{fmt(detail.totalOutstandingMinor, detail.defaultCurrency)}</span>
+              <span className="ms-1.5 text-xs font-bold text-text-muted">{detail.defaultCurrency}</span>
             </dd>
             {BigInt(detail.totalDisputedMinor || "0") > 0n && (
               <dd className="text-sm font-semibold text-text-muted">
-                <span className="tnum" dir="ltr" data-testid="debtor-disputed">{fmt(detail.totalDisputedMinor)}</span>
-                <span className="ms-1.5 text-xs font-bold">{currencySymbol} — {locale === "ar" ? `متنازع عليه ومجمّد (${detail.disputedInvoicesCount})` : `disputed, frozen (${detail.disputedInvoicesCount})`}</span>
+                <span className="tnum" dir="ltr" data-testid="debtor-disputed">{fmt(detail.totalDisputedMinor, detail.defaultCurrency)}</span>
+                <span className="ms-1.5 text-xs font-bold">{detail.defaultCurrency} — {locale === "ar" ? `متنازع عليه ومجمّد (${detail.disputedInvoicesCount})` : `disputed, frozen (${detail.disputedInvoicesCount})`}</span>
               </dd>
             )}
           </div>
           <div className="flex flex-col gap-1 bg-surface p-5 sm:p-6">
             <dt className="flex items-center gap-2 text-sm font-semibold text-text-muted">
-              <HandCoins size={16} weight="fill" aria-hidden className="text-status-paid-fg" /> {t("credit")}
+              <HandCoins size={16} aria-hidden className="text-status-paid-fg" /> {t("credit")}
             </dt>
             <dd className="text-2xl font-extrabold text-status-paid-fg">
-              <span className="tnum" dir="ltr" data-testid="debtor-credit">{fmt(detail.creditMinor)}</span>
-              <span className="ms-1.5 text-xs font-bold text-text-muted">{currencySymbol}</span>
+              <span className="tnum" dir="ltr" data-testid="debtor-credit">{fmt(detail.creditMinor, detail.creditCurrency)}</span>
+              <span className="ms-1.5 text-xs font-bold text-text-muted">{detail.creditCurrency}</span>
             </dd>
           </div>
         </dl>
+        {detail.outstandingByCurrency && detail.outstandingByCurrency.some((b) => b.currency !== detail.defaultCurrency && BigInt(b.minor) > 0n) && (
+          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border px-5 py-3 text-xs font-semibold text-text-muted sm:px-6">
+            <span>{locale === "ar" ? "أرصدة بعملات أخرى:" : "Other-currency balances:"}</span>
+            {detail.outstandingByCurrency.filter((b) => b.currency !== detail.defaultCurrency && BigInt(b.minor) > 0n).map((b) => (
+              <span key={b.currency} dir="ltr">{fmt(b.minor, b.currency)} {b.currency}</span>
+            ))}
+          </div>
+        )}
       </section>
 
       <Panel title={tp("record")} icon={HandCoins}>
         <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void onPay(); }}>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+            <label className={labelCls}><span>{locale === "ar" ? "عملة الدفعة" : "Payment currency"}</span>
+              <select className={inputCls} value={selectedPaymentCurrency} onChange={(e) => { setPaymentCurrency(e.target.value); setAlloc({}); setAmount(""); }}>
+                {paymentCurrencies.map((code) => <option key={code} value={code}>{code}</option>)}
+              </select>
+            </label>
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-medium text-text">{tp("amount")}</span>
                 {hasBalance && (
                   <button
                     type="button"
-                    onClick={() => setAmount(formatCurrencyMinor(BigInt(detail.totalOutstandingMinor), currency).replace(/,/g, ""))}
-                    className="rounded-full bg-callout px-2.5 py-0.5 text-[11px] font-bold text-primary transition-colors hover:bg-primary hover:text-primary-fg"
+                    onClick={() => setAmount(formatAmountOnly(BigInt(selectedOutstandingMinor), { currency: selectedPaymentCurrency }))}
+                    className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}
                   >
-                    {locale === "en" ? "Full Balance" : "كامل المستحق"} ({fmt(detail.totalOutstandingMinor)})
+                    {locale === "en" ? "Full Balance" : "كامل المستحق"} ({fmt(selectedOutstandingMinor, selectedPaymentCurrency)} {selectedPaymentCurrency})
                   </button>
                 )}
               </div>
@@ -481,8 +528,8 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               {openInvoices.map((i) => (
                 <li key={i.id}>
                   <label className="flex flex-wrap items-center gap-3 px-4 py-3">
-                    <span className="flex-1 text-sm font-semibold">{i.reference ?? i.id.slice(0, 8)} — {ti("remaining")}: <span className="tnum" dir="ltr">{fmt(i.outstandingMinor)}</span></span>
-                    <input data-testid={`pay-alloc-${i.id}`} className="min-h-[40px] w-32 rounded-lg border border-border-strong/60 bg-surface px-2.5 text-sm" dir="ltr" inputMode="decimal"
+                    <span className="flex-1 text-sm font-semibold">{i.reference ?? i.id.slice(0, 8)} — {ti("remaining")}: <span className="tnum" dir="ltr">{fmt(i.outstandingMinor, i.currency)} {i.currency}</span></span>
+                    <input data-testid={`pay-alloc-${i.id}`} className={cn(inputVariants, "w-32")} dir="ltr" inputMode="decimal"
                       value={alloc[i.id] ?? ""} onChange={(e) => setAlloc((s) => ({ ...s, [i.id]: e.target.value }))} />
                   </label>
                 </li>
@@ -506,7 +553,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               onClick={() => void onCreateGatewayLink()}
               className={btnPrimary}
             >
-              <LinkSimple size={17} weight="fill" aria-hidden />
+              <LinkSimple size={17} aria-hidden />
               {tg("createTotalLink")}
             </button>
           </div>
@@ -514,10 +561,10 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             <ul className="flex flex-col divide-y divide-border">
               {paymentLinks.map((l) => (
                 <li key={l.id} data-testid="gw-link" className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
-                  <span className="tnum font-black text-text" dir="ltr">{fmt(l.amountMinor)}</span>
-                  <span className="rounded-full bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{l.status}</span>
+                  <span className="tnum font-extrabold text-primary" dir="ltr">{fmt(l.amountMinor)}</span>
+                  <span className="rounded bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{l.status}</span>
                   {l.provider === "fake" && (
-                    <span data-testid="gw-link-simulated" className="rounded-full bg-status-due-bg px-2.5 py-0.5 text-xs font-bold text-status-due-fg">{tg("simulated")}</span>
+                    <span data-testid="gw-link-simulated" className="rounded bg-status-due-bg px-2.5 py-0.5 text-xs font-bold text-status-due-fg">{tg("simulated")}</span>
                   )}
                   <span className="text-text-muted">{tg("expires")}: <span dir="ltr">{l.expiresAt.slice(0, 16).replace("T", " ")}</span></span>
                   <a data-testid="gw-link-open" href={l.checkoutUrl} target="_blank" rel="noreferrer" className={`${linkAction} ms-auto`}>{tg("openLink")}</a>
@@ -526,13 +573,13 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             </ul>
           )}
           {recon && (
-            <p data-testid="gw-recon" className="rounded-xl bg-callout px-4 py-3 text-sm text-text-muted">
+            <p data-testid="gw-recon" className="rounded-xl bg-callout px-4 py-3 text-sm text-text-subtle">
               {tg("reconciliation")}: {tg("gatewayTotal")} <span className="tnum font-bold text-text" dir="ltr">{fmt(recon.gatewayTotalMinor)}</span> ·{" "}
               <span className="font-bold text-primary">{recon.balanced ? tg("balanced") : tg("discrepancies")}</span>
             </p>
           )}
           {ledgerRecon && (
-            <p data-testid="ledger-recon" className="rounded-xl bg-callout px-4 py-3 text-sm text-text-muted">
+            <p data-testid="ledger-recon" className="rounded-xl bg-callout px-4 py-3 text-sm text-text-subtle">
               {tg("ledgerReconciliation")}:{" "}
               <span className="font-bold text-primary">{ledgerRecon.balanced ? tg("balanced") : tg("discrepancies")}</span>
               {!ledgerRecon.balanced && (
@@ -551,12 +598,12 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
         <div className="flex flex-col gap-4">
           <div>
             <button data-testid="stmt-create" onClick={() => void onCreateStatement()} className={btnGhost}>
-              <FileText size={17} weight="fill" aria-hidden />
+              <FileText size={17} aria-hidden />
               {ts("create")}
             </button>
           </div>
           {newStatementUrl && (
-            <div data-testid="stmt-new-url" className="flex flex-col gap-2.5 rounded-2xl border border-primary/25 bg-callout p-4">
+            <div data-testid="stmt-new-url" className="flex flex-col gap-2.5 rounded-xl border border-primary/25 bg-callout p-4">
               <p className="text-sm font-bold text-primary">{ts("created")}</p>
               <p className="break-all rounded-lg bg-surface px-3 py-2 text-sm font-medium" dir="ltr">{newStatementUrl}</p>
               <div className="flex items-center gap-3">
@@ -575,7 +622,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             <ul className="flex flex-col divide-y divide-border">
               {statementLinks.map((l) => (
                 <li key={l.id} data-testid="stmt-link" className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
-                  <span data-testid="stmt-link-state" className="rounded-full bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{ts(l.state)}</span>
+                  <span data-testid="stmt-link-state" className="rounded bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{ts(l.state)}</span>
                   <span className="text-text-muted">{ts("expiresAt")}: <span dir="ltr">{l.expiresAt.slice(0, 10)}</span></span>
                   <span className="text-text-muted">{ts("lastViewed")}: {l.lastViewedAt ? <span dir="ltr">{l.lastViewedAt.slice(0, 10)}</span> : ts("neverViewed")}</span>
                   {l.state === "valid" && (
@@ -601,9 +648,9 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                         data-testid={`dispute-resolve-reopen-${x.id}`}
                         disabled={busy}
                         onClick={() => void onResolveDispute(x.id, "reopen_invoice")}
-                        className="inline-flex items-center gap-1 rounded-full bg-surface px-3 py-1 text-xs font-bold text-primary shadow-2xs hover:bg-primary hover:text-primary-fg disabled:opacity-50"
+                        className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}
                       >
-                        <CheckCircle size={13} weight="fill" aria-hidden />
+                        <CheckCircle size={13} aria-hidden />
                         <span>{isAr ? "حسم وإعادة تفعيل الفاتورة" : "Resolve & Reopen Invoice"}</span>
                       </button>
                       <button
@@ -611,9 +658,9 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                         data-testid={`dispute-resolve-cancel-${x.id}`}
                         disabled={busy}
                         onClick={() => void onResolveDispute(x.id, "cancel_invoice")}
-                        className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-3 py-1 text-xs font-bold text-text-muted hover:border-danger hover:text-danger disabled:opacity-50"
+                        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "text-text-muted hover:border-danger hover:text-danger")}
                       >
-                        <XCircle size={13} weight="fill" aria-hidden />
+                        <XCircle size={13} aria-hidden />
                         <span>{isAr ? "قبول الاعتراض وإلغاء الفاتورة" : "Accept & Cancel Invoice"}</span>
                       </button>
                     </div>
@@ -630,11 +677,11 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
           {detail.invoices.map((i) => (
             <li key={i.id} data-testid="detail-invoice" className="flex flex-col gap-1.5 p-4 transition-colors hover:bg-callout/40 sm:px-6">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-black text-text" dir="ltr">{i.reference ?? "—"}</span>
+                <span className="font-extrabold text-primary" dir="ltr">{i.reference ?? "—"}</span>
                 <span className="ms-auto"><StatusPill status={i.status} label={ti(`statuses.${i.status}`)} testId={`detail-invoice-status-${i.id}`} /></span>
               </div>
               <p className="text-sm text-text-muted">
-                {ti("amount")}: <span className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor)}</span> · {ti("paid")}: <span className="tnum font-bold text-text" dir="ltr">{fmt(i.paidMinor)}</span> · {ti("dueOn")}: <span dir="ltr">{i.dueOn}</span>
+                {ti("amount")}: <span className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor, i.currency)} {i.currency}</span> · {ti("paid")}: <span className="tnum font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor, i.currency)} {i.currency}</span> · {ti("dueOn")}: <span dir="ltr">{i.dueOn}</span>
               </p>
               {i.currencyWarning && <p className="text-sm font-semibold text-status-due-fg">{ti("currencyWarning")}</p>}
               <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -647,7 +694,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                   phone={detail.phoneE164}
                   message={invoiceShareMessage({
                     businessName: effectiveBusinessName,
-                    amount: `${fmt(i.outstandingMinor)} ${currencySymbol}`,
+                    amount: `${fmt(i.outstandingMinor, i.currency)} ${i.currency}`,
                     dueDate: i.dueOn,
                     locale,
                   })}
@@ -665,14 +712,14 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
           {detail.payments.map((p) => (
             <li key={p.id} data-testid="payment-row" className="flex flex-col gap-2 p-4 text-sm sm:px-6">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                <span className="tnum text-base font-extrabold" dir="ltr">{fmt(p.amountMinor)}</span>
+                <span className="tnum text-base font-extrabold" dir="ltr">{fmt(p.amountMinor, p.currency)} {p.currency}</span>
                 <span>{tp(`methods.${p.method}`)}</span>
                 <span className="text-text-muted" dir="ltr">{p.receivedOn}</span>
                 <StatusPill
                   status={p.status}
                   label={p.status === "claimed" ? tg("claimed") : p.status === "confirmed" ? tg("confirmed") : tg("rejected")}
                 />
-                {p.reversalOf && <span className="rounded-full bg-surface-muted px-2.5 py-0.5 text-xs font-bold">{tg("reversal")}</span>}
+                {p.reversalOf && <span className="rounded bg-surface-muted px-2.5 py-0.5 text-xs font-bold">{tg("reversal")}</span>}
                 <span className="ms-auto flex items-center gap-3">
                   {p.status === "claimed" && (
                     <>
@@ -721,18 +768,18 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             const isMessage = e.kind === "message";
             return (
               <li key={e.id} data-testid={`timeline-${e.kind}`} className="relative text-sm">
-                <span className={`absolute -start-[38px] top-0 flex size-[26px] items-center justify-center rounded-full ${isPayment ? "bg-callout text-primary" : "bg-surface-muted text-text-muted"}`}>
+                <span className={`absolute -start-[38px] top-0 flex size-[26px] items-center justify-center rounded ${isPayment ? "bg-callout text-primary" : "bg-surface-muted text-text-muted"}`}>
                   {isPayment
-                    ? <HandCoins size={14} weight="fill" aria-hidden />
+                    ? <HandCoins size={14} aria-hidden />
                     : isMessage
-                      ? <PaperPlaneTilt size={14} weight="fill" aria-hidden />
-                      : <Clock size={14} weight="fill" aria-hidden />}
+                      ? <PaperPlaneTilt size={14} aria-hidden />
+                      : <Clock size={14} aria-hidden />}
                 </span>
                 <p>
                   <span className="font-bold">{e.kind}</span>
                   {" · "}<span className="text-text-muted" dir="ltr">{e.at.slice(0, 10)}</span>
                   {" · "}{e.summary}
-                  {e.amountMinor && <> · <span className="tnum font-black text-text" dir="ltr">{fmt(e.amountMinor)}</span></>}
+                  {e.amountMinor && <> · <span className="tnum font-bold text-primary" dir="ltr">{fmt(e.amountMinor)}</span></>}
                 </p>
               </li>
             );

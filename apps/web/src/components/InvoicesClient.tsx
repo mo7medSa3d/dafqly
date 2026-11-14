@@ -1,10 +1,13 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
+import { inputVariants } from "@/components/ui/input";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
-import { canTransition, formatCurrencyMinor, type InvoiceStatus } from "@tahseel/core";
+import { canTransition, type InvoiceStatus } from "@tahseel/core";
 import { useCurrency } from "./CurrencyContext";
-import { Check, MagnifyingGlass, PencilSimple, Plus, Sparkle, WarningCircle, X } from "@phosphor-icons/react";
+import { Check, MagnifyingGlass, PencilSimple, Plus, Sparkle, WarningCircle, X } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { EmptyState, LoadingState, Panel, StatusPill, btnGhost, btnPrimary, btnSmall, inputCls, labelCls } from "./ui";
 import { WhatsAppShareButton, invoiceShareMessage } from "./WhatsAppShare";
@@ -32,7 +35,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
   const tc = useTranslations("common");
   const locale = useLocale();
   const isAr = locale === "ar";
-  const { currency, symbol: currencySymbol, formatAmountOnly } = useCurrency();
+  const { symbol: currencySymbol, formatAmountOnly } = useCurrency();
   // F-06: amounts render in the tenant currency, not hardcoded EGP.
   const fmt = (minor: string) => formatAmountOnly(BigInt(minor));
   const effectiveBusinessName = businessName || (isAr ? "منشأتك" : "Your Business");
@@ -119,7 +122,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
     setEditForm({
       reference: inv.reference ?? "",
       description: inv.description ?? "",
-      amount: formatCurrencyMinor(BigInt(inv.amountMinor), inv.currency ?? currency).replace(/,/g, ""),
+      amount: (Number(inv.amountMinor) / 100).toFixed(2),
       dueOn: inv.dueOn,
     });
   }
@@ -173,10 +176,10 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
             <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void onCreate(); }}>
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--icon-box-border)] bg-[var(--icon-box-bg)] px-3.5 py-2 text-xs font-bold text-[var(--icon-box-fg)]">
                 <span className="inline-flex items-center gap-1.5">
-                  <Sparkle size={14} weight="fill" aria-hidden />
+                  <Sparkle size={14} aria-hidden />
                   <span>{isAr ? "رقم الفاتورة يُنشأ تلقائيًا بدون إدخال يدوي" : "Invoice ID is generated automatically"}</span>
                 </span>
-                <span className="rounded-full bg-surface px-2.5 py-0.5 font-extrabold text-primary" dir="ltr">
+                <span className="rounded bg-surface px-2.5 py-0.5 font-extrabold text-primary" dir="ltr">
                   {reference.trim() || nextAutoReference}
                 </span>
               </div>
@@ -222,7 +225,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                         key={q.days}
                         type="button"
                         onClick={() => setDueOn(addDaysIso(issuedOn, q.days))}
-                        className="rounded-full border border-border px-2.5 py-0.5 text-[11px] font-bold text-text-muted transition-colors hover:border-primary hover:bg-callout hover:text-primary"
+                        className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
                       >
                         {q.label}
                       </button>
@@ -233,7 +236,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
               {error && <p role="alert" className="text-sm font-semibold text-status-overdue-fg">{error}</p>}
               <div>
                 <button data-testid="inv-create" disabled={!debtorId || amount.trim() === ""} className={btnPrimary}>
-                  <Plus size={18} weight="fill" aria-hidden />
+                  <Plus size={18} aria-hidden />
                   {t("add")}
                 </button>
               </div>
@@ -241,34 +244,17 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
           </Panel>
         </div>
 
-        <div className="panel-shadow flex flex-col justify-between gap-4 rounded-2xl border border-border bg-surface p-5 sm:p-6 lg:col-span-4">
-          <div className="flex items-center justify-center overflow-hidden rounded-xl bg-surface-muted/30 p-2">
-            <ReceivablesIllustration size={190} />
-          </div>
-          <div>
-            <p className="text-xs font-bold text-primary">{isAr ? "ضوابط الفوترة" : "Invoice controls"}</p>
-            <h2 className="mt-1 text-base font-black text-text">{isAr ? "متابعة قابلة للتدقيق" : "Auditable follow-up"}</h2>
-            <p className="mt-1.5 text-xs leading-relaxed text-text-muted">
-              {isAr ? "كل فاتورة مرتبطة بعميل وتاريخ استحقاق وحالة سداد. تعديل الحالة لا يثبت وصول الأموال؛ تسجيل الدفعة المؤكدة هو الذي يحدّث الرصيد." : "Every invoice has a customer, due date and payment state. Changing status does not prove funds were received; only a confirmed ledger payment updates the balance."}
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="rounded-xl border border-border/60 bg-surface-muted/60 p-2.5">
-              <span className="font-semibold text-text-muted">{isAr ? "تذكيرات" : "Reminders"}</span>
-              <p className="mt-0.5 font-black text-text">{isAr ? "حسب السياسة" : "Policy-based"}</p>
-            </div>
-            <div className="rounded-xl border border-border/60 bg-surface-muted/60 p-2.5">
-              <span className="font-semibold text-text-muted">{isAr ? "التحصيل" : "Collections"}</span>
-              <p className="mt-0.5 font-black text-text">{isAr ? "دفعات مؤكدة" : "Confirmed payments"}</p>
-            </div>
-          </div>
+        <div className="panel-shadow flex flex-col justify-between gap-4 rounded-xl border border-border bg-surface p-5 sm:p-6 lg:col-span-4">
+          <div className="flex justify-center"><ReceivablesIllustration size={210} /></div>
+          <div><p className="text-xs font-bold text-primary">{isAr ? "ضوابط الفوترة" : "Invoice controls"}</p><h2 className="mt-1 text-lg font-extrabold">{isAr ? "متابعة قابلة للتدقيق" : "Auditable follow-up"}</h2><p className="mt-2 text-sm leading-6 text-text-muted">{isAr ? "كل فاتورة مرتبطة بعميل وتاريخ استحقاق وحالة سداد. تعديل الحالة لا يثبت وصول الأموال؛ تسجيل الدفعة المؤكدة هو الذي يحدّث الرصيد." : "Every invoice has a customer, due date and payment state. Changing status does not prove funds were received; only a confirmed ledger payment updates the balance."}</p></div>
+          <div className="grid grid-cols-2 gap-2 text-xs"><div className="rounded-xl bg-surface-muted p-3"><span className="font-semibold text-text-subtle">{isAr ? "تذكيرات" : "Reminders"}</span><p className="mt-1 font-extrabold">{isAr ? "حسب السياسة" : "Policy-based"}</p></div><div className="rounded-xl bg-surface-muted p-3"><span className="font-semibold text-text-subtle">{isAr ? "التحصيل" : "Collections"}</span><p className="mt-1 font-extrabold">{isAr ? "دفعات مؤكدة" : "Confirmed payments"}</p></div></div>
         </div>
       </div>
 
       {error && (
-        <div role="alert" className="flex items-center justify-between rounded-2xl border border-danger/30 bg-danger-bg px-4 py-3 text-sm font-semibold text-danger shadow-sm">
+        <div role="alert" className="flex items-center justify-between rounded-xl border border-danger/30 bg-danger-bg px-4 py-3 text-sm font-semibold text-danger">
           <span>{error}</span>
-          <button type="button" onClick={() => setError(null)} className="rounded-lg px-2 py-1 text-xs font-bold underline hover:bg-danger/10">
+          <button type="button" onClick={() => setError(null)} className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "underline hover:bg-danger/10")}>
             {isAr ? "إغلاق" : "Dismiss"}
           </button>
         </div>
@@ -285,20 +271,20 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
         ];
         const rows = definitions.map((bucket) => ({ ...bucket, amount: items.filter((invoice) => invoice.agingBucket === bucket.key && invoice.status !== "paid" && invoice.status !== "cancelled" && invoice.status !== "written_off").reduce((sum, invoice) => sum + BigInt(invoice.outstandingMinor || "0"), 0n) }));
         const total = rows.reduce((sum, row) => sum + row.amount, 0n);
-        const tones = ["bg-emerald-500", "bg-primary", "bg-amber-500", "bg-orange-500", "bg-red-500"];
-        return <section data-testid="inv-aging-analysis" className="panel-shadow flex flex-col gap-4 rounded-2xl border border-border bg-surface p-4 sm:p-5">
+        const tones = ["bg-status-paid-fg", "bg-primary", "bg-status-due-fg", "bg-status-overdue-fg", "bg-status-overdue-fg"];
+        return <section data-testid="inv-aging-analysis" className="panel-shadow flex flex-col gap-4 rounded-xl border border-border bg-surface p-4 sm:p-5">
           <div className="flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-sm font-extrabold">{isAr ? "أعمار الأرصدة المفتوحة" : "Open receivables aging"}</h2><p className="mt-1 text-xs text-text-muted">{isAr ? "قيمة المتبقي حسب مدة التأخير ضمن النتائج الحالية" : "Outstanding balance by age in the current filtered results"}{truncated && (isAr ? ` — عرض ${items.length} من أصل ${totalCount} فاتورة` : ` — showing ${items.length} of ${totalCount} invoices`)}</p></div><strong className="tnum text-base" dir="ltr">{formatAmountOnly(total)} {currencySymbol}</strong></div>
-          <div className="flex h-3 w-full overflow-hidden rounded-full bg-surface-muted">{rows.map((row, i) => row.amount > 0n && <div key={row.key} className={`${tones[i]} h-full`} style={{ width: `${Number((row.amount * 10000n) / (total || 1n)) / 100}%` }} />)}</div>
+          <div className="flex h-3 w-full overflow-hidden rounded bg-surface-muted">{rows.map((row, i) => row.amount > 0n && <div key={row.key} className={`${tones[i]} h-full`} style={{ width: `${Number((row.amount * 10000n) / (total || 1n)) / 100}%` }} />)}</div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{rows.map((row, i) => <div key={row.key} className="min-w-0"><div className="flex items-center gap-2 text-xs font-semibold text-text-muted"><span className={`size-2.5 shrink-0 rounded-sm ${tones[i]}`} />{row.label}</div><p className="mt-1 truncate text-sm font-extrabold" dir="ltr">{formatAmountOnly(row.amount)} {currencySymbol}</p><p className="mt-0.5 text-[11px] text-text-muted">{total > 0n ? `${Number((row.amount * 10000n) / total) / 100}%` : "0%"}</p></div>)}</div>
         </section>;
       })()}
 
       {/* Filters bar */}
-      <div className="panel-shadow flex flex-wrap items-center gap-4 rounded-2xl border border-border bg-surface p-4 sm:p-5">
+      <div className="panel-shadow flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface p-4 sm:p-5">
         <label className="min-w-[200px] flex-1">
           <span className="sr-only">{t("search")}</span>
           <span className="relative block">
-            <MagnifyingGlass size={17} weight="fill" aria-hidden className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-text-subtle" />
+            <MagnifyingGlass size={17} aria-hidden className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-text-subtle" />
             <input data-testid="inv-search" className={`${inputCls} ps-10`} placeholder={t("search")} value={search} onChange={(e) => setSearch(e.target.value)} />
           </span>
         </label>
@@ -330,13 +316,13 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
 
       {/* Bulk actions & count */}
       <div className="flex flex-wrap items-center gap-2.5">
-        <select data-testid="inv-bulk-to" aria-label={t("bulkTargetStatus")} className="min-h-[40px] rounded-full border border-border-strong/60 bg-surface px-4 text-xs font-medium" value={bulkTo} onChange={(e) => setBulkTo(e.target.value)}>
+        <select data-testid="inv-bulk-to" aria-label={t("bulkTargetStatus")} className={cn(inputVariants)} value={bulkTo} onChange={(e) => setBulkTo(e.target.value)}>
           {STATUSES.map((s) => <option key={s} value={s}>{t(`statuses.${s}`)}</option>)}
         </select>
         <button data-testid="inv-bulk-apply" onClick={() => void onBulk()} className={btnGhost}>{t("bulkApply")}</button>
-        <span className="ms-auto inline-flex items-center gap-2 rounded-full bg-callout px-3.5 py-1.5 text-xs font-medium text-text-muted">
+        <span className="ms-auto inline-flex items-center gap-2 rounded bg-callout px-3.5 py-1.5 text-xs font-medium text-text-subtle">
           <span>{t("title")}:</span>
-          <span data-testid="inv-count" className="tnum font-black text-text" dir="ltr">{items.length}</span>
+          <span data-testid="inv-count" className="tnum font-bold text-primary" dir="ltr">{items.length}</span>
         </span>
       </div>
 
@@ -345,7 +331,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
       ) : items.length === 0 ? (
         <EmptyState illustration={<EmptyInvoicesIllustration size={190} />} testId="invoices-empty" title={t("empty")} body={isAr ? "أنشئ فاتورة أو استورد ملفاً لبدء متابعة الاستحقاقات والتحصيل." : "Create an invoice or import a file to start tracking due dates and collections."} />
       ) : (
-        <div className="panel-shadow overflow-hidden rounded-2xl border border-border bg-surface">
+        <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
           <ul className="flex flex-col divide-y divide-border">
             {items.map((i, idx) => (
               <li key={i.id} data-testid="invoice-row" className="flex flex-col gap-3 p-4 transition-colors hover:bg-callout/40 sm:p-5">
@@ -364,7 +350,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                         {i.reference ?? `INV-${i.issuedOn.slice(0, 4)}-${1001 + idx}`}
                       </span>
                     </label>
-                    <span className="rounded-full bg-surface-muted px-2.5 py-0.5 text-xs font-bold text-text">
+                    <span className="rounded bg-surface-muted px-2.5 py-0.5 text-xs font-bold text-text">
                       {debtorName(i.debtorId)}
                     </span>
                     {i.description && (
@@ -376,8 +362,8 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
 
                   <div className="flex items-center gap-2">
                     {i.overdue && (
-                      <span data-testid="invoice-overdue" className="inline-flex items-center gap-1 rounded-full bg-status-overdue-bg px-2.5 py-0.5 text-xs font-bold text-status-overdue-fg">
-                        <WarningCircle size={14} weight="fill" aria-hidden />
+                      <span data-testid="invoice-overdue" className="inline-flex items-center gap-1 rounded bg-status-overdue-bg px-2.5 py-0.5 text-xs font-bold text-status-overdue-fg">
+                        <WarningCircle size={14} aria-hidden />
                         {t("overdueOnly")}
                       </span>
                     )}
@@ -395,10 +381,10 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                     <button
                       type="button"
                       onClick={() => editingId === i.id ? setEditingId(null) : startEdit(i)}
-                      className="inline-flex size-8 items-center justify-center rounded-full border border-border text-text-muted transition-colors hover:border-primary hover:bg-callout hover:text-primary"
+                      className={cn(buttonVariants({ variant: "outline", size: "icon" }), "size-8")}
                       title={tc("save")}
                     >
-                      <PencilSimple size={15} weight="fill" aria-hidden />
+                      <PencilSimple size={15} aria-hidden />
                     </button>
                   </div>
                 </div>
@@ -411,10 +397,10 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                     <div className="flex items-center gap-2">
                       <input type="date" className={inputCls} dir="ltr" value={editForm.dueOn} onChange={(e) => setEditForm((f) => ({ ...f, dueOn: e.target.value }))} />
                       <button type="button" onClick={() => void onSaveEdit(i.id)} className={btnSmall}>
-                        <Check size={14} weight="bold" aria-hidden /> {tc("save")}
+                        <Check size={14} strokeWidth={2.5} aria-hidden /> {tc("save")}
                       </button>
                       <button type="button" onClick={() => setEditingId(null)} className={btnSmall}>
-                        <X size={14} weight="bold" aria-hidden />
+                        <X size={14} strokeWidth={2.5} aria-hidden />
                       </button>
                     </div>
                   </div>
@@ -425,9 +411,9 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span>{t("amount")}: <b className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
                     <span>·</span>
-                    <span>{t("paid")}: <b className="tnum font-bold text-text" dir="ltr">{fmt(i.paidMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
+                    <span>{t("paid")}: <b className="tnum font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
                     <span>·</span>
-                    <span>{t("remaining")}: <b className="tnum font-bold text-text" dir="ltr">{fmt(i.outstandingMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
+                    <span>{t("remaining")}: <b className="tnum font-bold text-primary" dir="ltr">{fmt(i.outstandingMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
                     <span>·</span>
                     <span>{t("dueOn")}: <span className="font-semibold text-text" dir="ltr">{i.dueOn}</span></span>
                   </div>
@@ -440,7 +426,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                           key={to}
                           data-testid={`inv-transition-${to}`}
                           onClick={() => void onTransition(i.id, to)}
-                          className="inline-flex min-h-[30px] items-center rounded-full border border-border-strong/50 bg-surface px-3 py-0.5 text-xs font-bold transition-colors hover:border-primary hover:bg-callout hover:text-primary"
+                          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
                         >
                           {t(`statuses.${to}`)}
                         </button>

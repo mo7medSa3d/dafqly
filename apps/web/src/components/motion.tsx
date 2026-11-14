@@ -1,14 +1,29 @@
+"use client";
+
+import { LazyMotion, MotionConfig, domAnimation } from "motion/react";
+import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 /**
- * Section reveal: CSS keyframe fade + 8px rise (`.reveal` in globals.css),
- * 350ms, transform/opacity only. Pure CSS on purpose: content is never in a
- * JS-hydration-dependent hidden state (the previous motion/react version
- * SSR-rendered opacity 0 until hydration — visible as blank sections in
- * early screenshots and a flash risk for reduced-motion users). Under
- * prefers-reduced-motion the global token rule collapses the duration, so
- * content is simply present.
+ * Section reveal: pure-CSS fade + rise (`.reveal` in globals.css). CSS on
+ * purpose: content must never sit in a JS-hydration-dependent hidden state
+ * (SSR rendering opacity:0 until hydration showed blank sections before).
  */
 export function Reveal({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={className ? `reveal ${className}` : "reveal"}>{children}</div>;
+}
+
+/** Library provider: small bundle (LazyMotion) + honours the OS reduced-motion setting. */
+export function MotionProvider({ children }: { children: ReactNode }) {
+  return (
+    <LazyMotion features={domAnimation} strict>
+      <MotionConfig reducedMotion="user">{children}</MotionConfig>
+    </LazyMotion>
+  );
+}
+
+/** Route change: CSS entrance re-triggered by the path key (SSR-safe: content is visible without JS). */
+export function PageTransition({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  return <div key={pathname} className="ai-rise flex flex-col gap-6">{children}</div>;
 }

@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { DownloadSimple, Trash, WarningCircle } from "@phosphor-icons/react";
+import { DownloadSimple, Trash, WarningCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { btnDanger, btnGhost, inputCls } from "./ui";
 
@@ -35,16 +35,16 @@ export function DangerZone() {
   }
 
   return (
-    <section data-testid="danger-zone" className="panel-shadow flex flex-col gap-4 rounded-2xl border border-danger/40 bg-surface p-5 sm:p-6">
+    <section data-testid="danger-zone" className="panel-shadow flex flex-col gap-4 rounded-xl border border-danger/40 bg-surface p-5 sm:p-6">
       <h2 className="flex items-center gap-2.5 text-[18px] font-bold text-danger">
         <span className="flex size-9 items-center justify-center rounded-xl bg-danger-bg">
-          <WarningCircle size={20} weight="fill" aria-hidden />
+          <WarningCircle size={20} aria-hidden />
         </span>
         {t("title")}
       </h2>
       <div>
         <button data-testid="export-all" disabled={busy} onClick={() => void exportAll()} className={`${btnGhost} w-full justify-start px-4`}>
-          <DownloadSimple size={18} weight="fill" aria-hidden className="text-primary" />
+          <DownloadSimple size={18} aria-hidden className="text-primary" />
           {t("exportAll")}
         </button>
         <p className="mt-1.5 text-xs text-text-muted">{t("exportHint")}</p>
@@ -55,7 +55,7 @@ export function DangerZone() {
           placeholder={t("deleteConfirmPlaceholder")} className={inputCls} />
         <button data-testid="delete-all" disabled={busy || confirmation.length === 0} onClick={() => void deleteAll()}
           className={`${btnDanger} w-full`}>
-          <Trash size={17} weight="fill" aria-hidden />
+          <Trash size={17} aria-hidden />
           {t("deleteAll")}
         </button>
         {done && <p data-testid="deleted-note" className="text-sm font-bold text-danger">{t("deleted")}</p>}

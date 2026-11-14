@@ -2,10 +2,21 @@ import { createHmac } from "node:crypto";
 import { and, asc, count, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
-import { AppError, parseLimit, isValidTimezone, safeTimezone, currencyMinorExponent, type Cursor } from "@tahseel/core";
-import { tenants, memberships, auditLog, debtors, invoices, payments, type TenantSettings } from "@tahseel/db/schema";
+import { AppError, isValidTimezone, safeTimezone } from "@tahseel/core";
+import { tenants, memberships, auditLog, debtors, invoices, payments, cheques, promisesToPay, type TenantSettings } from "@tahseel/db/schema";
 import { withTenant, type Db } from "@tahseel/db";
+import { primaryModelFor, resolveLlmProviderConfigs, hasUsableLlmConfig, type LlmProviderConfig } from "@tahseel/providers";
 import { env } from "./env";
+
+type AiEnv = ReturnType<typeof env>;
+/** Never throws: the settings page must render even when AI_* env is misconfigured. */
+function safeLlmConfigs(e: AiEnv): LlmProviderConfig[] {
+  try { return resolveLlmProviderConfigs(e); } catch { return []; }
+}
+function aiProviderLabel(e: AiEnv): string {
+  const names = safeLlmConfigs(e).map((c) => c.name ?? c.kind);
+  return names.length ? names.join(" → ") : e.AI_PROVIDER;
+}
 
 /** HMAC-SHA256 phone hash for F14 groundwork only (ADR-006). Never log the phone itself. */
 export function hashPhone(e164: string): string {
@@ -159,22 +170,6 @@ export async function getDashboardSummary(app: Db, tenantId: string, todayIso: s
   });
 }
 
-export async function listDebtorsPage(app: Db, tenantId: string, opts: { cursor?: Cursor; limit?: number }) {
-  const limit = parseLimit(opts.limit);
-  return withTenant(app, tenantId, async (tx) => {
-    const where = opts.cursor
-      ? and(isNull(debtors.deletedAt), gt(debtors.id, opts.cursor.id))
-      : isNull(debtors.deletedAt);
-    const rows = await tx.select().from(debtors).where(where).orderBy(asc(debtors.id)).limit(limit + 1);
-    const hasMore = rows.length > limit;
-    const items = hasMore ? rows.slice(0, limit) : rows;
-    return {
-      items: items.map((r) => ({ id: r.id, displayName: r.displayName, phoneE164: r.phoneE164, phoneValid: r.phoneValid, whatsappStatus: r.whatsappStatus, optedOut: r.optedOutAt !== null, notes: r.notes, riskFlag: r.riskFlag })),
-      nextCursor: hasMore ? { id: items[items.length - 1]!.id } : null,
-    };
-  });
-}
-
 /**
  * Tenant-local "today" (YYYY-MM-DD) in the tenant's timezone. A stored
  * timezone that is no longer valid (legacy row, bad import) falls back to
@@ -216,14 +211,10 @@ export async function getTenantSettingsAndIntegrations(app: Db, tenantId: string
       timezone: t.timezone,
       settings: t.settings,
       integrations: {
-        aiConfigured: Boolean(
-          (e.GEMINI_API_KEY && e.GEMINI_API_KEY.trim().length > 0) ||
-          (e.AI_API_KEY && e.AI_API_KEY.trim().length > 0) ||
-          (e.ANTHROPIC_API_KEY && e.ANTHROPIC_API_KEY.trim().length > 0)
-        ),
-        aiProvider: (e.GEMINI_API_KEY || e.AI_MODEL.includes("gemini")) ? "gemini" : "anthropic",
-        llmModelFast: e.AI_MODEL || e.LLM_MODEL_FAST,
-        llmModelVision: e.AI_MODEL || e.LLM_MODEL_VISION,
+        aiConfigured: hasUsableLlmConfig(e),
+        aiProvider: aiProviderLabel(e),
+        llmModelFast: primaryModelFor(safeLlmConfigs(e), "fast") ?? "",
+        llmModelVision: primaryModelFor(safeLlmConfigs(e), "vision") ?? "",
         paymobConfigured: Boolean(e.PAYMOB_SECRET_KEY && e.PAYMOB_PUBLIC_KEY && e.PAYMOB_INTEGRATION_ID && e.PAYMOB_HMAC_SECRET),
         whatsappConfigured: Boolean(e.WHATSAPP_PHONE_NUMBER_ID && e.WHATSAPP_ACCESS_TOKEN),
         smsConfigured: Boolean(e.SMS_API_KEY && e.SMS_PROVIDER),
@@ -241,6 +232,21 @@ export async function updateTenantSettings(app: Db, tenantId: string, actorUserI
   return withTenant(app, tenantId, async (tx) => {
     const [t] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     if (!t) throw new AppError("NOT_FOUND", "Tenant not found", 404);
+    const currentCurrency = t.settings.currency ?? "EGP";
+    if (patch.currency !== undefined && patch.currency !== currentCurrency) {
+      const [invoiceActivity] = await tx.select({ n: count() }).from(invoices);
+      const [paymentActivity] = await tx.select({ n: count() }).from(payments);
+      // Cheques and promises do not persist a currency column in the current
+      // schema; unlinked records derive their meaning from the tenant default.
+      // Include them in the lock or a default-currency edit would rewrite the
+      // interpretation of already-entered financial records.
+      const [chequeActivity] = await tx.select({ n: count() }).from(cheques);
+      const [promiseActivity] = await tx.select({ n: count() }).from(promisesToPay);
+      if (Number(invoiceActivity?.n ?? 0) > 0 || Number(paymentActivity?.n ?? 0) > 0
+        || Number(chequeActivity?.n ?? 0) > 0 || Number(promiseActivity?.n ?? 0) > 0) {
+        throw new AppError("CURRENCY_LOCKED", "Default currency cannot be changed after financial activity exists. Use an explicit ledger migration instead.", 409);
+      }
+    }
     const nextSettings: TenantSettings = {
       ...t.settings,
       ...(patch.businessNameEn !== undefined ? { businessNameEn: patch.businessNameEn } : {}),
@@ -264,79 +270,6 @@ export async function updateTenantSettings(app: Db, tenantId: string, actorUserI
       ...(patch.timezone ? { timezone: patch.timezone } : {}),
       updatedAt: new Date(),
     }).where(eq(tenants.id, tenantId));
-
-    if (patch.currency && patch.currency !== t.settings?.currency) {
-      const oldCurrency = t.settings?.currency ?? "EGP";
-      const newCurrency = patch.currency;
-      const oldExp = currencyMinorExponent(oldCurrency);
-      const newExp = currencyMinorExponent(newCurrency);
-
-      if (oldExp === newExp) {
-        await tx.execute(sql`
-          UPDATE invoices SET currency = ${newCurrency}
-          WHERE tenant_id = ${tenantId} AND currency = ${oldCurrency}
-        `);
-        await tx.execute(sql`
-          UPDATE payments SET currency = ${newCurrency}
-          WHERE tenant_id = ${tenantId} AND currency = ${oldCurrency}
-        `);
-        await tx.execute(sql`
-          UPDATE cheques SET currency = ${newCurrency}
-          WHERE tenant_id = ${tenantId} AND currency = ${oldCurrency}
-        `);
-        await tx.execute(sql`
-          UPDATE debtors SET credit_currency = ${newCurrency}
-          WHERE tenant_id = ${tenantId} AND credit_currency = ${oldCurrency}
-        `);
-      } else {
-        const factor = 10n ** BigInt(Math.abs(newExp - oldExp));
-        if (newExp > oldExp) {
-          await tx.execute(sql`
-            UPDATE invoices SET currency = ${newCurrency},
-              amount_minor = amount_minor * ${factor},
-              paid_minor = paid_minor * ${factor}
-            WHERE tenant_id = ${tenantId} AND currency = ${oldCurrency}
-          `);
-          await tx.execute(sql`
-            UPDATE payments SET currency = ${newCurrency},
-              amount_minor = amount_minor * ${factor}
-            WHERE tenant_id = ${tenantId} AND currency = ${oldCurrency}
-          `);
-          await tx.execute(sql`
-            UPDATE cheques SET currency = ${newCurrency},
-              amount_minor = amount_minor * ${factor}
-            WHERE tenant_id = ${tenantId} AND currency = ${oldCurrency}
-          `);
-          await tx.execute(sql`
-            UPDATE debtors SET credit_currency = ${newCurrency},
-              credit_balance_minor = credit_balance_minor * ${factor}
-            WHERE tenant_id = ${tenantId} AND credit_currency = ${oldCurrency}
-          `);
-        } else {
-          await tx.execute(sql`
-            UPDATE invoices SET currency = ${newCurrency},
-              amount_minor = amount_minor / ${factor},
-              paid_minor = paid_minor / ${factor}
-            WHERE tenant_id = ${tenantId} AND currency = ${oldCurrency}
-          `);
-          await tx.execute(sql`
-            UPDATE payments SET currency = ${newCurrency},
-              amount_minor = amount_minor / ${factor}
-            WHERE tenant_id = ${tenantId} AND currency = ${oldCurrency}
-          `);
-          await tx.execute(sql`
-            UPDATE cheques SET currency = ${newCurrency},
-              amount_minor = amount_minor / ${factor}
-            WHERE tenant_id = ${tenantId} AND currency = ${oldCurrency}
-          `);
-          await tx.execute(sql`
-            UPDATE debtors SET credit_currency = ${newCurrency},
-              credit_balance_minor = credit_balance_minor / ${factor}
-            WHERE tenant_id = ${tenantId} AND credit_currency = ${oldCurrency}
-          `);
-        }
-      }
-    }
     await tx.insert(auditLog).values({
       tenantId, actorUserId, action: "tenant.settings_updated", entity: "tenant", entityId: tenantId,
       before: t.settings as never, after: nextSettings as never,
@@ -344,5 +277,3 @@ export async function updateTenantSettings(app: Db, tenantId: string, actorUserI
     return { settings: nextSettings };
   });
 }
-
-export { lt, AppError };

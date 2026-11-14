@@ -34,7 +34,6 @@ import {
   getPlanCatalogue, getQuotaStatus, changePlan, changePlanInput, listSubscriptionInvoices,
 } from "./billing";
 import { exportTenantData, deleteTenantData } from "./tenant-data";
-import { seedComprehensiveTestData } from "./seed-rich";
 import { createTaskInput, updateTaskInput, createPromiseInput, listTeamMembers, listCollectionTasks, createCollectionTask, updateCollectionTask, listPromisesToPay, createMerchantPromise, decidePromiseToPay, listAiActionApprovals, decideAiActionApproval, getCollectionWorkspaceSummary } from "./workflows";
 import { FakePaymentProvider } from "@tahseel/providers";
 import { paymentProviderFromEnv, realGatewayConfigured } from "./gateway";
@@ -55,7 +54,7 @@ import {
 } from "./notifications";
 import {
   getWorkspaceIntelligence, getDebtorIntelligence, askWorkspaceCopilot, copilotQueryInput,
-  listCopilotConversations, getCopilotConversation,
+  listCopilotConversations, getCopilotConversation, deleteCopilotConversation, renameCopilotConversation, clearCopilotConversations,
 } from "./intelligence";
 
 const pageArgs = (input: { cursor?: string; limit?: number } | undefined) => ({
@@ -100,8 +99,6 @@ export const appRouter = router({
     updateSettings: ownerProcedure
       .input(updateTenantSettingsInput)
       .mutation(async ({ ctx, input }) => updateTenantSettings(ctx.appDb, ctx.tenantId, ctx.user.id, input)),
-    seedComprehensive: ownerProcedure
-      .mutation(async ({ ctx }) => seedComprehensiveTestData(ctx.appDb, ctx.tenantId, ctx.user.id)),
   },
   dashboard: {
     summary: tenantProcedure.query(async ({ ctx }) => {
@@ -501,6 +498,14 @@ export const appRouter = router({
     getCopilotConversation: tenantProcedure
       .input(z.object({ conversationId: z.string().uuid() }))
       .query(async ({ ctx, input }) => getCopilotConversation(ctx.appDb, ctx.tenantId, ctx.user.id, input.conversationId)),
+    deleteCopilotConversation: tenantProcedure
+      .input(z.object({ conversationId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => deleteCopilotConversation(ctx.appDb, ctx.tenantId, ctx.user.id, input.conversationId)),
+    renameCopilotConversation: tenantProcedure
+      .input(z.object({ conversationId: z.string().uuid(), title: z.string().min(1).max(80) }))
+      .mutation(async ({ ctx, input }) => renameCopilotConversation(ctx.appDb, ctx.tenantId, ctx.user.id, input.conversationId, input.title)),
+    clearCopilotConversations: tenantProcedure
+      .mutation(async ({ ctx }) => clearCopilotConversations(ctx.appDb, ctx.tenantId, ctx.user.id)),
     askCopilot: tenantProcedure
       .input(copilotQueryInput)
       .mutation(async ({ ctx, input }) => {

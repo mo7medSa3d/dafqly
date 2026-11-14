@@ -17,7 +17,7 @@ export default async function BillingPage({ params }: { params: Promise<{ locale
 
   return (
     <AppShell locale={locale} demoMode={runtimeModeFlags()} digits={tenant.settings?.easternDigits ? "eastern" : "latin"} businessName={tenant.businessNameAr} currency={tenant.settings?.currency ?? "EGP"} testId="billing-page">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+      <div className="flex w-full flex-col gap-6">
         <BillingClient locale={locale} />
       </div>
     </AppShell>

@@ -19,7 +19,7 @@ import { nextInvoiceReference } from "./ledger";
  * the existing debtor (or to the debtor created by the first in-file row).
  */
 
-export const MAX_IMPORT_BYTES = 8 * 1024 * 1024; // aligns with the §3 upload cap
+const MAX_IMPORT_BYTES = 8 * 1024 * 1024; // aligns with the §3 upload cap
 
 interface StoredRow {
   status: ParsedImportRow["status"];

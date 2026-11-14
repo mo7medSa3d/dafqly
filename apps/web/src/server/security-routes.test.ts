@@ -28,6 +28,7 @@ const CLASSIFICATION: Record<string, RouteClass> = {
   "api/public/statement/[token]/pay/route.ts": "public", // same token gate
   "api/public/statement/[token]/promise/route.ts": "public", // token gate + IP rate limit
   "s/[token]/page.tsx": "public", // statement page behind the same unguessable token
+  "[locale]/[...rest]/page.tsx": "public", // 404 catch-all for unknown localized paths
   "[locale]/login/page.tsx": "public", // sign-in form (redirects away when signed in)
   "[locale]/signup/page.tsx": "public", // sign-up form (rate-limited by the auth limiter)
   // Everything else requires a session:
@@ -68,7 +69,7 @@ describe("route auth allowlist (§9, M6)", () => {
 
   it("the public allowlist is exactly the documented set", () => {
     const publics = Object.entries(CLASSIFICATION).filter(([, v]) => v === "public").map(([k]) => k);
-    expect(publics).toHaveLength(12);
+    expect(publics).toHaveLength(13);
   });
 
   it("every tRPC procedure except `health` rejects unauthenticated calls", async () => {

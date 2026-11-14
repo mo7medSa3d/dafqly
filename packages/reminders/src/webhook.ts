@@ -11,9 +11,11 @@ import { applyOptOut, type EngineDeps } from "./engine";
  * Meta delivers at-least-once: every layer here is safe to replay.
  */
 
-export function verifyWebhookSignature(rawBody: string, signatureHeader: string | null, appSecret: string): boolean {
+export function verifyWebhookSignature(rawBody: string | Uint8Array, signatureHeader: string | null, appSecret: string): boolean {
   if (!signatureHeader || !appSecret) return false;
-  const expected = `sha256=${createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex")}`;
+  // HMAC the original request bytes; decoding and re-encoding can alter
+  // invalid UTF-8 sequences and must not change the signed message.
+  const expected = `sha256=${createHmac("sha256", appSecret).update(rawBody).digest("hex")}`;
   const a = Buffer.from(expected);
   const b = Buffer.from(signatureHeader);
   return a.length === b.length && timingSafeEqual(a, b);

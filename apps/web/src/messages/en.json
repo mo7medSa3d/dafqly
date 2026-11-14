@@ -21,7 +21,9 @@
     "loading": "Loading",
     "save": "Save",
     "errorTitle": "Something went wrong",
-    "retry": "Try again"
+    "retry": "Try again",
+    "notFoundTitle": "Page not found",
+    "notFoundBody": "The link you opened does not exist or was moved. Check the address or go back to the dashboard."
   },
   "dashboard": {
     "collectedThisMonth": "Collected this month",
@@ -235,7 +237,7 @@
     "failed": "The operation failed. Please try again.",
     "name": "Name",
     "phone": "Phone",
-    "amount": "Amount",
+    "amount": "Amount (EGP)",
     "date": "Date",
     "suggestion": "Suggested customer",
     "useSuggestion": "Use suggestion ({score}%)",
@@ -279,7 +281,7 @@
     "payable": "Payable",
     "number": "Cheque number",
     "bank": "Bank",
-    "amount": "Amount",
+    "amount": "Amount (EGP)",
     "issueDate": "Issue date",
     "dueDate": "Due date",
     "invoice": "Linked invoice (optional)",

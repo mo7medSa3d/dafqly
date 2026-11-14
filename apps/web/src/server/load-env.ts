@@ -7,7 +7,7 @@ import { resolve } from "node:path";
  * local dev we import the root one for keys that are not already set.
  * In production the host injects real env vars and this is a no-op.
  */
-export function loadRootEnv(): void {
+function loadRootEnv(): void {
   if (process.env.DATABASE_URL) return;
   const candidate = resolve(process.cwd(), "../../.env");
   if (!existsSync(candidate)) return;

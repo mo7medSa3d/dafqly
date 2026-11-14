@@ -64,12 +64,6 @@ export async function getQuotaStatus(app: Db, tenantId: string, now: Date = new 
   });
 }
 
-/** Dispatcher hook (F13): true when sends must be blocked for quota. Fail-open on lookup errors is the ENGINE's choice (it catches). */
-export async function isQuotaExceeded(app: Db, tenantId: string, now: Date = new Date()): Promise<boolean> {
-  const qs = await getQuotaStatus(app, tenantId, now);
-  return qs.state === "exceeded";
-}
-
 // ------------------------------------------------------- subscription flow
 export const changePlanInput = z.object({ planKey: z.string().trim().min(1).max(32) });
 export type ChangePlanInput = z.infer<typeof changePlanInput>;

@@ -32,7 +32,6 @@ d("Prompt 04 §9: global AI budget under concurrency", () => {
   const owner = () => ownerDb();
 
   beforeAll(async () => {
-    await ownerDb().delete(aiGlobalBudget);
     await ownerDb().insert(userTable).values([user]);
     tenantId = (await createTenantForUser(appDb(), user.id, {
       businessNameAr: "شركة الميزانية", timezone: "Africa/Cairo", quietStart: "21:00", quietEnd: "09:00",

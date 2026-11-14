@@ -1,5 +1,6 @@
 import "./load-env";
 import { parseEnv, type AppEnv } from "@tahseel/core";
+import { hasUsableLlmConfig } from "@tahseel/providers";
 
 let cached: AppEnv | undefined;
 /** Validated env; throws (fails fast) on the first server touch if invalid. */
@@ -31,7 +32,7 @@ export function runtimeModeFlags(): RuntimeModeFlags {
   }
   return {
     dryRunMessaging: e.DRY_RUN_MESSAGING,
-    fakeAi: !(e.GEMINI_API_KEY || e.ANTHROPIC_API_KEY || e.AI_API_KEY),
+    fakeAi: !hasUsableLlmConfig(e),
     fakePayments: !(e.PAYMOB_SECRET_KEY && e.PAYMOB_PUBLIC_KEY && e.PAYMOB_INTEGRATION_ID),
   };
 }

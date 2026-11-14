@@ -6,7 +6,7 @@ import {
 import { createHash } from "node:crypto";
 import {
   planReminders, groupDueReminders, classifyProviderError, backoffDelayMs, isOptOutText, evaluateQualityGuard,
-  normalizeEgPhone, formatEgp, isInQuietHours, nextAllowedSlot, localDateOf, zonedTimeToUtc, quotaStatus,
+  normalizeEgPhone, formatCurrencyMinor, isInQuietHours, nextAllowedSlot, localDateOf, zonedTimeToUtc, quotaStatus,
   STATEMENT_DEFAULT_EXPIRY_DAYS,
   DEFAULT_WEEKLY_CAP, MAX_SEND_ATTEMPTS, type PlanPolicy,
 } from "@tahseel/core";
@@ -220,7 +220,6 @@ export interface GroupWork {
   templateKey: string;
   reminderIds: string[];
   invoiceIds: string[];
-  totalOutstandingMinor: bigint;
   earliestDueOn: string;
   /** F10: tenant opted in to including the statement/payment URL in reminders. */
   payLinkEnabled: boolean;
@@ -338,7 +337,10 @@ async function prepareTenant(deps: EngineDeps, tenantId: string, now: Date, limi
     const trialExpired = tenant.plan === "trial" && tenant.trialEndsAt !== null && tenant.trialEndsAt.getTime() < now.getTime();
     // F13: quota is checked once per tenant per cycle, at the plan-status
     // position of the guard order (next to the trial check).
-    const quotaBlocked = deps.quotaExceeded ? await deps.quotaExceeded(tenantId).catch(() => false) : false;
+    // Fail closed: if the quota service/database is unavailable, let the
+    // transaction roll back so claimed reminders remain retryable. Treating
+    // an unknown quota as "not exceeded" can send beyond the paid plan.
+    const quotaBlocked = deps.quotaExceeded ? await deps.quotaExceeded(tenantId) : false;
 
     const survivors: DueRow[] = [];
     for (const row of claimed) {
@@ -430,7 +432,6 @@ async function prepareTenant(deps: EngineDeps, tenantId: string, now: Date, limi
       }
       const groupInvoices = [...new Set(groupRows.map((r) => r.invoice_id))]
         .map((id) => invoiceById.get(id)).filter((i) => i !== undefined);
-      const total = groupInvoices.reduce((acc, i) => acc + (i.amountMinor - i.paidMinor), 0n);
       const earliest = groupInvoices.map((i) => i.dueOn).sort()[0] ?? "";
       const first = [...groupRows].sort((a, b) => new Date(b.due_at).getTime() - new Date(a.due_at).getTime())[0]!; // most urgent step picks the template
       const groupKey = `grp:${tenantId}:${group.key}`;
@@ -443,7 +444,7 @@ async function prepareTenant(deps: EngineDeps, tenantId: string, now: Date, limi
         groupKey, channel: group.channel, debtorId: group.debtorId,
         debtorPhone: debtorById.get(group.debtorId)?.phoneE164 ?? "",
         templateKey: first.template_key, reminderIds: groupRows.map((r) => r.id),
-        invoiceIds: groupInvoices.map((i) => i.id), totalOutstandingMinor: total, earliestDueOn: earliest,
+        invoiceIds: groupInvoices.map((i) => i.id), earliestDueOn: earliest,
         payLinkEnabled: tenant.settings.includePayLinkInReminders === true,
       });
     }
@@ -527,7 +528,13 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
     return {
       invoiceIds: open.map((i) => i.id),
       reminderIds: remRows.filter((r) => openIds.has(r.invoiceId)).map((r) => r.id),
-      totalOutstandingMinor: open.reduce((acc, i) => acc + (i.amountMinor - i.paidMinor), 0n),
+      outstandingByCurrency: [...open.reduce((map, invoice) => {
+        map.set(invoice.currency, (map.get(invoice.currency) ?? 0n) + invoice.amountMinor - invoice.paidMinor);
+        return map;
+      }, new Map<string, bigint>()).entries()]
+        .filter(([, amountMinor]) => amountMinor > 0n)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([currency, amountMinor]) => ({ currency, amountMinor })),
       earliestDueOn: open.map((i) => i.dueOn).sort()[0] ?? group.earliestDueOn,
     };
   });
@@ -535,9 +542,9 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
   const business = group.businessName;
   const variables: Record<string, string> = {
     business,
-    amount: formatEgp(live.totalOutstandingMinor),
+    amount: live.outstandingByCurrency.map((item) => `${formatCurrencyMinor(item.amountMinor, item.currency)} ${item.currency}`).join("؛ "),
     due_date: live.earliestDueOn,
-    remaining: formatEgp(live.totalOutstandingMinor),
+    remaining: live.outstandingByCurrency.map((item) => `${formatCurrencyMinor(item.amountMinor, item.currency)} ${item.currency}`).join("؛ "),
   };
   // F10/F5: when the tenant enabled it, the debtor's statement/payment URL
   // rides along as a URL variable. The registry's v1 templates declare no
@@ -665,23 +672,47 @@ export async function applyOptOut(deps: EngineDeps, tenantId: string, debtorId: 
 
 /** Re-enable automatic reminders for a debtor: clear opted_out_at, remove opt-out records, and re-plan future reminders. */
 export async function resumeReminders(deps: EngineDeps, tenantId: string, debtorId: string, now: Date): Promise<{ resumed: boolean; plannedInvoices: number }> {
-  return withTenant(deps.app, tenantId, async (tx) => {
+  const invoiceIds = await withTenant(deps.app, tenantId, async (tx) => {
     const [debtor] = await tx.select().from(debtors).where(eq(debtors.id, debtorId));
-    if (!debtor) return { resumed: false, plannedInvoices: 0 };
-    if (debtor.optedOutAt) {
+    if (!debtor) return null;
+
+    const optOutRows = await tx.select({ id: optOuts.id }).from(optOuts).where(and(
+      eq(optOuts.tenantId, tenantId),
+      or(eq(optOuts.debtorId, debtorId), eq(optOuts.phoneHash, debtor.phoneHash)),
+    ));
+    if (debtor.optedOutAt || optOutRows.length > 0) {
       await tx.update(debtors).set({ optedOutAt: null, updatedAt: now }).where(eq(debtors.id, debtorId));
     }
     await tx.delete(optOuts).where(and(eq(optOuts.tenantId, tenantId), or(eq(optOuts.debtorId, debtorId), eq(optOuts.phoneHash, debtor.phoneHash))));
-    await audit(tx, tenantId, "debtor.reminders_resumed", "debtor", debtorId, { action: "reminders_resumed" });
-    const openInvs = await tx.select().from(invoices).where(and(
+
+    // applyOptOut marks future reminders cancelled/skipped with this exact
+    // reason. Reactivate only those rows; never revive rows stopped for a
+    // paid invoice, invalid phone, plan quota, or any unrelated guard.
+    const reactivated = await tx.update(reminders).set({
+      status: "scheduled", skipReason: null, nextAttemptAt: null, groupKey: null, updatedAt: now,
+    }).where(and(
+      eq(reminders.debtorId, debtorId),
+      eq(reminders.skipReason, "opted_out"),
+      inArray(reminders.status, ["cancelled", "skipped"]),
+    )).returning({ id: reminders.id });
+
+    const openInvs = await tx.select({ id: invoices.id }).from(invoices).where(and(
       eq(invoices.debtorId, debtorId),
-      inArray(invoices.status, ["open", "partially_paid"])
+      inArray(invoices.status, ["open", "partially_paid"]),
     ));
-    for (const inv of openInvs) {
-      void planForInvoice(deps, tenantId, inv.id, now);
+    if (debtor.optedOutAt || optOutRows.length > 0 || reactivated.length > 0) {
+      await audit(tx, tenantId, "debtor.reminders_resumed", "debtor", debtorId, {
+        action: "reminders_resumed", reactivatedReminders: reactivated.length,
+      });
     }
-    return { resumed: true, plannedInvoices: openInvs.length };
+    return openInvs.map((row) => row.id);
   });
+
+  if (invoiceIds === null) return { resumed: false, plannedInvoices: 0 };
+  // Replanning happens after the opt-out transaction commits. Await it so
+  // callers never receive a success response while background writes race.
+  for (const invoiceId of invoiceIds) await planForInvoice(deps, tenantId, invoiceId, now);
+  return { resumed: true, plannedInvoices: invoiceIds.length };
 }
 
 export { isOptOutText };

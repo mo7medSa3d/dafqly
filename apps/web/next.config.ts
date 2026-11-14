@@ -47,9 +47,9 @@ const nextConfig: NextConfig = {
   compress: true,
   reactStrictMode: true,
   transpilePackages: ["@tahseel/core", "@tahseel/db", "@tahseel/brand"],
-  serverExternalPackages: ["argon2", "postgres", "better-auth"],
+  serverExternalPackages: ["argon2", "postgres"],
   experimental: {
-    optimizePackageImports: ["@phosphor-icons/react"],
+    optimizePackageImports: ["lucide-react"],
   },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

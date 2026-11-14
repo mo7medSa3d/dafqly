@@ -29,7 +29,7 @@ interface TenantTableSpec {
 }
 
 /** FK-safe order matters for `remove` (children before parents). */
-export const TENANT_DATA_TABLES: TenantTableSpec[] = [
+const TENANT_DATA_TABLES: TenantTableSpec[] = [
   { name: "ai_action_approvals", read: (tx, id) => tx.select().from(aiActionApprovals).where(eq(aiActionApprovals.tenantId, id)), remove: async (tx, id) => { await tx.delete(aiActionApprovals).where(eq(aiActionApprovals.tenantId, id)); } },
   { name: "collection_tasks", read: (tx, id) => tx.select().from(collectionTasks).where(eq(collectionTasks.tenantId, id)), remove: async (tx, id) => { await tx.delete(collectionTasks).where(eq(collectionTasks.tenantId, id)); } },
   { name: "promises_to_pay", read: (tx, id) => tx.select().from(promisesToPay).where(eq(promisesToPay.tenantId, id)), remove: async (tx, id) => { await tx.delete(promisesToPay).where(eq(promisesToPay.tenantId, id)); } },
@@ -58,7 +58,7 @@ export const TENANT_DATA_TABLES: TenantTableSpec[] = [
   { name: "memberships", read: (tx, id) => tx.select().from(memberships).where(eq(memberships.tenantId, id)), remove: async (tx, id) => { await tx.delete(memberships).where(eq(memberships.tenantId, id)); } },
 ];
 
-export interface TenantDataExport {
+interface TenantDataExport {
   exportedAt: string;
   format: "tahseel-tenant-export-v1";
   tenant: Record<string, unknown>;

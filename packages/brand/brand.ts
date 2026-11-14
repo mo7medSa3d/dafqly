@@ -7,18 +7,18 @@ export const BRAND = {
   taglineAr: "تتبّع. تابع. وحصّل.",
   descriptionAr: "دفقلي — منصة إدارة المستحقات والتحصيل الذكي",
   descriptionEn: "Dafqly — Smarter Receivables. Better Cash Flow.",
-  designSystem: "Yaseir Design Guide v2.1",
+  designSystem: "Quiet Ledger (DESIGN.md)",
   colors: {
-    navy: "#101219",
-    primaryBlue: "#0953DE",
-    teal: "#00C7FC",
+    // Indigo Ledger: ink #1C2350 is identity, indigo #4338CA is the single
+    // action accent (CTA/link/focus only). Teal #27C7A5 lives only in the
+    // brand mark. The Yaseir scatter accents (yellow/pink/violet/coral)
+    // are removed — colour means status or action only.
+    navy: "#1C2350",
+    primaryBlue: "#4338CA",
+    teal: "#27C7A5",
     reserveTeal: "#12716B",
-    yellow: "#FFE451",
-    pink: "#F48CC0",
-    violet: "#6852AE",
-    coral: "#B84C3D",
-    canvas: "#F6F7F9",
-    slate: "#5A606C",
+    canvas: "#F4F5FB",
+    slate: "#535C75",
   },
   logo: {
     symbol: "/brand/logo/symbol.svg",

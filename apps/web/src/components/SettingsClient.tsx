@@ -1,13 +1,13 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
-import {
-  Buildings, CheckCircle, Clock, CurrencyDollar, Database,
-  FloppyDisk, GearSix, ShieldCheck, Sparkle, WarningCircle, X,
-} from "@phosphor-icons/react";
+import { Buildings, CheckCircle, Clock, CurrencyDollar, FloppyDisk, GearSix, ShieldCheck, WarningCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { signOut } from "@/lib/auth-client";
 import { ExportButtons } from "./ExportButtons";
 import { DangerZone } from "./DangerZone";
+import { AuditTrail } from "./AuditTrail";
 import { Panel, btnPrimary, inputCls, labelCls } from "./ui";
 import { SecurityLockBadge } from "./illustrations";
 
@@ -83,12 +83,12 @@ export function SettingsClient({ locale }: { locale: string }) {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState(false);
-  const [confirmRevokeModalOpen, setConfirmRevokeModalOpen] = useState(false);
-  const [seeding, setSeeding] = useState(false);
-  const [seedSuccess, setSeedSuccess] = useState<string | null>(null);
 
   /** H5: sign out everywhere — revokes every session, including this one. */
-  async function executeRevokeAllSessions() {
+  async function onRevokeAllSessions() {
+    if (!window.confirm(isAr
+      ? "سيتم تسجيل خروجك من كل الأجهزة والجلسات، بما فيها هذه الجلسة. متابعة؟"
+      : "This signs you out on every device and session, including this one. Continue?")) return;
     setRevoking(true);
     try {
       await trpc.auth.revokeAllSessions.mutate();
@@ -97,25 +97,6 @@ export function SettingsClient({ locale }: { locale: string }) {
     } catch {
       setError(isAr ? "تعذّر إنهاء الجلسات. حاول مرة أخرى." : "Could not end the sessions. Try again.");
       setRevoking(false);
-      setConfirmRevokeModalOpen(false);
-    }
-  }
-
-  async function onSeedComprehensive() {
-    setSeeding(true);
-    setSeedSuccess(null);
-    setError(null);
-    try {
-      const res = await trpc.tenant.seedComprehensive.mutate();
-      setSeedSuccess(
-        isAr
-          ? `تم بنجاح تحميل البيانات التجريبية: ${res.debtorsAdded} عملاء، ${res.invoicesAdded} فواتير، ${res.chequesAdded} شيكات بمختلف الحالات.`
-          : `Successfully loaded comprehensive demo data: ${res.debtorsAdded} debtors, ${res.invoicesAdded} invoices, ${res.chequesAdded} cheques across multiple statuses.`
-      );
-    } catch {
-      setError(isAr ? "تعذرت إضافة البيانات التجريبية." : "Failed to seed demo data.");
-    } finally {
-      setSeeding(false);
     }
   }
 
@@ -124,7 +105,6 @@ export function SettingsClient({ locale }: { locale: string }) {
   const [businessNameEn, setBusinessNameEn] = useState("");
   const [taxId, setTaxId] = useState("");
   const [timezone, setTimezone] = useState("Africa/Cairo");
-  const [interfaceLanguage, setInterfaceLanguage] = useState<"ar" | "en">(isAr ? "ar" : "en");
   const [currency, setCurrency] = useState<"EGP" | "SAR" | "USD" | "AED" | "EUR" | "KWD" | "JPY">("EGP");
   const [defaultTermsDays, setDefaultTermsDays] = useState(14);
   const [tone, setTone] = useState<"polite" | "firm">("polite");
@@ -190,12 +170,8 @@ export function SettingsClient({ locale }: { locale: string }) {
       });
       setSaved(true);
       setTimeout(() => {
-        if (interfaceLanguage !== locale) {
-          window.location.assign(`/${interfaceLanguage}/settings`);
-        } else {
-          window.location.reload();
-        }
-      }, 700);
+        window.location.reload();
+      }, 800);
       await load();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : (isAr ? "تعذّر حفظ التعديلات" : "Failed to save settings"));
@@ -214,38 +190,29 @@ export function SettingsClient({ locale }: { locale: string }) {
 
   return (
     <div className="flex flex-col gap-8">
-      {/* Settings Signature Blue Hero Band */}
-      <section className="hero-band panel-shadow relative overflow-hidden rounded-3xl text-white shadow-lg">
-        <div className="brand-pattern absolute inset-0" aria-hidden />
-        <div className="relative z-10 flex flex-col gap-4 p-6 sm:p-8 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-[260px] flex-1 flex-col items-start gap-2.5">
-            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-teal-200">
-              <span className="size-2 rounded-full bg-teal-400 animate-pulse" />
-              <span>{isAr ? "مركز التحكم في الحساب والمنشأة" : "Workspace Control & Settings"}</span>
-              <span className="text-white/60">·</span>
-              <span className="text-white/90">{data.businessNameAr}</span>
-              <span className="text-white/60">·</span>
-              <span className="text-white/80">{timezone}</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="flex size-10 items-center justify-center rounded-xl bg-white/10 text-white backdrop-blur-sm">
-                <GearSix size={24} weight="fill" />
+      {/* Settings Header Band */}
+      <section className="relative overflow-hidden rounded-xl border border-border bg-surface p-6 sm:p-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <span className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <GearSix size={22} />
               </span>
-              <h1 className="text-2xl font-extrabold tracking-tight text-white sm:text-3xl">
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-text">
                 {isAr ? "إعدادات المنشأة والحساب" : "Business & Account Settings"}
               </h1>
             </div>
-            <p className="max-w-2xl text-sm leading-relaxed text-navy-100">
+            <p className="text-sm text-text-muted max-w-2xl">
               {isAr
-                ? "إدارة العملة المعتمدة، الملف التعريفي، أتمتة التذكيرات، لغة تصدير التقارير، والنسخ الاحتياطي المشفر."
-                : "Manage your default currency, business profile, automated reminders, report exports, and encrypted backups."}
+                ? "إدارة العملة المعتمدة، الملف التعريفي، أتمتة التذكيرات، لغة تصدير التقارير، والنسخ الاحتياطي."
+                : "Manage your default currency, business profile, automated reminders, report exports, and backups."}
             </p>
           </div>
 
-          <div className="flex shrink-0 flex-wrap items-center gap-2.5">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-300/30 bg-teal-400/20 px-4 py-1.5 text-xs font-bold text-teal-200 backdrop-blur-sm">
-              <ShieldCheck size={16} weight="fill" />
-              <span>{isAr ? "حساب مؤكد ومحمي" : "Verified & Protected"}</span>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded border border-status-paid-fg/20 bg-status-paid-bg px-3.5 py-1 text-xs font-bold text-status-paid-fg dark:text-status-paid-fg">
+              <ShieldCheck size={16} />
+              <span>{isAr ? "حساب مؤكد" : "Verified Tenant"}</span>
             </span>
           </div>
         </div>
@@ -253,14 +220,14 @@ export function SettingsClient({ locale }: { locale: string }) {
 
       {/* Notifications / Alerts */}
       {saved && (
-        <div role="status" className="flex items-center gap-2.5 rounded-2xl border border-status-paid-fg/30 bg-status-paid-bg px-4 py-3.5 text-sm font-bold text-status-paid-fg shadow-sm animate-in fade-in duration-200">
-          <CheckCircle size={18} weight="fill" aria-hidden />
+        <div role="status" className="flex items-center gap-2.5 rounded-xl border border-status-paid-fg/30 bg-status-paid-bg px-4 py-3.5 text-sm font-bold text-status-paid-fg animate-in fade-in duration-200">
+          <CheckCircle size={18} aria-hidden />
           <span>{isAr ? "تم حفظ جميع التغييرات بنجاح!" : "All preferences saved successfully!"}</span>
         </div>
       )}
       {error && (
-        <div role="alert" className="flex items-center gap-2.5 rounded-2xl border border-danger/30 bg-danger-bg px-4 py-3.5 text-sm font-bold text-danger shadow-sm">
-          <WarningCircle size={18} weight="fill" aria-hidden />
+        <div role="alert" className="flex items-center gap-2.5 rounded-xl border border-danger/30 bg-danger-bg px-4 py-3.5 text-sm font-bold text-danger">
+          <WarningCircle size={18} aria-hidden />
           <span>{error}</span>
         </div>
       )}
@@ -322,23 +289,6 @@ export function SettingsClient({ locale }: { locale: string }) {
                       ))}
                     </select>
                   </label>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label className={labelCls}>
-                    <span>{isAr ? "لغة واجهة المنصة والتطبيق" : "Platform Interface Language"}</span>
-                    <select
-                      className={inputCls}
-                      value={interfaceLanguage}
-                      onChange={(e) => setInterfaceLanguage(e.target.value as "ar" | "en")}
-                    >
-                      <option value="ar">{isAr ? "العربية (Arabic)" : "Arabic (العربية)"}</option>
-                      <option value="en">{isAr ? "English (الإنجليزية)" : "English"}</option>
-                    </select>
-                  </label>
-                  <div className="flex flex-col justify-end text-xs text-text-muted pb-1.5">
-                    <span>{isAr ? "تغيير لغة واجهة النظام ولوحة التحكم فورياً." : "Changes the entire platform interface language immediately."}</span>
-                  </div>
                 </div>
               </div>
             </Panel>
@@ -521,7 +471,7 @@ export function SettingsClient({ locale }: { locale: string }) {
         </div>
 
         {/* Floating / Sticky Save Bar */}
-        <div className="sticky bottom-4 z-20 flex items-center justify-between gap-4 rounded-2xl border border-border bg-surface/95 p-4 shadow-lg backdrop-blur sm:px-6">
+        <div className="sticky bottom-4 z-20 flex items-center justify-between gap-4 rounded-xl border border-border bg-surface/95 p-4 backdrop-blur sm:px-6">
           <div className="flex items-center gap-2">
             <SecurityLockBadge size={32}/>
             <span className="text-xs font-medium text-text-muted">
@@ -533,9 +483,9 @@ export function SettingsClient({ locale }: { locale: string }) {
             type="submit"
             data-testid="settings-submit"
             disabled={busy}
-            className={`${btnPrimary} min-h-[42px] px-6 text-sm`}
+            className={`${btnPrimary} min-h-[40px] px-6 text-sm`}
           >
-            <FloppyDisk size={18} weight="bold" />
+            <FloppyDisk size={18} strokeWidth={2.5} />
             <span>{busy ? (isAr ? "جارٍ الحفظ..." : "Saving...") : (isAr ? "حفظ التغييرات" : "Save Changes")}</span>
           </button>
         </div>
@@ -554,129 +504,37 @@ export function SettingsClient({ locale }: { locale: string }) {
             <DangerZone />
           </div>
         </div>
-        <div className="mt-6 grid gap-6 lg:grid-cols-12 items-start">
-          <div className="lg:col-span-6">
-            <Panel
-              title={isAr ? "الجلسات والأمان" : "Sessions & security"}
-              subtitle={isAr
-                ? "إذا شككت أن حسابك مفتوح على جهاز آخر، أنهِ كل الجلسات دفعة واحدة."
-                : "If you suspect your account is open on another device, end every session at once."}
-              icon={ShieldCheck}
-              testId="sessions-panel"
-            >
-              <button
-                type="button"
-                data-testid="revoke-all-sessions"
-                disabled={revoking}
-                onClick={() => setConfirmRevokeModalOpen(true)}
-                className="inline-flex min-h-[42px] items-center gap-2 rounded-xl border border-danger/40 bg-danger-bg px-4 text-sm font-bold text-danger transition-all hover:bg-danger/10 disabled:opacity-50 cursor-pointer"
-              >
-                <ShieldCheck size={18} weight="fill" />
-                <span>{revoking
-                  ? (isAr ? "جارٍ إنهاء الجلسات..." : "Ending sessions...")
-                  : (isAr ? "تسجيل الخروج من كل الأجهزة" : "Sign out everywhere")}</span>
-              </button>
-            </Panel>
-          </div>
-
-          <div className="lg:col-span-6">
-            <Panel
-              title={isAr ? "بيانات الاختبار والمحاكاة" : "Testing & Simulation Data"}
-              subtitle={isAr
-                ? "إضافة سيناريوهات وبيانات واقعية متكاملة (عملاء، فواتير بأعمار مختلفة، شيكات، ومطالبات) لاختبار المنصة بالكامل."
-                : "Load rich realistic scenarios (debtors, aging invoices, cheques, and claims) to thoroughly test the platform."}
-              icon={Database}
-              testId="seed-data-panel"
-            >
-              <div className="flex flex-col gap-3">
-                <button
-                  type="button"
-                  data-testid="seed-comprehensive-btn"
-                  disabled={seeding}
-                  onClick={() => void onSeedComprehensive()}
-                  className="inline-flex min-h-[42px] items-center gap-2 rounded-xl border border-primary/40 bg-callout px-4 text-sm font-bold text-primary transition-all hover:bg-primary hover:text-primary-fg disabled:opacity-50 cursor-pointer"
-                >
-                  <Sparkle size={18} weight="fill" />
-                  <span>{seeding
-                    ? (isAr ? "جارٍ توليد وتحميل البيانات..." : "Seeding demo data...")
-                    : (isAr ? "إضافة بيانات تجريبية متكاملة للاختبار" : "Load Comprehensive Demo Data")}</span>
-                </button>
-                {seedSuccess && (
-                  <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                    {seedSuccess}
-                  </p>
-                )}
-              </div>
-            </Panel>
-          </div>
-        </div>
-      </div>
-
-      {/* In-App Confirmation Modal for Revoking All Sessions (No Browser Default Alert) */}
-      {confirmRevokeModalOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="revoke-modal-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-150"
-        >
-          <div className="relative flex w-full max-w-md flex-col gap-4 rounded-3xl border border-border bg-surface p-6 shadow-2xl animate-in zoom-in-95 duration-150">
+        <div className="mt-6">
+          <Panel
+            title={isAr ? "الجلسات والأمان" : "Sessions & security"}
+            subtitle={isAr
+              ? "إذا شككت أن حسابك مفتوح على جهاز آخر، أنهِ كل الجلسات دفعة واحدة."
+              : "If you suspect your account is open on another device, end every session at once."}
+            icon={ShieldCheck}
+            testId="sessions-panel"
+          >
             <button
               type="button"
-              onClick={() => !revoking && setConfirmRevokeModalOpen(false)}
-              className="absolute end-4 top-4 rounded-full p-1.5 text-text-muted hover:bg-surface-muted hover:text-text cursor-pointer"
-              aria-label={isAr ? "إغلاق" : "Close"}
+              data-testid="revoke-all-sessions"
+              disabled={revoking}
+              onClick={() => void onRevokeAllSessions()}
+              className={cn(buttonVariants({ variant: "dangerSoft", size: "default" }), "border-danger/40 text-danger")}
             >
-              <X size={18} weight="bold" />
+              <ShieldCheck size={18} />
+              <span>{revoking
+                ? (isAr ? "جارٍ إنهاء الجلسات..." : "Ending sessions...")
+                : (isAr ? "تسجيل الخروج من كل الأجهزة" : "Sign out everywhere")}</span>
             </button>
-
-            <div className="flex items-center gap-3">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-danger-bg text-danger">
-                <WarningCircle size={22} weight="fill" />
-              </span>
-              <div>
-                <h3 id="revoke-modal-title" className="text-base font-black text-text">
-                  {isAr ? "تسجيل الخروج من كل الأجهزة؟" : "Sign out on all devices?"}
-                </h3>
-                <p className="text-xs text-text-muted">
-                  {isAr ? "إجراء أمني فوري ومباشر" : "Immediate security revocation"}
-                </p>
-              </div>
-            </div>
-
-            <p className="text-sm leading-relaxed text-text-muted">
-              {isAr
-                ? "سيتم إنهاء كل الجلسات النشطة على جميع أجهزتك فوراً، بما في ذلك هذه الجلسة الحالية. سيتعين عليك تسجيل الدخول مجدداً للمتابعة."
-                : "This will terminate all active sessions across all your devices immediately, including this current session. You will need to sign in again to continue."}
-            </p>
-
-            <div className="mt-2 flex items-center justify-end gap-2.5">
-              <button
-                type="button"
-                disabled={revoking}
-                onClick={() => setConfirmRevokeModalOpen(false)}
-                className="rounded-xl border border-border bg-surface px-4 py-2 text-xs font-bold text-text-muted transition-colors hover:bg-surface-muted hover:text-text cursor-pointer"
-              >
-                {isAr ? "إلغاء" : "Cancel"}
-              </button>
-              <button
-                type="button"
-                data-testid="confirm-revoke-submit"
-                disabled={revoking}
-                onClick={() => void executeRevokeAllSessions()}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-danger px-4 py-2 text-xs font-bold text-white shadow-xs transition-colors hover:bg-danger/90 disabled:opacity-50 cursor-pointer"
-              >
-                <ShieldCheck size={16} weight="fill" />
-                <span>
-                  {revoking
-                    ? (isAr ? "جارٍ الإنهاء..." : "Ending...")
-                    : (isAr ? "تأكيد تسجيل الخروج" : "Confirm Sign Out")}
-                </span>
-              </button>
-            </div>
-          </div>
+          </Panel>
         </div>
-      )}
+        {/* F-16: the AuditTrail component existed but was never mounted
+            anywhere — it now lives here, next to the security controls.
+            audit.list is owner-only; for staff the query fails and the
+            panel shows its empty state. */}
+        <div className="mt-6">
+          <AuditTrail />
+        </div>
+      </div>
     </div>
   );
 }

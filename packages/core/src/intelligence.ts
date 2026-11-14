@@ -1282,7 +1282,7 @@ export interface CopilotToolPlanResult {
   plannedTools: PlannedCopilotToolCall[];
 }
 
-export function normalizeArabicSearch(text: string): string {
+function normalizeArabicSearch(text: string): string {
   return text
     .replace(/[أإآ]/g, "ا")
     .replace(/ة/g, "ه")

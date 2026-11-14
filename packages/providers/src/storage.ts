@@ -136,56 +136,24 @@ export class S3CompatibleStorageProvider implements StorageProvider {
     });
   }
 
-  private fallbackMemory = new Map<string, { bytes: Uint8Array; mime: string }>();
-
   async put(key: string, bytes: Uint8Array, mime: string): Promise<void> {
-    try {
-      const response = await this.request("PUT", key, bytes, mime);
-      if (!response.ok) throw new Error(`S3 upload failed (HTTP ${response.status})`);
-    } catch (err) {
-      const isNet = err instanceof Error && (err.message.includes("fetch failed") || err.message.includes("ECONNREFUSED") || err.message.includes("connect"));
-      if (isNet && (this.endpoint.hostname === "localhost" || this.endpoint.hostname === "127.0.0.1")) {
-        this.fallbackMemory.set(key, { bytes, mime });
-        return;
-      }
-      throw err;
-    }
+    const response = await this.request("PUT", key, bytes, mime);
+    if (!response.ok) throw new Error(`S3 upload failed (HTTP ${response.status})`);
   }
 
   async get(key: string): Promise<Uint8Array | null> {
-    try {
-      const response = await this.request("GET", key);
-      if (response.status === 404) return null;
-      if (!response.ok) throw new Error(`S3 download failed (HTTP ${response.status})`);
-      return new Uint8Array(await response.arrayBuffer());
-    } catch (err) {
-      const isNet = err instanceof Error && (err.message.includes("fetch failed") || err.message.includes("ECONNREFUSED") || err.message.includes("connect"));
-      if (isNet && (this.endpoint.hostname === "localhost" || this.endpoint.hostname === "127.0.0.1")) {
-        const item = this.fallbackMemory.get(key);
-        return item ? item.bytes : null;
-      }
-      throw err;
-    }
+    const response = await this.request("GET", key);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`S3 download failed (HTTP ${response.status})`);
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   async delete(key: string): Promise<void> {
-    try {
-      const response = await this.request("DELETE", key);
-      if (!response.ok && response.status !== 404) throw new Error(`S3 delete failed (HTTP ${response.status})`);
-    } catch (err) {
-      const isNet = err instanceof Error && (err.message.includes("fetch failed") || err.message.includes("ECONNREFUSED") || err.message.includes("connect"));
-      if (isNet && (this.endpoint.hostname === "localhost" || this.endpoint.hostname === "127.0.0.1")) {
-        this.fallbackMemory.delete(key);
-        return;
-      }
-      throw err;
-    }
+    const response = await this.request("DELETE", key);
+    if (!response.ok && response.status !== 404) throw new Error(`S3 delete failed (HTTP ${response.status})`);
   }
 
   async getSignedUrl(key: string, expiresInSeconds: number): Promise<string> {
-    if (this.fallbackMemory.has(key)) {
-      return `/api/files/download?key=${encodeURIComponent(key)}`;
-    }
     if (!Number.isInteger(expiresInSeconds) || expiresInSeconds < 1 || expiresInSeconds > 604_800) {
       throw new Error("S3 presigned URL expiry must be between 1 second and 7 days");
     }

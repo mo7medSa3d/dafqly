@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
 import { clickNav } from "./helpers";
 
 /**
@@ -18,13 +18,10 @@ import { clickNav } from "./helpers";
  *   in both locales (charts are LTR data visualisations; only labels
  *   localise) — the chart needs 10 paid invoices, seeded by SQL below;
  * - the customer portal visited in a logged-out browser.
+ *
+ * The psql path is this VM's source-built Postgres (see engineering docs).
  */
-const dbUrl = process.env.DATABASE_URL || "postgres://tahseel:tahseel@localhost:5432/tahseel";
-const sqlClient = postgres(dbUrl);
-
-test.afterAll(async () => {
-  await sqlClient.end();
-});
+const PSQL = "/home/hatch/workspace/pg16/bin/psql -h 127.0.0.1 -p 5433 -U pgtest -d tahseel -t -A -c";
 const shot = (name: string) => `e2e/screenshots/prompt07/${name}.png`;
 
 async function loginDemo(page: Page, locale: "ar" | "en" = "ar") {
@@ -56,15 +53,8 @@ async function expectNoOverflow(page: Page) {
   expect(overflow).toBeLessThanOrEqual(1);
 }
 
-async function dbOne(sql: string): Promise<string> {
-  const rows = await sqlClient.unsafe(sql);
-  if (!rows || rows.length === 0) return "";
-  const values = Object.values(rows[0] as Record<string, unknown>);
-  return String(values[0] ?? "");
-}
-
-async function dbExec(sql: string): Promise<void> {
-  await sqlClient.unsafe(sql);
+function dbOne(sql: string): string {
+  return execSync(`${PSQL} "${sql.replace(/"/g, "\\\"")}"`, { encoding: "utf8" }).trim();
 }
 
 test("P07 route tour (AR desktop 1440): every key screen renders + screenshots", async ({ page }) => {
@@ -161,9 +151,9 @@ test("P07 UI journey verified in the DB: partial payment updates the invoice row
   await page.screenshot({ path: shot("13-debtor-partial-ar-1440") });
 
   // The toast is not proof: the invoice row itself must say so.
-  const row = await dbOne(`SELECT status || '|' || paid_minor::text FROM invoices WHERE reference='${ref}'`);
+  const row = dbOne(`SELECT status || '|' || paid_minor::text FROM invoices WHERE reference='${ref}'`);
   expect(row).toBe("partially_paid|40000");
-  const payment = await dbOne(`SELECT count(*) FROM payments p JOIN debtors d ON d.id = p.debtor_id WHERE d.phone_e164 = '+20${phone.slice(1)}' AND p.status='confirmed'`);
+  const payment = dbOne(`SELECT count(*) FROM payments p JOIN debtors d ON d.id = p.debtor_id WHERE d.phone_e164 = '+20${phone.slice(1)}' AND p.status='confirmed'`);
   expect(payment).toBe("1");
 });
 
@@ -199,7 +189,7 @@ test("P07 F-20: forecast chart keeps time left→right in AR and EN", async ({ p
   // invoices with confirmed allocations; the UI would need 20 form
   // submissions for the same rows. The rows are exactly what recordPayment
   // + clear would write: paid invoice + confirmed payment + allocation.
-  const ids = await dbOne(`SELECT tenant_id::text || '|' || id::text FROM debtors WHERE phone_e164 = '+20${phone.slice(1)}'`);
+  const ids = dbOne(`SELECT tenant_id::text || '|' || id::text FROM debtors WHERE phone_e164 = '+20${phone.slice(1)}'`);
   const [tenantId, debtorId] = ids.split("|");
   const inserts: string[] = [];
   for (let i = 0; i < 10; i++) {
@@ -222,7 +212,7 @@ test("P07 F-20: forecast chart keeps time left→right in AR and EN", async ({ p
   inserts.push(
     `INSERT INTO invoices (id, tenant_id, debtor_id, reference, amount_minor, paid_minor, currency, issued_on, due_on, status, source) VALUES ('${randomUUID()}', '${tenantId}', '${debtorId}', 'P07-FC-OPEN', 50000, 0, 'EGP', '2026-11-01', '2026-11-27', 'open', 'manual');`,
   );
-  await dbExec(inserts.join(" "));
+  execSync(`${PSQL} "${inserts.join(" ").replace(/"/g, "\\\"")}"`, { encoding: "utf8" });
 
   await page.goto("/ar/dashboard");
   const svg = page.locator('svg[aria-label*="توقع"]');

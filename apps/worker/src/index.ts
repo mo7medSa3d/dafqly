@@ -4,7 +4,7 @@ import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import pino from "pino";
 import { parseEnv } from "@tahseel/core";
-import { createDb, createAppDb } from "@tahseel/db";
+import { assertAppRole, createDb, createAppDb } from "@tahseel/db";
 import {
   SystemClock, DryRunMessagingProvider, NotConfiguredMessagingProvider, NotConfiguredSmsProvider,
   WhatsAppCloudProvider, type TextCapableProvider,
@@ -56,10 +56,17 @@ const realWhatsapp: TextCapableProvider = env.WHATSAPP_ACCESS_TOKEN
 const whatsapp = env.DRY_RUN_MESSAGING ? new DryRunMessagingProvider(realWhatsapp) : realWhatsapp;
 const smsBase: TextCapableProvider = new NotConfiguredSmsProvider(); // No SMS adapter is shipped until the provider is selected and verified.
 const sms = env.DRY_RUN_MESSAGING ? new DryRunMessagingProvider(smsBase) : smsBase;
-const engineAppDb = createAppDb(env.APP_DATABASE_URL ?? env.DATABASE_URL).db;
+// Runtime tenant access must use the RLS-bound role. The owner URL is
+// retained only for the engine's explicitly platform-scoped enumeration.
+if (env.NODE_ENV === "production" && !env.APP_DATABASE_URL) {
+  throw new Error("APP_DATABASE_URL is required in production; DATABASE_URL bypasses tenant RLS");
+}
+const appConnection = createAppDb(env.APP_DATABASE_URL ?? env.DATABASE_URL);
+const ownerConnection = createDb(env.DATABASE_URL);
+const engineAppDb = appConnection.db;
 const engine: EngineDeps = {
   app: engineAppDb,
-  owner: createDb(env.DATABASE_URL).db,
+  owner: ownerConnection.db,
   providers: { whatsapp, sms },
   appUrl: env.APP_URL,
   // F13: block sends when the tenant is at/over its monthly quota.
@@ -71,18 +78,28 @@ const plannerQueue = new Queue("reminders-planner", { connection });
 const dispatcherQueue = new Queue("reminders-dispatcher", { connection });
 const maintenanceQueue = new Queue("maintenance", { connection });
 
-const plannerWorker = new Worker("reminders-planner", async () => processPlannerTick(deps), { connection });
-const dispatcherWorker = new Worker("reminders-dispatcher", async () => processDispatchTick(deps), { connection });
-const maintenanceWorker = new Worker("maintenance", async () => processMaintenanceTick(deps), { connection });
-
-plannerWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "planner tick done"));
-dispatcherWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "dispatch tick done"));
-maintenanceWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "maintenance tick done"));
-plannerWorker.on("failed", (_job, err) => log.error({ err }, "planner tick failed"));
-dispatcherWorker.on("failed", (_job, err) => log.error({ err }, "dispatcher tick failed"));
-maintenanceWorker.on("failed", (_job, err) => log.error({ err }, "maintenance tick failed"));
+// Workers are deliberately created only after the RLS role assertion in
+// main(). BullMQ Workers autorun by default; constructing them at module
+// scope could consume a queued job before the security check completes.
+let plannerWorker: Worker | null = null;
+let dispatcherWorker: Worker | null = null;
+let maintenanceWorker: Worker | null = null;
 
 async function main(): Promise<void> {
+  // Fail closed before any repeatable job can touch tenant data. A wrong
+  // role silently disables PostgreSQL RLS and voids tenant isolation.
+  if (env.NODE_ENV === "production" || env.APP_DATABASE_URL) {
+    await assertAppRole(appConnection.client);
+  }
+  plannerWorker = new Worker("reminders-planner", async () => processPlannerTick(deps), { connection });
+  dispatcherWorker = new Worker("reminders-dispatcher", async () => processDispatchTick(deps), { connection });
+  maintenanceWorker = new Worker("maintenance", async () => processMaintenanceTick(deps), { connection });
+  plannerWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "planner tick done"));
+  dispatcherWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "dispatch tick done"));
+  maintenanceWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "maintenance tick done"));
+  plannerWorker.on("failed", (_job, err) => log.error({ err }, "planner tick failed"));
+  dispatcherWorker.on("failed", (_job, err) => log.error({ err }, "dispatcher tick failed"));
+  maintenanceWorker.on("failed", (_job, err) => log.error({ err }, "maintenance tick failed"));
   // Repeatable jobs (BUILD_PLAN §3): planner nightly, dispatcher every minute.
   // The engines behind them land in M2; the schedules are wired now.
   await plannerQueue.add("nightly", {}, { repeat: { pattern: "0 2 * * *", tz: env.DEFAULT_TIMEZONE }, removeOnComplete: 50 });
@@ -104,13 +121,16 @@ async function main(): Promise<void> {
 
 async function shutdown(signal: string): Promise<void> {
   log.info({ signal }, "shutting down");
-  await plannerWorker.close();
-  await dispatcherWorker.close();
-  await maintenanceWorker.close();
+  await Promise.all([
+    plannerWorker?.close(),
+    dispatcherWorker?.close(),
+    maintenanceWorker?.close(),
+  ]);
   await plannerQueue.close();
   await dispatcherQueue.close();
   await maintenanceQueue.close();
   connection.disconnect();
+  await Promise.allSettled([appConnection.client.end(), ownerConnection.client.end()]);
   process.exit(0);
 }
 process.on("SIGTERM", () => void shutdown("SIGTERM"));

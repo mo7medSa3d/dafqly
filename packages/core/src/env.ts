@@ -71,6 +71,7 @@ const envSchema = z.object({
   // set only by apps/web/playwright.config.ts webServer env.
   E2E_FAKE_PROVIDERS: boolFromString(false),
   ALLOW_LOCAL_S3: boolFromString(false),
+  ALLOW_LOCAL_AI: boolFromString(false),
   PAYMOB_INTEGRATION_ID: z.string().optional().default(""),
   PAYMOB_HMAC_SECRET: z.string().optional().default(""),
   PAYMOB_BASE_URL: z.string().optional().default(""),
@@ -78,7 +79,23 @@ const envSchema = z.object({
   AI_MODEL: z.string().default("gemini-3.8-flash"),
   GEMINI_MODEL_FAST: z.string().default("gemini-3.5-flash-lite"),
   GEMINI_MODEL_VISION: z.string().default("gemini-3.8-flash"),
-  AI_PROVIDER: z.enum(["gemini", "anthropic"]).default("gemini"),
+  // Provider-agnostic: any name is accepted. Built-ins are gemini|anthropic;
+  // presets (openai, openrouter, groq, ollama, ...) or ANY other name plus
+  // AI_BASE_URL talk to an OpenAI-compatible endpoint. "fake"/"mock"/... are
+  // refused so a placeholder can never masquerade as a real provider.
+  AI_PROVIDER: z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9._-]{0,40}$/, "AI_PROVIDER must be a simple provider name")
+    .refine((v) => !["fake", "mock", "none", "static", "off"].includes(v), "AI_PROVIDER must name a real provider")
+    .default("gemini"),
+  AI_BASE_URL: z.string().optional().default(""),
+  // Explicit per-role models for generic providers (no vendor default is assumed).
+  AI_MODEL_AGENT: z.string().optional().default(""),
+  AI_MODEL_FAST: z.string().optional().default(""),
+  AI_MODEL_VISION: z.string().optional().default(""),
+  // JSON array of provider configs (primary first, rest = automatic failover).
+  AI_PROVIDERS_JSON: z.string().optional().default(""),
+  // USD per 1M tokens for the spend cap when a model id is not in the built-in table.
+  AI_PRICE_INPUT_USD_PER_M: z.coerce.number().nonnegative().max(10_000).optional(),
+  AI_PRICE_OUTPUT_USD_PER_M: z.coerce.number().nonnegative().max(10_000).optional(),
   GEMINI_API_KEY: z.string().optional().default(""),
   ANTHROPIC_API_KEY: z.string().optional().default(""),
   LLM_MODEL_AGENT: z.string().default("claude-sonnet-5-5"),
@@ -136,9 +153,21 @@ export function parseEnv(input: Record<string, string | undefined>): AppEnv {
     }
     // ADR-033: skipped under E2E_FAKE_PROVIDERS — the sandbox uses the
     // deterministic fake LLM, so no real AI key exists there.
-    const hasConfiguredAi = Boolean(s3.GEMINI_API_KEY || s3.ANTHROPIC_API_KEY || s3.AI_API_KEY);
-    if (!hasConfiguredAi && !s3.E2E_FAKE_PROVIDERS) {
-      throw new EnvError("Production requires GEMINI_API_KEY, ANTHROPIC_API_KEY, or AI_API_KEY with AI_PROVIDER configured; fake AI fallback is not allowed");
+    const hasConfiguredAi = Boolean(
+      s3.GEMINI_API_KEY || s3.ANTHROPIC_API_KEY || s3.AI_API_KEY || s3.AI_PROVIDERS_JSON.trim()
+      // Self-hosted OpenAI-compatible endpoint (Ollama, vLLM, ...) needs no key.
+      || (s3.AI_BASE_URL.trim() && s3.AI_MODEL_AGENT.trim()),
+    );
+    if (!hasConfiguredAi && !s3.E2E_FAKE_PROVIDERS && !s3.ALLOW_LOCAL_AI) {
+      throw new EnvError("Production requires GEMINI_API_KEY, ANTHROPIC_API_KEY, or AI_API_KEY with AI_PROVIDER configured (or AI_PROVIDERS_JSON, or AI_BASE_URL + AI_MODEL_AGENT); fake AI fallback is not allowed");
+    }
+    if (s3.AI_PROVIDERS_JSON.trim()) {
+      try {
+        const list: unknown = JSON.parse(s3.AI_PROVIDERS_JSON);
+        if (!Array.isArray(list) || list.length === 0) throw new Error("not a non-empty array");
+      } catch (err) {
+        throw new EnvError(`AI_PROVIDERS_JSON must be a non-empty JSON array of provider configs (${err instanceof Error ? err.message : "invalid"})`);
+      }
     }
   }
   return parsed.data;

@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { DownloadSimple } from "@phosphor-icons/react";
+import { DownloadSimple } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { Panel, btnGhost } from "./ui";
 
@@ -32,7 +32,7 @@ export function ExportButtons() {
         {kinds.map((k) => (
           <button key={k.kind} data-testid={k.testid} disabled={busy} onClick={() => void download(k.kind)}
             className={`${btnGhost} w-full justify-start px-4`}>
-            <DownloadSimple size={18} weight="fill" aria-hidden className="text-primary" />
+            <DownloadSimple size={18} aria-hidden className="text-primary" />
             {k.label}
           </button>
         ))}

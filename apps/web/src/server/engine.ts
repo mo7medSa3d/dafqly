@@ -1,7 +1,8 @@
 import {
-  AnthropicLlmProvider, DryRunMessagingProvider, FakeLlmProvider, FakeStorageProvider,
-  GeminiLlmProvider, NotConfiguredMessagingProvider, NotConfiguredSmsProvider, S3CompatibleStorageProvider,
-  WhatsAppCloudProvider, type OcrLlmProvider, type StorageProvider, type TextCapableProvider,
+  createLlmProvider, DryRunMessagingProvider, FailoverLlmProvider, FakeLlmProvider, FakeStorageProvider,
+  hasUsableLlmConfig, NotConfiguredMessagingProvider, NotConfiguredSmsProvider, resolveLlmProviderConfigs,
+  S3CompatibleStorageProvider, WhatsAppCloudProvider,
+  type LlmProviderConfig, type OcrLlmProvider, type StorageProvider, type TextCapableProvider,
 } from "@tahseel/providers";
 import { planForInvoice, planForTenant, quotaExceededFromDb, type EngineDeps } from "@tahseel/reminders";
 import { appDb, ownerDb } from "./db";
@@ -71,34 +72,16 @@ export function aiDeps(): AiDeps {
     accessKey: e.S3_ACCESS_KEY, secretKey: e.S3_SECRET_KEY, forcePathStyle: e.S3_FORCE_PATH_STYLE,
   });
 
-  const hasBothDedicatedKeys = Boolean(e.GEMINI_API_KEY && e.ANTHROPIC_API_KEY);
-  const selectedProvider = hasBothDedicatedKeys
-    ? e.AI_PROVIDER
-    : e.GEMINI_API_KEY ? "gemini" : e.ANTHROPIC_API_KEY ? "anthropic" : e.AI_PROVIDER;
-  const selectedKey = selectedProvider === "gemini"
-    ? (e.GEMINI_API_KEY || e.AI_API_KEY)
-    : (e.ANTHROPIC_API_KEY || e.AI_API_KEY);
-
-  if (selectedKey && selectedProvider === "gemini") {
-    aiSingleton = {
-      llm: new GeminiLlmProvider({
-        apiKey: selectedKey, model: e.AI_MODEL,
-        modelFast: e.GEMINI_MODEL_FAST, modelVision: e.GEMINI_MODEL_VISION,
-      }),
-      storage,
-      usingFakeLlm: false,
-    };
-  } else if (selectedKey && selectedProvider === "anthropic") {
-    aiSingleton = {
-      llm: new AnthropicLlmProvider({
-        apiKey: selectedKey,
-        modelAgent: e.LLM_MODEL_AGENT,
-        modelFast: e.LLM_MODEL_FAST,
-        modelVision: e.LLM_MODEL_VISION,
-      }),
-      storage,
-      usingFakeLlm: false,
-    };
+  // Provider-agnostic wiring: the env describes ANY provider(s) as data and the
+  // registry builds them (see packages/providers/src/config.ts). Several
+  // providers = automatic failover in the listed order.
+  const configs = llmProviderConfigs();
+  if (hasUsableLlmConfig(e)) {
+    const members = configs.map((config) => ({ name: config.name ?? config.kind, provider: createLlmProvider(config) }));
+    const llm: OcrLlmProvider = members.length === 1 ? members[0]!.provider : new FailoverLlmProvider(members, {
+      onFailover: ({ from, to, error }) => console.warn("[ai] provider failover", { from, to, error }),
+    });
+    aiSingleton = { llm, storage, usingFakeLlm: false };
   } else {
     aiSingleton = { llm: new FakeLlmProvider(), storage, usingFakeLlm: true };
   }
@@ -106,6 +89,11 @@ export function aiDeps(): AiDeps {
     aiSingleton = { ...aiSingleton, llm: budgetedLlmProvider(aiSingleton.llm) };
   }
   return aiSingleton;
+}
+
+/** The resolved provider list (primary first). Throws a clear error on invalid AI_* configuration. */
+export function llmProviderConfigs(): LlmProviderConfig[] {
+  return resolveLlmProviderConfigs(env());
 }
 
 /** Test seam: replace the AI singletons (integration suites inject their own fakes). */

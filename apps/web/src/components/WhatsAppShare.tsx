@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
-import { Check, Copy, WhatsappLogo } from "@phosphor-icons/react";
+import { Check, Copy } from "@/components/ui/solid-icons";
+import { WhatsappLogo } from "@/components/ui/icons";
 import { useTranslations } from "next-intl";
 import { btnSmall, btnGhost } from "./ui";
 
@@ -52,7 +53,7 @@ export function WhatsAppShareButton({
         className={`${size === "md" ? btnGhost : btnSmall} ${className}`}
         title={t("whatsapp")}
       >
-        <WhatsappLogo size={size === "md" ? 20 : 16} weight="fill" className="text-emerald-500" aria-hidden />
+        <WhatsappLogo size={size === "md" ? 20 : 16} className="text-status-paid-fg" aria-hidden />
         {buttonText && <span>{buttonText}</span>}
       </button>
 
@@ -64,9 +65,9 @@ export function WhatsAppShareButton({
           title={copied ? t("copied") : t("whatsapp")}
         >
           {copied ? (
-            <Check size={14} weight="bold" className="text-emerald-500" />
+            <Check size={14} strokeWidth={2.5} className="text-status-paid-fg" />
           ) : (
-            <Copy size={14} weight="fill" className="text-text-subtle" />
+            <Copy size={14} className="text-text-subtle" />
           )}
         </button>
       )}

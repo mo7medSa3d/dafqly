@@ -14,7 +14,7 @@ import { withTenant, type Db } from "@tahseel/db";
 import { FakePaymentProvider, PaymobProvider, type PaymentProvider } from "@tahseel/providers";
 import { env } from "./env";
 import { appDb, ownerDb } from "./db";
-import { lockDebtorInvoices, lockInvoicesById, recomputeDebtorCredit, recomputeInvoicePaid } from "./ledger";
+import { lockDebtor, lockDebtorInvoices, lockInvoicesById, recomputeDebtorCredit, recomputeInvoicePaid } from "./ledger";
 import { replanLater } from "./engine";
 
 /**
@@ -159,7 +159,7 @@ export async function createGatewayLink(
       // A stale price fails closed (409 PRICE_CHANGED) instead of minting
       // a link for the wrong amount; the intention simply expires unused.
       const locked = await lockDebtorInvoices(tx, input.debtorId);
-      const targets = locked.map((i) => ({
+      const targets = locked.filter((i) => i.currency === "EGP").map((i) => ({
         id: i.id, amountMinor: i.amountMinor, paidMinor: i.paidMinor, dueOn: i.dueOn, status: i.status,
       }));
       const current = outstandingForLink(targets, input.invoiceId ?? null);
@@ -361,9 +361,11 @@ export async function handlePaymobCallback(
 
     // fulfil: allocate the verified amount. The linked invoice is served
     // first; any remainder flows oldest-due-first over the debtor's other
-    // open invoices, and whatever is left becomes credit (never negative).
-    // F01: lock the debtor's invoices before allocating.
-    const invs = await lockDebtorInvoices(tx, link.debtorId);
+    // open EGP invoices. Lock the debtor before invoices, matching the
+    // manual-payment path, because the schema stores only ONE credit currency.
+    const lockedDebtor = await lockDebtor(tx, link.debtorId);
+    if (!lockedDebtor) return { outcome: "unmatched", reason: "debtor no longer exists", replan: [] };
+    const invs = (await lockDebtorInvoices(tx, link.debtorId)).filter((i) => i.currency === "EGP");
     const targets = invs.map((i) => ({
       invoiceId: i.id, amountMinor: i.amountMinor, paidMinor: i.paidMinor, dueOn: i.dueOn, status: i.status,
     }));
@@ -372,6 +374,16 @@ export async function handlePaymobCallback(
     const first = allocatePayment(cb.amountMinor, linked);
     const second = allocatePayment(first.creditMinor, others);
     const allocations = [...first.allocations, ...second.allocations];
+    if (lockedDebtor.creditMinor !== 0n && lockedDebtor.creditCurrency !== "EGP" && second.creditMinor > 0n) {
+      // Paymob has already captured funds, but a second currency credit
+      // cannot be represented safely in this schema. Roll back the callback
+      // transaction so the provider can retry after a finance operator
+      // resolves the existing foreign-currency credit; never overwrite it.
+      throw new AppError("CURRENCY_CREDIT_CONFLICT", "Customer has an existing credit balance in another currency; reconcile it before booking this Paymob overpayment", 409);
+    }
+    if (lockedDebtor.creditMinor === 0n && lockedDebtor.creditCurrency !== "EGP") {
+      await tx.update(debtors).set({ creditCurrency: "EGP", updatedAt: now }).where(eq(debtors.id, link.debtorId));
+    }
     const paymentId = uuidv7();
     // H03: a concurrent duplicate callback can pass the txnAlreadyProcessed
     // check above; the per-tenant unique index is the arbiter — a 0-row
@@ -565,9 +577,13 @@ export async function rejectRefundIntent(
  * consuming same-currency stored credit first (F05).
  */
 export async function confirmClaimedPaymentInTx(tx: Db, tenantId: string, actor: string, paymentId: string): Promise<string[]> {
-  const [payment] = await tx.select().from(payments).where(eq(payments.id, paymentId));
+  const [payment] = await tx.select().from(payments).where(eq(payments.id, paymentId)).for("update");
   if (!payment) throw new AppError("NOT_FOUND", "Payment not found", 404);
   if (payment.status !== "claimed") throw new AppError("INVALID_STATE", `Payment is ${payment.status}, not claimed`, 409);
+  // Serialize all confirmation/credit mutations for this debtor and keep
+  // lock order consistent with manual payments: debtor, then invoices.
+  const lockedDebtor = await lockDebtor(tx, payment.debtorId);
+  if (!lockedDebtor) throw new AppError("NOT_FOUND", "Debtor not found", 404);
   const existing = await tx.select().from(paymentAllocations).where(eq(paymentAllocations.paymentId, paymentId));
   let affected = existing.map((a) => a.invoiceId);
   if (existing.length > 0) {
@@ -576,7 +592,10 @@ export async function confirmClaimedPaymentInTx(tx: Db, tenantId: string, actor:
     const byId = new Map(locked.map((i) => [i.id, i]));
     for (const a of existing) {
       const inv = byId.get(a.invoiceId);
-      const outstanding = inv ? inv.amountMinor - inv.paidMinor : 0n;
+      if (!inv || inv.currency !== payment.currency) {
+        throw new AppError("CURRENCY_MISMATCH", "Claimed payment currency does not match its allocated invoice", 409);
+      }
+      const outstanding = inv.amountMinor - inv.paidMinor;
       const capped = a.amountMinor < outstanding ? a.amountMinor : outstanding;
       if (capped <= 0n) {
         await tx.delete(paymentAllocations).where(and(eq(paymentAllocations.paymentId, paymentId), eq(paymentAllocations.invoiceId, a.invoiceId)));
@@ -586,18 +605,33 @@ export async function confirmClaimedPaymentInTx(tx: Db, tenantId: string, actor:
           .where(and(eq(paymentAllocations.paymentId, paymentId), eq(paymentAllocations.invoiceId, a.invoiceId)));
       }
     }
+    const allocatedMinor = (await tx.select({ amountMinor: paymentAllocations.amountMinor })
+      .from(paymentAllocations).where(eq(paymentAllocations.paymentId, paymentId)))
+      .reduce((sum, row) => sum + row.amountMinor, 0n);
+    const unappliedMinor = payment.amountMinor - allocatedMinor;
+    if (unappliedMinor < 0n) throw new AppError("INVALID_ALLOCATION", "Claimed allocations exceed the payment amount", 409);
+    if (lockedDebtor.creditMinor !== 0n && lockedDebtor.creditCurrency !== payment.currency && unappliedMinor > 0n) {
+      throw new AppError("CURRENCY_CREDIT_CONFLICT", "Customer already has credit in another currency; reconcile it before confirming this payment", 409);
+    }
+    if (lockedDebtor.creditMinor === 0n && lockedDebtor.creditCurrency !== payment.currency) {
+      await tx.update(debtors).set({ creditCurrency: payment.currency, updatedAt: new Date() }).where(eq(debtors.id, payment.debtorId));
+    }
   } else {
     // F01: lock before auto-allocating; F05: consume same-currency credit.
-    const invs = await lockDebtorInvoices(tx, payment.debtorId);
-    const [debtor] = await tx.select({ creditMinor: debtors.creditMinor, creditCurrency: debtors.creditCurrency })
-      .from(debtors).where(eq(debtors.id, payment.debtorId));
+    const invs = (await lockDebtorInvoices(tx, payment.debtorId)).filter((i) => i.currency === payment.currency);
     let effective = payment.amountMinor;
-    if (debtor && debtor.creditMinor > 0n && debtor.creditCurrency === payment.currency) {
-      effective = payment.amountMinor + debtor.creditMinor;
+    if (lockedDebtor.creditMinor > 0n && lockedDebtor.creditCurrency === payment.currency) {
+      effective = payment.amountMinor + lockedDebtor.creditMinor;
     }
     const plan = allocatePayment(effective, invs.map((i) => ({
       invoiceId: i.id, amountMinor: i.amountMinor, paidMinor: i.paidMinor, dueOn: i.dueOn, status: i.status,
     })));
+    if (lockedDebtor.creditMinor !== 0n && lockedDebtor.creditCurrency !== payment.currency && plan.creditMinor > 0n) {
+      throw new AppError("CURRENCY_CREDIT_CONFLICT", "Customer already has credit in another currency; reconcile it before confirming this payment", 409);
+    }
+    if (lockedDebtor.creditMinor === 0n && lockedDebtor.creditCurrency !== payment.currency) {
+      await tx.update(debtors).set({ creditCurrency: payment.currency, updatedAt: new Date() }).where(eq(debtors.id, payment.debtorId));
+    }
     for (const a of plan.allocations) {
       await tx.insert(paymentAllocations).values({ tenantId, paymentId, invoiceId: a.invoiceId, amountMinor: a.amountMinor });
     }

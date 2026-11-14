@@ -12,8 +12,8 @@ import {
 export interface CurrencyContextValue {
   currency: string;
   symbol: string;
-  format: (minor: bigint | number | string, opts?: { digits?: "latin" | "eastern" }) => string;
-  formatAmountOnly: (minor: bigint | number | string, opts?: { digits?: "latin" | "eastern" }) => string;
+  format: (minor: bigint | number | string, opts?: { digits?: "latin" | "eastern"; currency?: string }) => string;
+  formatAmountOnly: (minor: bigint | number | string, opts?: { digits?: "latin" | "eastern"; currency?: string }) => string;
 }
 
 const defaultContext: CurrencyContextValue = {
@@ -26,7 +26,7 @@ const defaultContext: CurrencyContextValue = {
   },
 };
 
-export const CurrencyContext = createContext<CurrencyContextValue>(defaultContext);
+const CurrencyContext = createContext<CurrencyContextValue>(defaultContext);
 
 export function CurrencyProvider({
   currency = "EGP",
@@ -46,12 +46,12 @@ export function CurrencyProvider({
   const value = useMemo<CurrencyContextValue>(() => ({
     currency: normCurrency,
     symbol,
-    format: (minor, opts) => formatMoney(minor, normCurrency, { locale, digits: opts?.digits ?? digits }),
+    format: (minor, opts) => formatMoney(minor, (opts?.currency ?? normCurrency) as SupportedCurrency, { locale, digits: opts?.digits ?? digits }),
     // Amount without the symbol, still in the tenant currency and its
     // minor-unit exponent (KWD 3 decimals, JPY 0) — not EGP.
     formatAmountOnly: (minor, opts) => {
       const b = typeof minor === "bigint" ? minor : BigInt(String(minor || "0"));
-      return formatCurrencyMinor(b, normCurrency, { digits: opts?.digits ?? digits });
+      return formatCurrencyMinor(b, (opts?.currency ?? normCurrency) as SupportedCurrency, { digits: opts?.digits ?? digits });
     },
   }), [normCurrency, symbol, locale, digits]);
 

@@ -22,11 +22,10 @@ export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));
 }
 
-// Theme color from the brand tokens: navy-700, with a dark variant.
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: tokens.color.navy["700"] },
-    { media: "(prefers-color-scheme: dark)", color: tokens.color.navy["800"] },
+    { media: "(prefers-color-scheme: light)", color: tokens.semantic.light.bg },
+    { media: "(prefers-color-scheme: dark)", color: tokens.semantic.dark.bg },
   ],
   colorScheme: "light dark",
 };
@@ -80,22 +79,18 @@ export default async function LocaleLayout({
       lang={locale}
       dir={localeDir(locale)}
       data-theme={initialTheme}
+      className={initialTheme === "dark" ? "dark" : undefined}
       data-brand-font={brandFontEnabled ? "on" : "off"}
       suppressHydrationWarning
     >
       <head>
-        <style
-          dangerouslySetInnerHTML={{
-            __html: `html,body,*,*::before,*::after{scrollbar-width:none!important;-ms-overflow-style:none!important;}::-webkit-scrollbar,*::-webkit-scrollbar{display:none!important;width:0!important;height:0!important;background:transparent!important;}::-webkit-scrollbar-track,*::-webkit-scrollbar-track,::-webkit-scrollbar-thumb,*::-webkit-scrollbar-thumb,::-webkit-scrollbar-corner,*::-webkit-scrollbar-corner,::-webkit-scrollbar-button,*::-webkit-scrollbar-button{display:none!important;width:0!important;height:0!important;background:transparent!important;}`,
-          }}
-        />
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var m=document.cookie.match(/(?:^|; )dafqly-theme=([^;]*)/);var c=m?m[1]:null;var t=c||localStorage.getItem("dafqly-theme")||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=t;if(!c||c!==t){document.cookie="dafqly-theme="+t+";path=/;max-age=31536000;SameSite=Lax";}}catch(e){}})();`,
+            __html: `(function(){try{var m=document.cookie.match(/(?:^|; )dafqly-theme=([^;]*)/);var c=m?m[1]:null;var t=c||localStorage.getItem("dafqly-theme")||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=t;document.documentElement.classList.toggle("dark",t==="dark");if(!c||c!==t){document.cookie="dafqly-theme="+t+";path=/;max-age=31536000;SameSite=Lax";}}catch(e){}})();`,
           }}
         />
       </head>
-      <body>
+      <body suppressHydrationWarning>
         <NextIntlClientProvider locale={locale} messages={messages}>{children}</NextIntlClientProvider>
       </body>
     </html>

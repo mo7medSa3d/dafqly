@@ -1,22 +1,11 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
+import { inputVariants } from "@/components/ui/input";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import {
-  Bank,
-  CalendarCheck,
-  CaretRight,
-  CloudArrowUp,
-  Lightning,
-  MagnifyingGlass,
-  Plus,
-  Receipt,
-  Scan,
-  SlidersHorizontal,
-  Sparkle,
-  UsersThree,
-  X,
-} from "@phosphor-icons/react";
+import { Bank, CalendarCheck, CaretRight, CloudArrowUp, Lightning, MagnifyingGlass, Plus, Receipt, Scan, SlidersHorizontal, Sparkle, UsersThree, X } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { useCurrency } from "./CurrencyContext";
 import { openAiCopilot } from "./AiCopilotDrawer";
@@ -269,16 +258,16 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
     >
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-navy-950/70 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 bg-foreground/50 backdrop-blur-sm transition-opacity"
         onClick={onClose}
         aria-hidden="true"
       />
 
       {/* Palette Modal */}
-      <div className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl transition-all">
+      <div className="relative w-full max-w-xl overflow-hidden rounded-xl border border-border bg-surface transition-all">
         {/* Search Input Bar */}
         <div className="flex items-center gap-3 border-b border-border/80 px-4 py-3 sm:px-5">
-          <MagnifyingGlass size={20} weight="bold" className="text-primary shrink-0" aria-hidden />
+          <MagnifyingGlass size={20} strokeWidth={2.5} className="text-primary shrink-0" aria-hidden />
           <input
             ref={inputRef}
             type="text"
@@ -289,7 +278,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
             }}
             placeholder={t("placeholder")}
             style={{ outline: "none", boxShadow: "none", border: "none" }}
-            className="command-palette-input w-full border-0 bg-transparent text-sm sm:text-base font-medium text-text placeholder:text-text-subtle focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
+            className={cn(inputVariants, "w-full sm:text-base")}
           />
           {query ? (
             <button
@@ -298,10 +287,10 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                 setQuery("");
                 inputRef.current?.focus();
               }}
-              className="rounded-full p-1 text-text-subtle hover:bg-callout hover:text-text"
+              className={cn(buttonVariants({ variant: "ghost", size: "iconSm" }), "size-6 text-text-subtle hover:bg-callout hover:text-text")}
               aria-label={t("close")}
             >
-              <X size={16} weight="bold" />
+              <X size={16} strokeWidth={2.5} />
             </button>
           ) : (
             <kbd className="hidden rounded border border-border bg-surface-muted px-2 py-0.5 text-[11px] font-semibold text-text-subtle sm:inline-block">
@@ -311,7 +300,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         </div>
 
         {/* Results Body */}
-        <div className="max-h-[380px] overflow-y-auto p-2 no-scrollbar" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
+        <div className="max-h-[380px] overflow-y-auto p-2">
           {isLoading && (
             <div className="py-8 text-center text-xs text-text-muted">
               <span className="inline-block animate-pulse">...</span>
@@ -329,7 +318,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
             <div>
               <div className="flex items-center justify-between px-3 py-1.5 text-xs font-bold text-text-subtle">
                 <span className="flex items-center gap-1.5">
-                  <Sparkle size={14} weight="fill" className="text-primary" />
+                  <Sparkle size={14} className="text-primary" />
                   <span>{isEn ? "Quick Commands & AI Actions" : "الأوامر السريعة ومهام الذكاء الاصطناعي"}</span>
                 </span>
                 <span className="text-[11px] font-medium text-text-muted">{t("quickHint")}</span>
@@ -349,16 +338,16 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                       <div className="flex items-center gap-3">
                         <span
                           className={`flex size-7 items-center justify-center rounded-lg ${
-                            isSelected ? "bg-white/20 text-white" : "bg-callout text-primary"
+                            isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-callout text-primary"
                           }`}
                         >
-                          <CmdIcon size={15} weight="fill" aria-hidden />
+                          <CmdIcon size={15} aria-hidden />
                         </span>
                         <span className="font-semibold">{isEn ? cmd.labelEn : cmd.labelAr}</span>
                       </div>
                       <CaretRight
                         size={15}
-                        className={`shrink-0 rtl:rotate-180 ${isSelected ? "text-white" : "text-text-subtle"}`}
+                        className={`shrink-0 rtl:rotate-180 ${isSelected ? "text-primary-foreground" : "text-text-subtle"}`}
                       />
                     </li>
                   );
@@ -371,7 +360,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
           {debtors.length > 0 && (
             <div className="mb-2">
               <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-text-subtle">
-                <UsersThree size={14} weight="fill" />
+                <UsersThree size={14} />
                 <span>{t("customers")}</span>
               </div>
               <ul className="flex flex-col gap-1">
@@ -385,23 +374,23 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                         onClose();
                       }}
                       className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-sm transition-colors ${
-                        isSelected ? "bg-primary text-white" : "hover:bg-callout text-text"
+                        isSelected ? "bg-primary text-primary-foreground" : "hover:bg-callout text-text"
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <span className={`flex size-7 items-center justify-center rounded-full text-xs font-bold ${
-                          isSelected ? "bg-white/20 text-white" : "bg-primary/10 text-primary"
+                        <span className={`flex size-7 items-center justify-center rounded text-xs font-bold ${
+                          isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-primary/10 text-primary"
                         }`}>
                           {d.displayName.slice(0, 1)}
                         </span>
                         <div className="flex flex-col">
                           <span className="font-bold">{d.displayName}</span>
-                          <span className={`text-xs ${isSelected ? "text-white/80" : "text-text-muted"}`} dir="ltr">
+                          <span className={`text-xs ${isSelected ? "text-primary-foreground/80" : "text-text-muted"}`} dir="ltr">
                             {d.phoneE164}
                           </span>
                         </div>
                       </div>
-                      <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-white" : "text-text-subtle"}`} />
+                      <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-primary-foreground" : "text-text-subtle"}`} />
                     </li>
                   );
                 })}
@@ -413,7 +402,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
           {invoices.length > 0 && (
             <div className="mb-2">
               <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-text-subtle">
-                <Receipt size={14} weight="fill" />
+                <Receipt size={14} />
                 <span>{t("invoices")}</span>
               </div>
               <ul className="flex flex-col gap-1">
@@ -428,29 +417,29 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                         onClose();
                       }}
                       className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-sm transition-colors ${
-                        isSelected ? "bg-primary text-white" : "hover:bg-callout text-text"
+                        isSelected ? "bg-primary text-primary-foreground" : "hover:bg-callout text-text"
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <span className={`flex size-7 items-center justify-center rounded-full text-xs font-bold ${
-                          isSelected ? "bg-white/20 text-white" : "bg-accent/20 text-accent-fg"
+                        <span className={`flex size-7 items-center justify-center rounded text-xs font-bold ${
+                          isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-accent/20 text-accent-fg"
                         }`}>
                           #
                         </span>
                         <div className="flex flex-col">
                           <span className="font-bold" dir="ltr">{inv.reference ?? inv.id.slice(0, 8)}</span>
                           {inv.description && (
-                            <span className={`truncate text-xs max-w-xs ${isSelected ? "text-white/80" : "text-text-muted"}`}>
+                            <span className={`truncate text-xs max-w-xs ${isSelected ? "text-primary-foreground/80" : "text-text-muted"}`}>
                               {inv.description}
                             </span>
                           )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className={`text-xs font-bold ${isSelected ? "text-white" : "text-primary"}`} dir="ltr">
+                        <span className={`text-xs font-bold ${isSelected ? "text-primary-foreground" : "text-primary"}`} dir="ltr">
                           {formatAmountOnly(BigInt(inv.amountMinor))}
                         </span>
-                        <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-white" : "text-text-subtle"}`} />
+                        <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-primary-foreground" : "text-text-subtle"}`} />
                       </div>
                     </li>
                   );
@@ -463,7 +452,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
           {cheques.length > 0 && (
             <div>
               <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-text-subtle">
-                <Bank size={14} weight="fill" />
+                <Bank size={14} />
                 <span>{isEn ? "Cheques" : "الشيكات"}</span>
               </div>
               <ul className="flex flex-col gap-1">
@@ -478,27 +467,27 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                         onClose();
                       }}
                       className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-sm transition-colors ${
-                        isSelected ? "bg-primary text-white" : "hover:bg-callout text-text"
+                        isSelected ? "bg-primary text-primary-foreground" : "hover:bg-callout text-text"
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <span className={`flex size-7 items-center justify-center rounded-full text-xs font-bold ${
-                          isSelected ? "bg-white/20 text-white" : "bg-callout text-primary"
+                        <span className={`flex size-7 items-center justify-center rounded text-xs font-bold ${
+                          isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-callout text-primary"
                         }`}>
-                          <Bank size={14} weight="fill" />
+                          <Bank size={14} />
                         </span>
                         <div className="flex flex-col">
                           <span className="font-bold" dir="ltr">#{chq.number}</span>
-                          <span className={`truncate text-xs max-w-xs ${isSelected ? "text-white/80" : "text-text-muted"}`}>
+                          <span className={`truncate text-xs max-w-xs ${isSelected ? "text-primary-foreground/80" : "text-text-muted"}`}>
                             {chq.bank} · {chq.dueDate}
                           </span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className={`text-xs font-bold ${isSelected ? "text-white" : "text-primary"}`} dir="ltr">
+                        <span className={`text-xs font-bold ${isSelected ? "text-primary-foreground" : "text-primary"}`} dir="ltr">
                           {formatAmountOnly(BigInt(chq.amountMinor))}
                         </span>
-                        <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-white" : "text-text-subtle"}`} />
+                        <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-primary-foreground" : "text-text-subtle"}`} />
                       </div>
                     </li>
                   );

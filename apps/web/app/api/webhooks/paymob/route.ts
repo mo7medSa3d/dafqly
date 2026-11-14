@@ -1,6 +1,7 @@
 import { AppError, toApiErrorBody } from "@tahseel/core";
 import { gatewayDeps, handlePaymobCallback } from "@/server/gateway";
 import { clientIp, rateLimit, rateLimitPeek } from "@/server/rate-limit";
+import { readRequestBodyLimited, RequestBodyTooLargeError } from "@/server/request-body";
 
 /**
  * Paymob webhook (BUILD_PLAN F5, ADR-019): the HMAC-verified POST callback
@@ -24,9 +25,13 @@ export async function POST(req: Request): Promise<Response> {
   const hmac = new URL(req.url).searchParams.get("hmac") ?? undefined;
   let payload: unknown;
   try {
-    payload = await req.json();
-  } catch {
-    return Response.json(toApiErrorBody(new AppError("BAD_JSON", "body is not JSON", 400)), { status: 400 });
+    const rawBytes = await readRequestBodyLimited(req, 256_000);
+    payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBytes));
+  } catch (err) {
+    if (err instanceof RequestBodyTooLargeError) {
+      return Response.json(toApiErrorBody(new AppError("BODY_TOO_LARGE", "webhook body exceeds 256 KB", 413)), { status: 413 });
+    }
+    return Response.json(toApiErrorBody(new AppError("BAD_JSON", "body is not valid JSON", 400)), { status: 400 });
   }
   try {
     const outcome = await handlePaymobCallback(gatewayDeps(), payload, hmac, new Date());

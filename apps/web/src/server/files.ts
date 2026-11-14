@@ -84,7 +84,7 @@ export async function storeUpload(
   }
 }
 
-export async function getFile(app: Db, tenantId: string, fileId: string): Promise<FileView> {
+async function getFile(app: Db, tenantId: string, fileId: string): Promise<FileView> {
   return withTenant(app, tenantId, async (tx) => {
     const [row] = await tx.select().from(files).where(eq(files.id, fileId));
     if (!row) throw new AppError("NOT_FOUND", "File not found", 404);

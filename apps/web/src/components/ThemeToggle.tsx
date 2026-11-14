@@ -1,6 +1,8 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import { useEffect, useState } from "react";
-import { Moon, Sun } from "@phosphor-icons/react";
+import { Moon, Sun } from "@/components/ui/solid-icons";
 import { useLocale } from "next-intl";
 
 export function ThemeToggle({
@@ -28,6 +30,7 @@ export function ThemeToggle({
         if (document.documentElement.dataset.theme !== resolved) {
           document.documentElement.dataset.theme = resolved;
         }
+        document.documentElement.classList.toggle("dark", resolved === "dark");
         document.cookie = `dafqly-theme=${resolved}; path=/; max-age=31536000; SameSite=Lax`;
       } catch { /* ignore */ }
     };
@@ -38,6 +41,7 @@ export function ThemeToggle({
       const current = document.documentElement.dataset.theme as "light" | "dark" | undefined;
       if (current === "light" || current === "dark") {
         setTheme(current);
+        document.documentElement.classList.toggle("dark", current === "dark");
       }
     });
     observer.observe(document.documentElement, {
@@ -50,13 +54,13 @@ export function ThemeToggle({
       observer.disconnect();
       window.removeEventListener("storage", syncTheme);
     };
-
   }, []);
 
   function toggle() {
     const next = theme === "dark" ? "light" : "dark";
     setTheme(next);
     document.documentElement.dataset.theme = next;
+    document.documentElement.classList.toggle("dark", next === "dark");
     try {
       window.localStorage.setItem("dafqly-theme", next);
       document.cookie = `dafqly-theme=${next}; path=/; max-age=31536000; SameSite=Lax`;
@@ -72,17 +76,18 @@ export function ThemeToggle({
 
   return (
     <button
+      suppressHydrationWarning
       type="button"
       onClick={toggle}
       title={label}
       aria-label={label}
       data-testid="theme-toggle"
-      className={`inline-flex ${sizeCls} shrink-0 items-center justify-center rounded-xl bg-surface-muted/60 text-text-muted transition-all hover:bg-callout hover:text-primary active:scale-95 shadow-2xs hover:shadow-xs ${className}`}
+      className={cn(buttonVariants({ variant: "outline", size: "icon" }), sizeCls, "rounded-full text-muted-foreground hover:bg-accent hover:text-foreground", className)}
     >
       {mounted && theme === "dark" ? (
-        <Sun size={iconSize} weight="fill" aria-hidden />
+        <Sun size={iconSize} aria-hidden />
       ) : (
-        <Moon size={iconSize} weight="fill" aria-hidden />
+        <Moon size={iconSize} aria-hidden />
       )}
     </button>
   );

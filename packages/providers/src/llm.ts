@@ -7,6 +7,7 @@ import { LEDGER_PROMPT_VERSION, LEDGER_SYSTEM, LEDGER_TOOL_NAME, LEDGER_TOOL_SCH
 import { RECEIPT_PROMPT_VERSION, RECEIPT_SYSTEM, RECEIPT_TOOL_NAME, RECEIPT_TOOL_SCHEMA, RECEIPT_USER } from "./prompts/receipt";
 import { CHEQUE_PROMPT_VERSION, CHEQUE_SYSTEM, CHEQUE_TOOL_NAME, CHEQUE_TOOL_SCHEMA, CHEQUE_USER } from "./prompts/cheque";
 import { REPLY_PROMPT_VERSION, REPLY_SYSTEM, REPLY_TOOL_NAME, REPLY_TOOL_SCHEMA, replyUserText } from "./prompts/reply";
+import { combinedSignal, parseSseJson, readSseData } from "./sse";
 
 /**
  * OcrLlmProvider (BUILD_PLAN §3/§7 F6–F8, ADR-005/022): the ONLY way code in
@@ -61,6 +62,19 @@ export interface AgentRunResult {
   steps: number;
 }
 
+/**
+ * Live progress of an agent run. Providers emit these ONLY when the caller
+ * passes `onEvent`; without it they use the plain (non-streaming) request path.
+ * `text_delta` is the model's own prose as it is generated (real token
+ * streaming); `tool_start`/`tool_result` bracket every server-side tool call so
+ * the UI can show what the assistant is actually doing.
+ */
+export type AgentEvent =
+  | { type: "step"; step: number }
+  | { type: "text_delta"; text: string; step: number }
+  | { type: "tool_start"; id: string; name: string; arguments: Record<string, unknown> }
+  | { type: "tool_result"; id: string; name: string; ok: boolean; result: unknown };
+
 export interface AgentRunInput {
   systemInstruction: string;
   messages: AgentMessage[];
@@ -68,6 +82,31 @@ export interface AgentRunInput {
   executeTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   maxSteps?: number;
   maxToolCalls?: number;
+  /** Enables the streaming request path and receives live events. */
+  onEvent?: (event: AgentEvent) => void;
+  /** Client disconnect / user "stop" — aborts the provider request in flight. */
+  signal?: AbortSignal;
+}
+
+/** Shared by every adapter: run one tool call, emit events, never throw. */
+export async function executeAgentToolCall(args: {
+  id: string; name: string; toolArgs: Record<string, unknown>;
+  allowed: ReadonlySet<string>; executed: number; maxToolCalls: number;
+  executeTool: AgentRunInput["executeTool"]; onEvent?: AgentRunInput["onEvent"];
+}): Promise<unknown> {
+  args.onEvent?.({ type: "tool_start", id: args.id, name: args.name, arguments: args.toolArgs });
+  let result: unknown;
+  if (args.executed >= args.maxToolCalls) result = { error: "tool_call_limit_reached" };
+  else if (!args.allowed.has(args.name)) result = { error: "tool_not_allowed" };
+  else {
+    try { result = await args.executeTool(args.name, args.toolArgs); }
+    catch (err) {
+      result = { error: "tool_execution_failed", detail: err instanceof Error ? err.message.slice(0, 200) : "unknown" };
+    }
+  }
+  const ok = !(result && typeof result === "object" && typeof (result as { error?: unknown }).error === "string");
+  args.onEvent?.({ type: "tool_result", id: args.id, name: args.name, ok, result });
+  return result;
 }
 
 export interface OcrLlmProvider {
@@ -206,10 +245,86 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
     });
   }
 
+  /**
+   * One Messages-API round trip. With `onEvent` it uses `stream: true` and
+   * forwards text deltas as they arrive (tool_use input arrives as
+   * `input_json_delta` fragments and is parsed once the block closes);
+   * without it, the plain JSON path is used.
+   */
+  private async agentStep(args: {
+    model: string; system: string; messages: unknown[]; tools: AgentToolDefinition[];
+    step: number; onEvent?: AgentRunInput["onEvent"]; signal?: AbortSignal;
+  }): Promise<{ content: NonNullable<AnthropicResponse["content"]>; inputTokens: number; outputTokens: number }> {
+    const streaming = Boolean(args.onEvent);
+    const res = await this.fetchFn(`${this.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": this.opts.apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: args.model,
+        max_tokens: 1400,
+        system: args.system,
+        messages: args.messages,
+        ...(streaming ? { stream: true } : {}),
+        tools: args.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema })),
+        tool_choice: { type: "auto" },
+      }),
+      signal: combinedSignal(this.timeoutMs, args.signal),
+    });
+    if (!res.ok) throw new Error(`Anthropic Agent API error: HTTP ${res.status}`);
+    if (!streaming) {
+      const body = (await res.json()) as AnthropicResponse;
+      return { content: body.content ?? [], inputTokens: body.usage?.input_tokens ?? 0, outputTokens: body.usage?.output_tokens ?? 0 };
+    }
+
+    type Block = { type: string; id?: string; name?: string; text?: string; input?: unknown; json?: string };
+    const blocks: Block[] = [];
+    let inputTokens = 0;
+    let outputTokens = 0;
+    for await (const data of readSseData(res, args.signal)) {
+      const event = parseSseJson<{
+        type?: string; index?: number;
+        content_block?: { type?: string; id?: string; name?: string; text?: string };
+        delta?: { type?: string; text?: string; partial_json?: string };
+        message?: { usage?: { input_tokens?: number } };
+        usage?: { output_tokens?: number };
+        error?: { message?: string };
+      }>(data);
+      if (!event) continue;
+      if (event.type === "error") throw new Error(`Anthropic stream error: ${event.error?.message ?? "unknown"}`);
+      if (event.type === "message_start") inputTokens += event.message?.usage?.input_tokens ?? 0;
+      else if (event.type === "content_block_start" && event.index !== undefined && event.content_block) {
+        const b = event.content_block;
+        blocks[event.index] = { type: b.type ?? "text", id: b.id, name: b.name, text: b.text ?? "", json: "" };
+      } else if (event.type === "content_block_delta" && event.index !== undefined) {
+        const block = blocks[event.index];
+        if (!block) continue;
+        if (event.delta?.type === "text_delta" && event.delta.text) {
+          block.text = (block.text ?? "") + event.delta.text;
+          args.onEvent?.({ type: "text_delta", text: event.delta.text, step: args.step });
+        } else if (event.delta?.type === "input_json_delta" && event.delta.partial_json) {
+          block.json = (block.json ?? "") + event.delta.partial_json;
+        }
+      } else if (event.type === "content_block_stop" && event.index !== undefined) {
+        const block = blocks[event.index];
+        if (block?.type === "tool_use") {
+          try { block.input = block.json ? JSON.parse(block.json) : {}; } catch { block.input = {}; }
+        }
+      } else if (event.type === "message_delta") outputTokens += event.usage?.output_tokens ?? 0;
+    }
+    const content = blocks.filter(Boolean).map((b) => b.type === "tool_use"
+      ? { type: "tool_use", id: b.id, name: b.name, input: b.input ?? {} }
+      : { type: b.type, text: b.text ?? "" });
+    return { content, inputTokens, outputTokens };
+  }
+
   async runAgent(input: AgentRunInput): Promise<AgentRunResult> {
     const model = this.opts.modelAgent ?? this.opts.model ?? this.opts.modelFast ?? "claude-sonnet-5-5";
     const messages: { role: "user" | "assistant"; content: unknown }[] = input.messages.map((m) => ({ role: m.role, content: m.content }));
-    const allowed = new Map(input.tools.map((tool) => [tool.name, tool]));
+    const allowed = new Set(input.tools.map((tool) => tool.name));
     const toolExecutions: AgentToolExecution[] = [];
     const maxSteps = Math.min(5, Math.max(1, input.maxSteps ?? 4));
     const maxToolCalls = Math.min(10, Math.max(1, input.maxToolCalls ?? 8));
@@ -218,32 +333,14 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
     let finalText = "";
 
     for (let step = 0; step < maxSteps; step += 1) {
-      const res = await this.fetchFn(`${this.baseUrl}/v1/messages`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": this.opts.apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 1400,
-          system: input.systemInstruction,
-          messages,
-          tools: input.tools.map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-            input_schema: tool.inputSchema,
-          })),
-          tool_choice: { type: "auto" },
-        }),
-        signal: AbortSignal.timeout(this.timeoutMs),
+      input.onEvent?.({ type: "step", step });
+      const turn = await this.agentStep({
+        model, system: input.systemInstruction, messages, tools: input.tools,
+        step, onEvent: input.onEvent, signal: input.signal,
       });
-      if (!res.ok) throw new Error(`Anthropic Agent API error: HTTP ${res.status}`);
-      const body = (await res.json()) as AnthropicResponse;
-      inputTokens += body.usage?.input_tokens ?? 0;
-      outputTokens += body.usage?.output_tokens ?? 0;
-      const content = body.content ?? [];
+      inputTokens += turn.inputTokens;
+      outputTokens += turn.outputTokens;
+      const content = turn.content;
       finalText = content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
       const toolUses = content.filter((part) => part.type === "tool_use");
       if (toolUses.length === 0) {
@@ -257,18 +354,10 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
       for (const toolUse of toolUses) {
         const args = toolUse.input && typeof toolUse.input === "object" && !Array.isArray(toolUse.input)
           ? toolUse.input as Record<string, unknown> : {};
-        let result: unknown;
-        if (toolExecutions.length >= maxToolCalls) {
-          result = { error: "tool_call_limit_reached" };
-        } else {
-          try {
-            result = allowed.has(toolUse.name ?? "")
-              ? await input.executeTool(toolUse.name!, args)
-              : { error: "tool_not_allowed" };
-          } catch {
-            result = { error: "tool_execution_failed" };
-          }
-        }
+        const result = await executeAgentToolCall({
+          id: toolUse.id ?? `${step}-${toolExecutions.length}`, name: toolUse.name ?? "unknown", toolArgs: args,
+          allowed, executed: toolExecutions.length, maxToolCalls, executeTool: input.executeTool, onEvent: input.onEvent,
+        });
         toolExecutions.push({ name: toolUse.name ?? "unknown", arguments: args, result });
         if (toolUse.id) {
           // Anthropic requires one tool_result per tool_use id, even when the
@@ -304,12 +393,7 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
     const consume = (block: string) => {
       const data = block.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
       if (!data || data === "[DONE]") return;
-      let event: { type?: string; delta?: { type?: string; text?: string }; message?: { usage?: { input_tokens?: number } }; usage?: { output_tokens?: number } };
-      try {
-        event = JSON.parse(data) as { type?: string; delta?: { type?: string; text?: string }; message?: { usage?: { input_tokens?: number } }; usage?: { output_tokens?: number } };
-      } catch {
-        return;
-      }
+      const event = JSON.parse(data) as { type?: string; delta?: { type?: string; text?: string }; message?: { usage?: { input_tokens?: number } }; usage?: { output_tokens?: number } };
       if (event.type === "message_start") inputTokens += event.message?.usage?.input_tokens ?? 0;
       if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
         text += event.delta.text; onToken(event.delta.text);
@@ -381,14 +465,14 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
  */
 export const SYNTHETIC_MARKER = "TAHSEEL_SYNTHETIC_B64:";
 
-export interface SyntheticPayload {
+interface SyntheticPayload {
   kind: "ledger" | "receipt" | "cheque";
   rows?: Record<string, unknown>[];
   extraction?: Record<string, unknown>;
   errors?: Record<string, Record<string, unknown>>;
 }
 
-export function readSyntheticPayload(image: Uint8Array): SyntheticPayload | null {
+function readSyntheticPayload(image: Uint8Array): SyntheticPayload | null {
   const text = new TextDecoder().decode(image);
   const at = text.indexOf(SYNTHETIC_MARKER);
   if (at < 0) return null;

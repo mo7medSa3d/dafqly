@@ -14,13 +14,14 @@ import { RECEIPT_PROMPT_VERSION, RECEIPT_SYSTEM, RECEIPT_TOOL_NAME, RECEIPT_TOOL
 import { REPLY_PROMPT_VERSION, REPLY_SYSTEM, REPLY_TOOL_NAME, REPLY_TOOL_SCHEMA, replyUserText } from "./prompts/reply";
 import {
   LlmNotConfiguredError,
-  readSyntheticPayload,
   type LlmCallResult,
   type OcrLlmProvider,
   type ReplyContext,
   type AgentRunInput,
   type AgentRunResult,
+  executeAgentToolCall,
 } from "./llm";
+import { combinedSignal, parseSseJson, readSseData } from "./sse";
 import dns from "node:dns";
 
 if (typeof dns !== "undefined" && typeof dns.setDefaultResultOrder === "function") {
@@ -50,10 +51,8 @@ interface GeminiApiResponse {
     content?: {
       parts?: Array<{
         text?: string;
-        thoughtSignature?: string;
         functionCall?: {
           name: string;
-          id?: string;
           args?: Record<string, unknown>;
         };
       }>;
@@ -67,6 +66,8 @@ interface GeminiApiResponse {
   };
 }
 
+type GeminiPart = NonNullable<NonNullable<NonNullable<GeminiApiResponse["candidates"]>[number]["content"]>["parts"]>[number];
+
 /**
  * Normalizes JSON schema definitions to Google Gemini OpenAPI 3.0 schema rules:
  * - Flatten union type arrays `type: ["string", "null"]` -> `type: "string", nullable: true`
@@ -78,12 +79,6 @@ export function cleanSchemaForGemini(schema: unknown): unknown {
     return schema.map(cleanSchemaForGemini);
   }
   const obj = { ...(schema as Record<string, unknown>) };
-
-  // Gemini API does not allow additionalProperties, $schema, definitions or $ref in tool parameter schemas
-  delete obj.additionalProperties;
-  delete obj.$schema;
-  delete obj.definitions;
-  delete obj.$ref;
 
   if (Array.isArray(obj.type)) {
     const rawTypes = obj.type as string[];
@@ -209,25 +204,6 @@ export class GeminiLlmProvider implements OcrLlmProvider {
   }
 
   async extractLedgerPage(image: Uint8Array, mime: string): Promise<LlmCallResult<LedgerExtraction>> {
-    const payload = readSyntheticPayload(image);
-    if (payload && payload.kind === "ledger" && payload.rows) {
-      const rows = payload.rows.map((row, i) => {
-        const err = payload.errors?.[String(i)] ?? {};
-        const merged: Record<string, unknown> = { ...row, ...err };
-        if (err.cellConfidence) {
-          merged.cellConfidence = { ...((row.cellConfidence as object) ?? {}), ...(err.cellConfidence as object) };
-        }
-        return merged;
-      });
-      return {
-        data: parseLedgerExtraction({ rows }),
-        model: this.opts.modelVision ?? "gemini-3.1-flash-lite",
-        promptVersion: LEDGER_PROMPT_VERSION,
-        inputTokens: 0,
-        outputTokens: 0,
-        latencyMs: 0,
-      };
-    }
     return this.callTool({
       promptVersion: LEDGER_PROMPT_VERSION,
       system: LEDGER_SYSTEM,
@@ -242,18 +218,6 @@ export class GeminiLlmProvider implements OcrLlmProvider {
   }
 
   async extractReceipt(image: Uint8Array, mime: string): Promise<LlmCallResult<ReceiptExtraction>> {
-    const payload = readSyntheticPayload(image);
-    if (payload && payload.kind === "receipt" && payload.extraction) {
-      const merged = { ...payload.extraction, ...(payload.errors ?? {}) };
-      return {
-        data: parseReceiptExtraction(merged),
-        model: this.opts.modelVision ?? "gemini-3.1-flash-lite",
-        promptVersion: RECEIPT_PROMPT_VERSION,
-        inputTokens: 0,
-        outputTokens: 0,
-        latencyMs: 0,
-      };
-    }
     return this.callTool({
       promptVersion: RECEIPT_PROMPT_VERSION,
       system: RECEIPT_SYSTEM,
@@ -281,18 +245,6 @@ export class GeminiLlmProvider implements OcrLlmProvider {
   }
 
   async extractCheque(image: Uint8Array, mime: string): Promise<LlmCallResult<ChequeExtraction>> {
-    const payload = readSyntheticPayload(image);
-    if (payload && payload.kind === "cheque" && payload.extraction) {
-      const merged = { ...payload.extraction, ...(payload.errors ?? {}) };
-      return {
-        data: parseChequeExtraction(merged),
-        model: this.opts.modelVision ?? "gemini-3.1-flash-lite",
-        promptVersion: CHEQUE_PROMPT_VERSION,
-        inputTokens: 0,
-        outputTokens: 0,
-        latencyMs: 0,
-      };
-    }
     return this.callTool({
       promptVersion: CHEQUE_PROMPT_VERSION,
       system: CHEQUE_SYSTEM,
@@ -306,14 +258,76 @@ export class GeminiLlmProvider implements OcrLlmProvider {
     });
   }
 
+  /** One generateContent round trip; streams (SSE) when `onEvent` is set. */
+  private async agentStep(args: {
+    model: string; input: AgentRunInput; contents: Record<string, unknown>[]; step: number;
+  }): Promise<{ parts: GeminiPart[]; hasContent: boolean; inputTokens: number; outputTokens: number }> {
+    const { input } = args;
+    const streaming = Boolean(input.onEvent);
+    const method = streaming ? "streamGenerateContent?alt=sse&" : "generateContent?";
+    const endpoint = `${this.baseUrl}/v1beta/models/${args.model}:${method}key=${encodeURIComponent(this.opts.apiKey)}`;
+    const res = await this.fetchFn(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: input.systemInstruction }] },
+        contents: args.contents,
+        tools: [{ functionDeclarations: input.tools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          parameters: cleanSchemaForGemini(tool.inputSchema),
+        })) }],
+        toolConfig: { functionCallingConfig: { mode: "AUTO", allowedFunctionNames: input.tools.map((tool) => tool.name) } },
+        generationConfig: { temperature: 0.25, maxOutputTokens: 1400 },
+      }),
+      signal: combinedSignal(this.timeoutMs, input.signal),
+    });
+    if (!res.ok) throw new Error(`Gemini Agent API error: HTTP ${res.status}`);
+    if (!streaming) {
+      const body = (await res.json()) as GeminiApiResponse;
+      const content = body.candidates?.[0]?.content;
+      return {
+        parts: content?.parts ?? [], hasContent: Boolean(content),
+        inputTokens: body.usageMetadata?.promptTokenCount ?? 0,
+        outputTokens: body.usageMetadata?.candidatesTokenCount ?? 0,
+      };
+    }
+    // Streaming: chunks carry incremental parts. Text is forwarded live;
+    // functionCall parts (and any thought signatures) are kept verbatim so the
+    // model turn can be echoed back unchanged.
+    const parts: GeminiPart[] = [];
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let hasContent = false;
+    for await (const data of readSseData(res, input.signal)) {
+      const chunk = parseSseJson<GeminiApiResponse>(data);
+      if (!chunk) continue;
+      inputTokens = Math.max(inputTokens, chunk.usageMetadata?.promptTokenCount ?? 0);
+      outputTokens = Math.max(outputTokens, chunk.usageMetadata?.candidatesTokenCount ?? 0);
+      const content = chunk.candidates?.[0]?.content;
+      if (!content) continue;
+      hasContent = true;
+      for (const part of content.parts ?? []) {
+        const last = parts[parts.length - 1] as { text?: string; functionCall?: unknown } | undefined;
+        const extras = Object.keys(part).filter((k) => k !== "text");
+        if (typeof part.text === "string" && part.text && extras.length === 0 && last && typeof last.text === "string" && !last.functionCall && Object.keys(last).length === 1) {
+          last.text += part.text;
+        } else {
+          parts.push(part);
+        }
+        if (typeof part.text === "string" && part.text) input.onEvent?.({ type: "text_delta", text: part.text, step: args.step });
+      }
+    }
+    return { parts, hasContent, inputTokens, outputTokens };
+  }
+
   async runAgent(input: AgentRunInput): Promise<AgentRunResult> {
-    const model = this.opts.model ?? "gemini-3.1-flash-lite";
-    const endpoint = `${this.baseUrl}/v1beta/models/${model}:generateContent?key=${encodeURIComponent(this.opts.apiKey)}`;
+    const model = this.opts.model ?? "gemini-3.8-flash";
     const contents: Record<string, unknown>[] = input.messages.map((message) => ({
       role: message.role === "assistant" ? "model" : "user",
       parts: [{ text: message.content }],
     }));
-    const allowed = new Map(input.tools.map((tool) => [tool.name, tool]));
+    const allowed = new Set(input.tools.map((tool) => tool.name));
     const toolExecutions: AgentRunResult["toolExecutions"] = [];
     const maxSteps = Math.min(5, Math.max(1, input.maxSteps ?? 4));
     const maxToolCalls = Math.min(10, Math.max(1, input.maxToolCalls ?? 8));
@@ -322,42 +336,11 @@ export class GeminiLlmProvider implements OcrLlmProvider {
     let finalText = "";
 
     for (let step = 0; step < maxSteps; step += 1) {
-      let res: Response | null = null;
-      let lastErrText = "";
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        res = await this.fetchFn(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: input.systemInstruction }] },
-            contents,
-            tools: [{ functionDeclarations: input.tools.map((tool) => ({
-              name: tool.name,
-              description: tool.description,
-              parameters: cleanSchemaForGemini(tool.inputSchema),
-            })) }],
-            toolConfig: { functionCallingConfig: { mode: "AUTO" } },
-            generationConfig: { temperature: 0.25, maxOutputTokens: 1400 },
-          }),
-          signal: AbortSignal.timeout(Math.min(20_000, this.timeoutMs)),
-        });
-        if (res.ok) break;
-        if (res.status === 503 || res.status === 429) {
-          lastErrText = await res.text().catch(() => "");
-          await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
-          continue;
-        }
-        const errBody = await res.text().catch(() => "");
-        throw new Error(`Gemini Agent API error: HTTP ${res.status}: ${errBody}`);
-      }
-      if (!res || !res.ok) {
-        throw new Error(`Gemini Agent API error: HTTP ${res?.status ?? 503}: ${lastErrText}`);
-      }
-      const body = (await res.json()) as GeminiApiResponse;
-      inputTokens += body.usageMetadata?.promptTokenCount ?? 0;
-      outputTokens += body.usageMetadata?.candidatesTokenCount ?? 0;
-      const candidate = body.candidates?.[0]?.content;
-      const parts = candidate?.parts ?? [];
+      input.onEvent?.({ type: "step", step });
+      const turn = await this.agentStep({ model, input, contents, step });
+      inputTokens += turn.inputTokens;
+      outputTokens += turn.outputTokens;
+      const parts = turn.parts;
       finalText = parts.map((part) => part.text ?? "").filter(Boolean).join("\n").trim();
       const functionCalls = parts.map((part) => part.functionCall).filter((call): call is NonNullable<typeof call> => Boolean(call));
       if (functionCalls.length === 0) {
@@ -366,30 +349,18 @@ export class GeminiLlmProvider implements OcrLlmProvider {
 
       // Gemini requires the model's function-call turn to be echoed before
       // the corresponding functionResponse turn.
-      if (candidate) contents.push({ role: "model", parts });
+      if (turn.hasContent) contents.push({ role: "model", parts });
       const responses: Record<string, unknown>[] = [];
       for (const call of functionCalls) {
         const args = call.args && typeof call.args === "object" ? call.args : {};
-        let result: unknown;
-        if (toolExecutions.length >= maxToolCalls) {
-          result = { error: "tool_call_limit_reached" };
-        } else {
-          try {
-            result = allowed.has(call.name) ? await input.executeTool(call.name, args) : { error: "tool_not_allowed" };
-          } catch {
-            result = { error: "tool_execution_failed" };
-          }
-        }
+        const result = await executeAgentToolCall({
+          id: `${step}-${toolExecutions.length}`, name: call.name, toolArgs: args,
+          allowed, executed: toolExecutions.length, maxToolCalls, executeTool: input.executeTool, onEvent: input.onEvent,
+        });
         toolExecutions.push({ name: call.name, arguments: args, result });
         // Return a response for every function call in the model turn; an
         // omitted functionResponse leaves Gemini with an invalid turn.
-        responses.push({
-          functionResponse: {
-            name: call.name,
-            ...(call.id ? { id: call.id } : {}),
-            response: { result },
-          },
-        });
+        responses.push({ functionResponse: { name: call.name, response: { result } } });
       }
       if (responses.length === 0) break;
       contents.push({ role: "user", parts: responses });
@@ -402,7 +373,7 @@ export class GeminiLlmProvider implements OcrLlmProvider {
   }
 
   async streamText(prompt: string, systemInstruction: string | undefined, onToken: (delta: string) => void): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
-    const model = this.opts.modelFast ?? this.opts.model ?? "gemini-3.1-flash-lite";
+    const model = this.opts.modelFast ?? this.opts.model ?? "gemini-3.5-flash-lite";
     const endpoint = `${this.baseUrl}/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(this.opts.apiKey)}`;
     const res = await this.fetchFn(endpoint, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -419,12 +390,7 @@ export class GeminiLlmProvider implements OcrLlmProvider {
     const consume = (block: string) => {
       const data = block.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
       if (!data || data === "[DONE]") return;
-      let event: GeminiApiResponse;
-      try {
-        event = JSON.parse(data) as GeminiApiResponse;
-      } catch {
-        return;
-      }
+      const event = JSON.parse(data) as GeminiApiResponse;
       const delta = event.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
       if (delta) { text += delta; onToken(delta); }
       inputTokens = Math.max(inputTokens, event.usageMetadata?.promptTokenCount ?? 0);

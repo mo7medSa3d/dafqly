@@ -198,3 +198,233 @@ Complete visual and functional integration of **Yaseir Design Guide v2.1** (`htt
    - Fixed tRPC error serialization (`apps/web/src/server/trpc.ts`) preserving numeric JSON-RPC error codes.
    - Filtered invoice transition buttons via `canTransition(status, target)` from `@tahseel/core`.
    - Replaced unstyled checkbox blocks with custom styled rounded checkboxes.
+
+---
+
+# Quiet Ledger redesign (2026-11-13, ADR-034)
+
+Full visual redesign on top of the Yaseir v2.1 look, driven by DESIGN.md
+(Stripe tables × Mercury calm × Ramp queues × Linear density). Zero
+backend/business/API/schema/env changes; every screen consumes exactly the
+data calls it consumed before; all data-testids preserved.
+
+## Research limits (honest)
+
+No Inspo MCP search was executed (Inspo v0.2.0 is an MCP server, not a
+searchable CLI; no MCP client was available in this session). References
+come from web search + text fetch of secondary extracts (SaaSFrame
+dashboard guide, free tier; Mobbin NOT inspected — Pro paywalled). No
+reference screenshots were viewed and no logged-in product was inspected.
+
+## Tokens — the navy-vs-blue mismatch, resolved
+
+`docs/BRAND_GUIDELINES.md` said primary navy #14243A + teal #27C7A5, but
+`tokens.css` actually shipped primary blue #0953DE. Resolution (ADR-034):
+navy #14243A is ink/identity (text, sidebar tile, mark, solid bands);
+blue #0953DE is the single action accent (CTA/link/focus only); teal
+#27C7A5 survives only inside the brand mark. Scales rewritten:
+navy/teal/slate per the v0.8.0 guidelines values; semantic light/dark per
+DESIGN.md §3; status pairs kept (light) / kept (dark). Radius sm 4 / md 8 /
+lg 12 / xl 12; touch target 40px. `packages/brand/brand.ts` colours
+updated to match (scatter keys removed). `docs/BRAND_GUIDELINES.md`
+corrected to agree (contrast numbers recomputed, layout section rewritten).
+
+## Contrast (recomputed 2026-11-13, suite-asserted)
+
+Light: text/bg 14.66, text_muted/bg 4.71, text_subtle/bg 5.48,
+primary_fg/primary 6.36, link/bg 5.96, focus/bg 5.96; statuses 5.23–7.04.
+Dark: text/bg 16.33, text_muted/bg 8.84, text_subtle/bg 7.24,
+primary_fg/primary 8.04, link/bg 8.04, focus/bg 8.04; statuses 6.93–11.78.
+All ≥4.5 text / ≥3 focus. One real defect found and fixed in the pass: a
+`text-status-paid-fg` (#12716B) label on the navy band computed ≈2.6:1 —
+changed to white / `text-navy-200` on landing, auth, and statement headers.
+No change to `packages/brand/contrast.test.ts` was needed (it reads
+`tokens.json`; the "teal is never a text color" pin still holds).
+
+## Primitives + shell (`ui.tsx`, `globals.css`, `AppShell.tsx`)
+
+- Buttons 8px radius, 40px min-height, 16px padding; `btnSmall` 32px/4px.
+  Panel 12px radius, border-first, no shadow; `.panel-shadow` reduced to a
+  near-invisible hairline. StatusPill rectangular 4px. PageHeader 28px
+  title + rectangular eyebrow. InitialAvatar 8px radius. EmptyState 12px.
+- Deleted: `.hero-band`, `.brand-pattern`, `.brand-pattern-light`,
+  `.yaseir-stage`, all `--yaseir-*` tokens and `@theme` mappings.
+- Shell: sidebar 280px → 232px (collapsed rail 82px → 64px), nav rows
+  42px → 32px, active state is callout bg + primary text + 2px start
+  border (never a filled pill), content max-width 1600px → 1200px,
+  page padding 24px. AI launcher rectangular, border-first, no glow/ring.
+  Mobile overlay breakpoint stays 1024px (existing drawer + e2e
+  single-nav-instance assertion) — see DESIGN.md §14.
+- Mechanical sweep across all 30 app-code files: `rounded-full` → `rounded`
+  (tiny status dots ≤10px kept), `rounded-3xl/2xl` → `rounded-xl`, shadow
+  utilities removed, Tailwind emerald/amber/orange/red/violet/teal palette
+  classes mapped to `status-*` tokens, `min-h-[44px/42px]` → 40px.
+
+## Dashboard — genuine re-layout (same five server calls)
+
+- Gradient hero band replaced by a plain header (eyebrow + date/timezone,
+  28px title, subtitle, primary/ghost actions).
+- 4-equal-KPI-card grid replaced by one headline figure (total outstanding
+  at 40px + open-invoice/debtor counts + other-currency lines) over a
+  hairline-divided 4-stat row (overdue in danger red only, collected,
+  collection rate, DSO). All `kpi-*` testids preserved.
+- Work-queue cards, forecast, aging, top debtors, reminder funnel keep
+  their data and testids; restyled to the new discipline.
+
+## Charts (`charts.tsx`)
+
+Token-only colours. Forecast: expected = primary blue, conservative =
+neutral slate-400 dashed (was paid-green). Aging severity ramp: current
+slate-400 → 0–7 primary → 8–30 due → 31–60 overdue → 60+ navy-700.
+Funnel: sent slate-400, delivered primary, replied due, paid paid-green.
+
+## Illustrations (`illustrations.tsx`)
+
+Redrawn two-tone (ink + single blue accent + neutral greys), same
+exported names + props. Yellow/pink/violet/cyan scatter removed;
+`--yaseir-*` references gone; `HeroBandArt` dots are now white tints
+(on navy bands); the Receivables check disc uses the paid-status token.
+
+## Screens pass
+
+Landing (solid navy hero, white-on-navy primary CTA, max-width 1200px),
+auth split (solid navy brand side), onboarding, settings, billing,
+platform/ai-budget, all list clients (debtors, invoices, cheques, tasks,
+import, ledger-photo, ai-inbox), debtor detail, public statement (solid
+navy header, white pay-total button), error + new
+404 in the same system (see below), command palette, AI copilot drawer,
+notification bell — same components, same logic, new spacing/radius/colour
+discipline.
+
+**404 — two files by Next.js necessity (found by the e2e server log,
+fixed same day):** the first redesign e2e run logged `TypeError: Cannot
+destructure property 'locale' of undefined` 23 times from
+`[locale]/not-found.tsx` (Next invokes it with `params` undefined on
+some render paths) and unmatched URLs served Next's builtin 404. Fixes:
+`[locale]/not-found.tsx` now takes optional `params` (default "ar") and
+renders the shared `src/components/NotFoundContent.tsx` panel; a new
+root `app/not-found.tsx` serves unmatched URLs — it renders without the
+`[locale]` layout, so no stylesheet loads there, and it therefore renders
+the same panel with inline styles whose values are imported from
+`@tahseel/brand` tokens (never hardcoded), locale from the
+`X-NEXT-INTL-LOCALE` request header the next-intl middleware sets, theme
+from the `dafqly-theme` cookie. Verified by curl: `/ar/…` and `/en/…`
+unknown paths return 404 with the correct translated copy, `lang`/`dir`,
+and dashboard link, in light and dark; server log shows zero errors.
+`apps/web/e2e/quiet-ledger-en.spec.ts` (new) covers landing/login/
+dashboard in English (desktop 1440 + mobile 390) plus the 404 in both
+locales. `m0.spec.ts` brand-wiring expectation updated #101219 → #14243A
+(the test's own name pins "theme color is navy-700", and #14243A is the
+token navy-700 — the manifest change was intentional in cb513e7).
+`apps/web/e2e/axe.spec.ts` (new, `@axe-core/playwright` devDependency)
+re-runs the axe gate on landing/login/dashboard/invoices.
+Tables: sticky solid header + `overflow-x-auto` scroll container with a
+`min-w-[560–720px]` floor on all five data tables; lists stay stacked
+rows. Money formatting verified by reading (`money.ts`,
+`CurrencyContext.tsx`): bigint minor units, per-currency exponents,
+tenant-currency headlines + separate other-currency lines. Known
+pre-existing non-EGP defects found by reading and NOT fixed (each needs a
+logic change + tests): hardcoded `/100`/`*100` in `LedgerPhotoClient.tsx`
+(L118, L274–275), `DebtorDetailClient.tsx` (L459),
+`CollectionWorkspaceClient.tsx` (L81); `charts.tsx` `axisLabel` divides
+by 100 (display-only).
+
+## Logo SVGs + raster assets
+
+- Recoloured to the token palette, geometry untouched:
+  `logo/mark-color.svg` (D → #14243A, flow → #27C7A5, check → #27C7A5),
+  `logo/mark-white.svg` (flow → #27C7A5), `logo/app-icon.svg`
+  (tile → #14243A, flow → #27C7A5, check → #FFFFFF).
+- Deleted: `logo/lockup-horizontal-rtl.svg` (unreferenced pre-rebrand
+  petrol/brass asset Phase D meant to delete).
+- Manifest: `packages/brand/public/manifest.webmanifest` theme
+  #101219 → #14243A, background #F6F7F9 → #F6F8F7 (dynamic
+  `app/manifest.ts` already reads both from `tokens.json`).
+- Regenerated with `scripts/regenerate-brand-assets.mjs` (sharp 0.35.5
+  from the pnpm store, no new dependency; re-runnable): og-image
+  1200×630, six splash screens, favicon 16/32/48/64, apple-touch-icon
+  180, icon 192/512/1024, maskable 192/512, whatsapp profile 640,
+  favicon.ico (PNG-embedded 16/32/48), email header 1200×240; copies to
+  `apps/web/public/icons/*`, `apps/web/app/favicon.ico`,
+  `apps/web/app/icon.svg` (copy of the quiet `icons/app-icon.svg`),
+  `apps/web/app/apple-icon.png`. Corner pixel of every navy asset
+  verified RGB (20, 36, 58) = #14243A. Full asset table in DESIGN.md §12.
+
+## Verification (this VM — see docs/REDESIGN_EVIDENCE.md)
+
+- `pnpm lint` exit 0, `pnpm typecheck` exit 0 (final tree, `/tmp/lint4.log`,
+  `/tmp/typecheck4.log`).
+- Full unit/integration suite vs recorded baseline (HEAD b5471c3:
+  525/525, e2e 32/32, build exit 0, axe-core 0 violations on 4 pages):
+  **525/525, exit 0** (`/tmp/test-full4.log` — brand 40, templates 5,
+  core 237, providers 40, db 32, eval 19, reminders 27, worker 1, web 124).
+- Production build exit 0 via the documented e2e route
+  (`E2E_FAKE_PROVIDERS=true PAYMOB_ALLOW_FAKE=true pnpm build`,
+  `/tmp/build5.log`); plain `pnpm build` is BLOCKED in this VM by the
+  pre-existing ADR-033 env guard (no real S3/AI credentials).
+- Full e2e via the root script (`pnpm test:e2e`: migrate + `RESET_SEED=1`
+  seed + tests): **35/35, exit 0** (`/tmp/e2e-full3.log`) — 32 baseline
+  + 2 new EN/404 tests + 1 new axe test. Intermediate runs: 33/34 (stale
+  `#101219` theme-color pin in `m0.spec.ts`, fixed to token navy-700
+  `#14243A`), then 34/34 (`/tmp/e2e-full2.log`).
+- `apps/web/e2e/redesign.spec.ts` (desktop 1440 + mobile 390, light/dark,
+  landing/login/dashboard/invoices/debtors + mobile list pages + debtor
+  detail + statement + onboarding) with fresh before/after screenshots;
+  ar + en verified for landing/login/dashboard
+  (`apps/web/e2e/quiet-ledger-en.spec.ts`).
+- Axe-core re-run as a committed spec (`apps/web/e2e/axe.spec.ts`,
+  `@axe-core/playwright` devDependency): **0 violations** on
+  landing/login/dashboard/invoices — after fixing 1 contrast defect
+  (locale-toggle 4.49:1) + 3 label-in-name mismatches the gate exposed,
+  then 2 more contrast defects on the invoices page (muted text on
+  solid muted/callout fills, 4.35/4.46:1). See DESIGN.md §10.
+- 404 verified by curl + screenshots in ar/en, light/dark, with zero
+  server errors (was: 23 `locale` destructure errors per run + Next's
+  builtin 404).
+
+## Final verification + optimization (2026-11-14)
+
+Finisher pass on top of the Quiet Ledger base (`43b41b4` → `06cc98e`).
+Full evidence: `docs/FINAL_VERIFICATION_EVIDENCE.md`.
+
+- Rich synthetic dataset in a separate tenant (`pnpm db:seed:rich`,
+  `97181e8`): 12 debtors, 32 invoices, 16 payments, 6 cheques, 6 promises,
+  3 disputes, 14 reminders, 18 messages, 3 intents, 5 tasks, 1 statement
+  link; login `rich@tahseel.test`; demo tenant untouched.
+- F-06 money fixes (`be36714`): amounts in tenant/receipt currency
+  (DebtorDetailClient, CollectionWorkspaceClient, ChequesClient, charts
+  axisLabel, receipt summaries); LedgerPhoto `/100` is EGP-by-design.
+- Promise button NaN fix (`ddbd691`): disabled for unparseable amounts.
+- **Real bug found by the exploratory spec and fixed (`6c82fa7`):**
+  `createMerchantPromise` / `decidePromiseToPay` returned raw rows with a
+  bigint `amountMinor`; tRPC has no transformer, so the HTTP response
+  failed with "Do not know how to serialize a BigInt" (500) while the row
+  WAS created — the UI showed an error and a retry duplicated the promise.
+  Both now return the `listPromisesToPay` serialization; regression
+  assertions in journeys test D; verified over HTTP (200, `"75000"`).
+- Exploratory spec (`apps/web/e2e/exploratory.spec.ts`, 13 tests) green
+  after fixing 4 spec bugs (forecast not-enough state, payment-row race,
+  invoices form-is-always-visible + submit-by-testid, copilot Ask-tab
+  Enter) and documenting that the server invoice search matches
+  reference/description only.
+- Dead code: `toInvoiceView` unexported, unused deps/exports/scripts
+  removed, `localDateOf` re-export + `better-auth` in `packages/db`
+  removed (`06cc98e`); knip now flags only entry-point scripts + the
+  exceljs false positive.
+- Final numbers: lint 0, typecheck 0, unit+integration **527/527**,
+  production build exit 0 (First Load JS shared **102 kB**, 40/40 pages),
+  full e2e **48/48**, axe **0 violations**. Plain `pnpm build` still
+  BLOCKED (ADR-033); `pnpm audit` still BLOCKED (ECONNRESET).
+- A VM restart mid-pass (~03:04 EET) wiped `/tmp` logs, Postgres, global
+  pnpm, the `pgtest` user and `.next`; the environment was recovered and
+  the whole chain was re-run from complete logs stored in
+  `~/workspace/dafqly-work/final-verification-logs/`.
+
+## 2026-11-14 — Indigo Ledger palette
+- Replaced the blue/navy palette with deep-indigo ink + indigo action accent; light/dark re-tuned as a pair (all text pairs >= 4.5:1, verified).
+- Status colours: emerald / amber / red / violet / indigo, stronger fg-on-bg.
+- Shared primitives (ui.tsx): focus rings, button depth + press state, panel depth, status ring, dashed empty state.
+
+- Icons: replaced Phosphor with lucide-react (shadcn/ui default). Local identifiers keep their old names via `import { Search as MagnifyingGlass }` aliasing; WhatsApp mark is a custom SVG (ui/icons.tsx). Supersedes the 2026-11 "filled icons" note above.
+
+- All remaining raw buttons/fields converted to shadcn variants (added variants: soft, success, dangerSoft; sizes: xs, iconSm). Menu rows, tab/filter chips and icon buttons now use buttonVariants with state-driven variants.

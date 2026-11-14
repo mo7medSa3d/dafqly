@@ -141,6 +141,22 @@ export async function listPromisesToPay(app: Db, tenantId: string, todayIso = ne
   });
 }
 
+// tRPC has no transformer (plain JSON): a raw promises_to_pay row carries
+// amountMinor as a bigint, and the HTTP response fails to serialize with
+// "Do not know how to serialize a BigInt" — the row IS created, but the
+// client reports failure and never refreshes (a retry creates a duplicate).
+// Serialize exactly like listPromisesToPay does.
+function serializePromiseRow(row: typeof promisesToPay.$inferSelect) {
+  return {
+    ...row,
+    amountMinor: row.amountMinor.toString(),
+    reviewedAt: row.reviewedAt?.toISOString() ?? null,
+    fulfilledAt: row.fulfilledAt?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
 export async function createMerchantPromise(
   app: Db, tenantId: string, actor: string, raw: z.infer<typeof createPromiseInput>,
   todayIso = new Date().toISOString().slice(0, 10),
@@ -169,8 +185,16 @@ export async function createMerchantPromise(
       }
       availableBalance = invoice.amountMinor - invoice.paidMinor;
     } else {
+      // A promise without an invoice has no currency field of its own; keep
+      // its amount in the tenant's configured headline currency only.
+      const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+      const promiseCurrency = tenant?.settings.currency ?? "EGP";
       const openRows = await tx.select({ amountMinor: invoices.amountMinor, paidMinor: invoices.paidMinor })
-        .from(invoices).where(and(eq(invoices.debtorId, input.debtorId), sql`${invoices.status} in ('open','partially_paid')`));
+        .from(invoices).where(and(
+          eq(invoices.debtorId, input.debtorId),
+          eq(invoices.currency, promiseCurrency),
+          sql`${invoices.status} in ('open','partially_paid')`,
+        ));
       availableBalance = openRows.reduce((sum, row) => sum + row.amountMinor - row.paidMinor, 0n);
     }
     if (BigInt(input.amountMinor) > availableBalance) throw new AppError("PROMISE_EXCEEDS_BALANCE", "Promise exceeds available open balance", 400);
@@ -179,7 +203,7 @@ export async function createMerchantPromise(
       amountMinor: BigInt(input.amountMinor), promisedOn: input.promisedOn,
       status: "accepted", source: "manual", note: input.note ?? null, requestedBy: actor, reviewedBy: actor, reviewedAt: new Date(),
     }).returning();
-    return row!;
+    return serializePromiseRow(row!);
   });
 }
 
@@ -204,7 +228,7 @@ export async function decidePromiseToPay(
       updatedAt: now,
     }).where(and(eq(promisesToPay.id, id), eq(promisesToPay.status, row.status))).returning();
     if (!updated) throw new AppError("CONCURRENT_UPDATE", "Promise changed; refresh and retry", 409);
-    return updated;
+    return serializePromiseRow(updated);
   });
 }
 

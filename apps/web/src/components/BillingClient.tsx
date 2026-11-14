@@ -1,19 +1,10 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { formatEgp, formatMoney } from "@tahseel/core";
-import {
-  ArrowUp,
-  Buildings,
-  Check,
-  Crown,
-  Gauge,
-  Lightning,
-  Receipt,
-  ShieldCheck,
-  Sparkle,
-  WarningCircle,
-} from "@phosphor-icons/react";
+import { formatEgp } from "@tahseel/core";
+import { ArrowUp, Buildings, Check, Crown, Gauge, Lightning, Receipt, ShieldCheck, Sparkle, WarningCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { Panel, StatusPill } from "./ui";
 
@@ -101,9 +92,9 @@ export function BillingClient({
           <p
             data-testid="quota-banner"
             role="alert"
-            className="flex items-start gap-2.5 rounded-2xl bg-amber-500/10 p-3.5 text-xs font-bold text-amber-600 dark:text-amber-400"
+            className="flex items-start gap-2.5 rounded-xl bg-status-due-bg p-3.5 text-xs font-bold text-status-due-fg dark:text-status-due-fg"
           >
-            <WarningCircle size={18} weight="fill" aria-hidden className="mt-0.5 shrink-0" />
+            <WarningCircle size={18} aria-hidden className="mt-0.5 shrink-0" />
             <span>
               {quota.state === "exceeded" ? t("quotaExceeded") : t("quotaWarn")}
               {" — "}
@@ -119,10 +110,10 @@ export function BillingClient({
           <div className="flex flex-col gap-4">
             <p className="text-[11px] text-text-muted">{t("placeholderPrices")}</p>
             {quota && (
-              <div className="flex flex-col gap-2 rounded-2xl bg-surface-muted/50 p-3.5">
+              <div className="flex flex-col gap-2 rounded-xl bg-surface-muted/50 p-3.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-text-muted">{t("currentPlan")}</span>
-                  <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-bold text-primary capitalize">
+                  <span className="rounded bg-primary/10 px-2.5 py-0.5 text-xs font-bold text-primary capitalize">
                     {quota.planKey}
                   </span>
                 </div>
@@ -159,9 +150,9 @@ export function BillingClient({
                         disabled={busy || BigInt(p.priceMinor) > 0n}
                         title={BigInt(p.priceMinor) > 0n ? (isAr ? "الأسعار النهائية لم تُعتمد بعد" : "Final pricing has not been decided yet") : undefined}
                         onClick={() => void upgrade(p.key)}
-                        className="inline-flex min-h-[34px] items-center gap-1.5 rounded-xl bg-primary px-3 py-1 text-xs font-bold text-white shadow-xs transition-all hover:bg-primary-hover active:scale-95 disabled:opacity-50"
+                        className={cn(buttonVariants({ variant: "default", size: "sm" }))}
                       >
-                        <ArrowUp size={13} weight="bold" aria-hidden />
+                        <ArrowUp size={13} strokeWidth={2.5} aria-hidden />
                         <span>{BigInt(p.priceMinor) > 0n ? (isAr ? "قريباً" : "Soon") : t("upgrade")}</span>
                       </button>
                     ) : (
@@ -281,8 +272,8 @@ export function BillingClient({
     <div className="flex flex-col gap-8 pb-10">
       {/* Page Header */}
       <div className="flex flex-col items-center gap-3 text-center">
-        <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3.5 py-1 text-xs font-extrabold text-primary">
-          <Crown size={15} weight="fill" aria-hidden />
+        <span className="inline-flex items-center gap-2 rounded bg-primary/10 px-3.5 py-1 text-xs font-extrabold text-primary">
+          <Crown size={15} aria-hidden />
           <span>{isAr ? "الباقات والاشتراكات ٢٠٢٦" : "Plans & Billing 2026"}</span>
         </span>
         <h1 className="text-3xl font-black text-text sm:text-4xl">
@@ -301,9 +292,9 @@ export function BillingClient({
         <div
           data-testid="quota-banner"
           role="alert"
-          className="flex items-center gap-3 rounded-2xl bg-amber-500/10 p-4 font-bold text-amber-700 dark:text-amber-300"
+          className="flex items-center gap-3 rounded-xl bg-status-due-bg p-4 font-bold text-status-due-fg dark:text-status-due-fg"
         >
-          <WarningCircle size={22} weight="fill" aria-hidden className="shrink-0" />
+          <WarningCircle size={22} aria-hidden className="shrink-0" />
           <span>
             {quota.state === "exceeded" ? t("quotaExceeded") : t("quotaWarn")}
             {" — "}
@@ -315,7 +306,7 @@ export function BillingClient({
       )}
 
       {msg && (
-        <div role="status" className="rounded-2xl bg-primary/10 p-4 text-center font-bold text-primary">
+        <div role="status" className="rounded-xl bg-primary/10 p-4 text-center font-bold text-primary">
           {msg}
         </div>
       )}
@@ -331,17 +322,17 @@ export function BillingClient({
           return (
             <div
               key={tier.key}
-              className={`relative flex flex-col justify-between rounded-3xl p-6 sm:p-7 transition-all duration-300 ${
+              className={`relative flex flex-col justify-between rounded-xl p-6 sm:p-7 transition-all duration-300 ${
                 tier.highlighted
-                  ? "bg-surface shadow-xl shadow-primary/10 ring-2 ring-primary dark:shadow-primary/5"
-                  : "bg-surface shadow-sm hover:shadow-md"
+                  ? "bg-surface ring-2 ring-primary dark:"
+                  : "bg-surface"
               }`}
             >
               {/* Most Popular Floating Badge */}
               {tier.badge && (
                 <div className="absolute -top-3.5 start-1/2 -translate-x-1/2 rtl:translate-x-1/2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1 text-xs font-black text-white shadow-md shadow-primary/30">
-                    <Sparkle size={13} weight="fill" aria-hidden />
+                  <span className="inline-flex items-center gap-1.5 rounded bg-primary px-3.5 py-1 text-xs font-black text-primary-foreground">
+                    <Sparkle size={13} aria-hidden />
                     <span>{tier.badge}</span>
                   </span>
                 </div>
@@ -350,12 +341,12 @@ export function BillingClient({
               {/* Card Header */}
               <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
-                  <div className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                    <tier.icon size={26} weight="duotone" />
+                  <div className="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <tier.icon size={26} />
                   </div>
                   {isCurrent && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-extrabold text-emerald-600 dark:text-emerald-400">
-                      <Check size={13} weight="bold" />
+                    <span className="inline-flex items-center gap-1 rounded bg-status-paid-bg px-3 py-1 text-xs font-extrabold text-status-paid-fg dark:text-status-paid-fg">
+                      <Check size={13} strokeWidth={2.5} />
                       <span>{isAr ? "خطتك الحالية" : "Current Plan"}</span>
                     </span>
                   )}
@@ -371,7 +362,7 @@ export function BillingClient({
                 {/* Price Display — prices are undecided placeholders: never
                     show a number as a decided price. Trial is free; paid
                     plans show "pricing coming soon". */}
-                <div className="my-2 rounded-2xl bg-surface-muted/40 p-4">
+                <div className="my-2 rounded-xl bg-surface-muted/40 p-4">
                   {rawPrice === 0 ? (
                     <div className="flex items-baseline gap-1.5">
                       <span className="text-3xl sm:text-4xl font-black text-text" dir="ltr">
@@ -398,8 +389,8 @@ export function BillingClient({
                   <ul className="flex flex-col gap-2.5">
                     {(isAr ? tier.featuresAr : tier.featuresEn).map((feat) => (
                       <li key={feat} className="flex items-start gap-2.5 text-xs text-text-muted">
-                        <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
-                          <Check size={11} weight="bold" />
+                        <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded bg-status-paid-bg text-status-paid-fg dark:text-status-paid-fg">
+                          <Check size={11} strokeWidth={2.5} />
                         </span>
                         <span className="leading-tight">{feat}</span>
                       </li>
@@ -418,13 +409,9 @@ export function BillingClient({
                     disabled={busy || isPaidPlan}
                     title={isPaidPlan ? (isAr ? "الأسعار النهائية لم تُعتمد بعد" : "Final pricing has not been decided yet") : undefined}
                     onClick={() => void upgrade(planKey)}
-                    className={`w-full min-h-[46px] flex items-center justify-center gap-2 rounded-2xl text-xs font-extrabold transition-all duration-200 active:scale-98 disabled:opacity-50 ${
-                      tier.highlighted
-                        ? "bg-primary text-white shadow-md shadow-primary/25 hover:bg-primary-hover"
-                        : "bg-surface-muted hover:bg-callout text-text hover:text-primary"
-                    }`}
+                    className={cn(buttonVariants({ variant: tier.highlighted ? "default" : "secondary", size: "sm" }), "w-full", tier.highlighted && "text-primary-foreground")}
                   >
-                    <ArrowUp size={15} weight="bold" aria-hidden />
+                    <ArrowUp size={15} strokeWidth={2.5} aria-hidden />
                     <span>
                       {isPaidPlan
                         ? (isAr ? "متاح قريباً بعد اعتماد الأسعار" : "Available once pricing is decided")
@@ -432,7 +419,7 @@ export function BillingClient({
                     </span>
                   </button>
                 ) : (
-                  <div className="w-full min-h-[46px] flex items-center justify-center rounded-2xl bg-surface-muted/80 text-xs font-bold text-text-muted">
+                  <div className="w-full min-h-[46px] flex items-center justify-center rounded-xl bg-surface-muted/80 text-xs font-bold text-text-muted">
                     {isAr ? "أنت مشترك في هذه الباقة" : "Active Plan"}
                   </div>
                 )}
@@ -444,10 +431,10 @@ export function BillingClient({
 
       {/* Subscription Invoices History Section */}
       {subInvoices.length > 0 && (
-        <div className="mt-4 flex flex-col gap-4 rounded-3xl bg-surface p-6 shadow-sm">
+        <div className="mt-4 flex flex-col gap-4 rounded-xl bg-surface p-6">
           <div className="flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-base font-extrabold text-text">
-              <Receipt size={18} weight="fill" className="text-primary" />
+              <Receipt size={18} className="text-primary" />
               <span>{isAr ? "سجل فواتير الاشتراك" : "Subscription Invoice History"}</span>
             </h2>
             <span className="text-xs text-text-muted">
@@ -455,10 +442,10 @@ export function BillingClient({
             </span>
           </div>
 
-          <div className="overflow-x-auto rounded-2xl">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-surface-muted/50 text-text-muted">
+          <div className="overflow-x-auto rounded-xl">
+            <table className="w-full min-w-[560px] text-xs">
+              <thead className="sticky top-0">
+                <tr className="bg-surface-muted text-text-muted">
                   <th className="px-4 py-3 text-start font-bold">{isAr ? "الباقة" : "Plan"}</th>
                   <th className="px-4 py-3 text-start font-bold">{isAr ? "فترة الاشتراك" : "Billing Period"}</th>
                   <th className="px-4 py-3 text-start font-bold">{isAr ? "المبلغ" : "Amount"}</th>
@@ -473,8 +460,8 @@ export function BillingClient({
                     : (normPlan === "trial" ? "Trial Period" : normPlan === "starter" ? "Starter Plan" : normPlan === "growth" ? "Growth Plan" : normPlan === "pro" ? "Pro Plan" : inv.planKey);
                   const isFree = BigInt(inv.amountMinor) === 0n;
                   const formattedAmt = isFree
-                    ? (isAr ? "مجاناً" : "Free")
-                    : formatMoney(BigInt(inv.amountMinor), "EGP", { locale });
+                    ? (isAr ? "0.00 ج.م (مجاناً)" : "0.00 EGP (Free)")
+                    : `${formatEgp(BigInt(inv.amountMinor))} ${isAr ? "ج.م" : "EGP"}`;
                   const normStatus = (inv.status || "").toLowerCase();
                   const statusLabel = isAr
                     ? (normStatus === "paid" ? "تم السداد" : normStatus === "open" ? "معلقة" : inv.status)
@@ -502,10 +489,10 @@ export function BillingClient({
       )}
 
       {/* Trust & Guarantee Callout */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl bg-surface-muted/40 p-5 sm:p-6 text-xs text-text-muted">
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl bg-surface-muted/40 p-5 sm:p-6 text-xs text-text-muted">
         <div className="flex items-center gap-3">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <ShieldCheck size={22} weight="fill" />
+            <ShieldCheck size={22} />
           </div>
           <div>
             <p className="font-bold text-text">

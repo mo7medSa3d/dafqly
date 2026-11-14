@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { AppError } from "@tahseel/core";
 import { aiGlobalBudget, aiGlobalUsage, type Db } from "@tahseel/db";
-import type { OcrLlmProvider } from "@tahseel/providers";
+import { primaryModelFor, resolveLlmProviderConfigs, type LlmProviderConfig, type OcrLlmProvider } from "@tahseel/providers";
 import { ownerDb } from "./db";
 import { env } from "./env";
 
@@ -11,7 +11,7 @@ const tenantContext = new AsyncLocalStorage<string>();
 export function withAiTenantContext<T>(tenantId: string, run: () => T): T {
   return tenantContext.run(tenantId, run);
 }
-export function activeAiTenantId(): string | undefined {
+function activeAiTenantId(): string | undefined {
   return tenantContext.getStore();
 }
 
@@ -19,7 +19,30 @@ function monthStart(date = new Date()): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-01`;
 }
 
-export function estimateAiCostUsdMicros(model: string, inputTokens: number, outputTokens: number): bigint {
+export interface AiRateOverride { input: number; output: number }
+
+function safeConfigs(): LlmProviderConfig[] {
+  try { return resolveLlmProviderConfigs(env()); } catch { return []; }
+}
+
+/**
+ * Operator-supplied rates (USD per 1M tokens) for providers whose models are
+ * not in the built-in table — per provider via AI_PROVIDERS_JSON `pricing`,
+ * or globally via AI_PRICE_INPUT_USD_PER_M / AI_PRICE_OUTPUT_USD_PER_M.
+ * Explicit rates win over the built-in table, so a re-priced/proxied model is
+ * metered at what the operator actually pays.
+ */
+export function rateOverrideFor(model: string): AiRateOverride | undefined {
+  const hit = safeConfigs().find((c) => c.pricing && [c.model, c.modelFast, c.modelVision].includes(model));
+  if (hit?.pricing) return { input: hit.pricing.inputUsdPerM, output: hit.pricing.outputUsdPerM };
+  const e = env();
+  if (e.AI_PRICE_INPUT_USD_PER_M !== undefined && e.AI_PRICE_OUTPUT_USD_PER_M !== undefined) {
+    return { input: e.AI_PRICE_INPUT_USD_PER_M, output: e.AI_PRICE_OUTPUT_USD_PER_M };
+  }
+  return undefined;
+}
+
+export function estimateAiCostUsdMicros(model: string, inputTokens: number, outputTokens: number, override?: AiRateOverride): bigint {
   const normalized = model.toLowerCase();
   // Rates are USD per million tokens, verified 2026-11-13 against the
   // providers' official pricing pages (Google Gemini Developer API pricing
@@ -48,6 +71,7 @@ export function estimateAiCostUsdMicros(model: string, inputTokens: number, outp
   } else if (normalized.includes("sonnet-5-5")) {
     inputRate = 2; outputRate = 10;
   }
+  if (override) { inputRate = override.input; outputRate = override.output; }
   // USD per million tokens * tokens = micro-USD (one USD = one million micros).
   return BigInt(Math.ceil(Math.max(0, inputTokens) * inputRate + Math.max(0, outputTokens) * outputRate));
 }
@@ -96,7 +120,8 @@ export async function settleGlobalAiBudget(
   await owner.transaction(async (tx) => {
     const [usage] = await tx.select().from(aiGlobalUsage).where(eq(aiGlobalUsage.requestKey, requestKey)).for("update");
     if (!usage || usage.status !== "reserved") return;
-    const actual = estimateAiCostUsdMicros(model ?? usage.model, inputTokens, outputTokens);
+    const meteredModel = model ?? usage.model;
+    const actual = estimateAiCostUsdMicros(meteredModel, inputTokens, outputTokens, rateOverrideFor(meteredModel));
     const currentMonth = usage.createdAt.toISOString().slice(0, 7);
     const budgetPeriod = monthStart();
     if (currentMonth === budgetPeriod.slice(0, 7)) {
@@ -154,20 +179,13 @@ export function budgetedLlmProvider<T extends OcrLlmProvider>(provider: T): T {
         const tenantId = activeAiTenantId();
         if (!tenantId || env().NODE_ENV === "test") return method.apply(target, args);
         const key = randomUUID();
-        const config = env();
-        const provider = config.GEMINI_API_KEY && !config.ANTHROPIC_API_KEY
-          ? "gemini"
-          : config.ANTHROPIC_API_KEY && !config.GEMINI_API_KEY
-            ? "anthropic"
-            : config.AI_PROVIDER;
         const methodName = String(property);
-        const modelHint = provider === "anthropic"
-          ? methodName === "runAgent" ? config.LLM_MODEL_AGENT
-            : ["extractLedgerPage", "extractReceipt", "extractCheque"].includes(methodName) ? config.LLM_MODEL_VISION
-              : config.LLM_MODEL_FAST
-          : methodName === "runAgent" ? config.AI_MODEL
-            : ["extractLedgerPage", "extractReceipt", "extractCheque"].includes(methodName) ? config.GEMINI_MODEL_VISION
-              : config.GEMINI_MODEL_FAST;
+        // Model hint for the pre-call reservation row comes from the PRIMARY
+        // configured provider (any vendor); the real model id reported by the
+        // adapter replaces it when the call settles.
+        const operation = methodName === "runAgent" ? "agent"
+          : ["extractLedgerPage", "extractReceipt", "extractCheque"].includes(methodName) ? "vision" : "fast";
+        const modelHint = primaryModelFor(safeConfigs(), operation) ?? "unknown-model";
         await reserveGlobalAiBudget(ownerDb(), tenantId, key, modelHint);
         try {
           const result = await method.apply(target, args);

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
-import { Clock, ShieldCheck, UserCheck } from "@phosphor-icons/react";
+import { Clock, ShieldCheck, UserCheck } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { Panel } from "./ui";
 
@@ -117,7 +117,7 @@ export function AuditTrail() {
     >
       <div className="border-b border-border/60 bg-callout/40 px-5 py-3 text-xs text-text-muted">
         <p className="flex items-center gap-2">
-          <ShieldCheck size={16} weight="fill" className="text-primary shrink-0" />
+          <ShieldCheck size={16} className="text-primary shrink-0" />
           <span>
             {isAr
               ? "سجل غير قابل للتعديل أو الحذف، مسجل بواسطة قاعدة البيانات لضمان نزاهة الحسابات ومتابعة أي تغيير يطرأ على الفواتير والمدفوعات."
@@ -136,9 +136,9 @@ export function AuditTrail() {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-start text-xs sm:text-sm">
-            <thead>
-              <tr className="border-b border-border/60 bg-surface-muted/50 text-text-subtle font-semibold">
+          <table className="w-full min-w-[560px] text-start text-xs sm:text-sm">
+            <thead className="sticky top-0">
+              <tr className="border-b border-border/60 bg-surface-muted text-text-subtle font-semibold">
                 <th className="px-4 py-2.5 text-start">{t("action")}</th>
                 <th className="px-4 py-2.5 text-start">{t("entity")}</th>
                 <th className="px-4 py-2.5 text-start">{t("actor")}</th>
@@ -151,7 +151,7 @@ export function AuditTrail() {
                 return (
                   <tr key={log.id} className="transition-colors hover:bg-callout/30">
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold ${actionMeta.color}`}>
+                      <span className={`inline-flex items-center rounded border px-2.5 py-0.5 text-xs font-bold ${actionMeta.color}`}>
                         {actionMeta.label}
                       </span>
                     </td>
@@ -162,13 +162,13 @@ export function AuditTrail() {
                     </td>
                     <td className="px-4 py-3 text-text-muted">
                       <span className="inline-flex items-center gap-1 font-mono text-xs">
-                        <UserCheck size={13} weight="fill" className="text-primary" />
+                        <UserCheck size={13} className="text-primary" />
                         {log.actorUserId ? log.actorUserId.slice(0, 10) : (isAr ? "النظام" : "System")}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-text-muted font-medium whitespace-nowrap" dir="ltr">
                       <span className="inline-flex items-center gap-1">
-                        <Clock size={13} weight="fill" className="text-text-subtle" />
+                        <Clock size={13} className="text-text-subtle" />
                         {formatDate(log.createdAt, locale)}
                       </span>
                     </td>

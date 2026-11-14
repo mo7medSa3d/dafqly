@@ -18,15 +18,15 @@
     "test:e2e": "pnpm db:migrate && RESET_SEED=1 DEMO_PASSWORD=demo-password-123 pnpm db:seed && pnpm --filter @tahseel/web test:e2e",
     "eval": "pnpm --filter @tahseel/eval eval",
     "db:migrate": "pnpm --filter @tahseel/db migrate",
-    "db:seed": "pnpm --filter @tahseel/db seed"
+    "db:seed": "pnpm --filter @tahseel/db seed",
+    "db:seed:rich": "pnpm --filter @tahseel/db seed:rich"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "eslint": "^9.39.1",
     "globals": "^15.15.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.46.3",
-    "vitest": "^3.2.4"
+    "typescript-eslint": "^8.46.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

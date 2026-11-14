@@ -1,10 +1,11 @@
 "use client";
+import { inputVariants } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
-import { Camera, CheckCircle, Eye, Notebook, Trash, WarningCircle } from "@phosphor-icons/react";
-import { currencyMinorExponent, formatCurrencyMinor } from "@tahseel/core";
+import { Camera, CheckCircle, Eye, Notebook, Trash, WarningCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
-import { useCurrency } from "./CurrencyContext";
 import { Panel, StatusPill, btnGhost, btnPrimary } from "./ui";
 
 /**
@@ -39,8 +40,6 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 export function LedgerPhotoClient() {
-  const { currency } = useCurrency();
-  const minorScale = 10 ** currencyMinorExponent(currency);
   const t = useTranslations("ledgerPhoto");
   const locale = useLocale();
   const isAr = locale === "ar";
@@ -119,7 +118,7 @@ export function LedgerPhotoClient() {
         rowId: row.id,
         ...(e.name !== undefined ? { name: e.name } : {}),
         ...(e.phone !== undefined ? { phone: e.phone } : {}),
-        ...(e.amountMinor !== undefined ? { amount: formatCurrencyMinor(BigInt(e.amountMinor), currency).replace(/,/g, "") } : {}),
+        ...(e.amountMinor !== undefined ? { amount: (Number(e.amountMinor) / 100).toFixed(2) } : {}),
         ...(e.date !== undefined ? { date: e.date } : {}),
         ...(e.debtorId !== undefined ? { debtorId: e.debtorId } : {}),
       });
@@ -147,19 +146,19 @@ export function LedgerPhotoClient() {
   };
   const lowNote = (
     <span className="mt-1 flex items-center gap-1 text-xs font-bold text-status-due-fg">
-      <WarningCircle size={13} weight="fill" aria-hidden />
+      <WarningCircle size={13} aria-hidden />
       {t("lowConfidence")}
     </span>
   );
-  const cellInput = "w-full rounded-md bg-transparent p-1.5 focus:bg-surface";
+  const cellInput = cn(inputVariants, "min-h-[32px] rounded-md border-transparent bg-transparent px-1.5 py-1 hover:border-border focus:bg-surface");
 
   return (
     <section className="flex flex-col gap-6">
       <div className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-12">
         {/* Dropzone Column (7 cols) */}
-        <label className="brand-pattern-light panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-border/80 bg-surface/90 p-8 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/30 hover:shadow-md lg:col-span-7">
-          <div className="flex size-14 items-center justify-center rounded-2xl bg-callout text-primary">
-            <Camera size={32} weight="fill" aria-hidden />
+        <label className="panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border border-border/80 bg-surface/90 p-8 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/30 lg:col-span-7">
+          <div className="flex size-14 items-center justify-center rounded-xl bg-callout text-primary">
+            <Camera size={32} aria-hidden />
           </div>
           <div className="flex flex-col items-center gap-1">
             <span className="text-lg font-extrabold text-text">{t("pick")}</span>
@@ -181,17 +180,17 @@ export function LedgerPhotoClient() {
         </label>
 
         {/* Smart Scan Guide Column (5 cols) */}
-        <div className="panel-shadow flex flex-col justify-between rounded-2xl border border-border bg-surface p-6 lg:col-span-5">
+        <div className="panel-shadow flex flex-col justify-between rounded-xl border border-border bg-surface p-6 lg:col-span-5">
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
-              <Notebook size={20} weight="fill" className="text-primary" />
+              <Notebook size={20} className="text-primary" />
               <h2 className="text-base font-bold text-text">
                 {isAr ? "المسح الضوئي الذكي" : "Smart Document Scan"}
               </h2>
             </div>
             <ul className="flex flex-col gap-2 pt-1 text-xs text-text-muted" dir={isAr ? "rtl" : "ltr"}>
               <li className="flex items-start gap-2">
-                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">1</span>
+                <span className="flex size-5 shrink-0 items-center justify-center rounded bg-primary/10 text-[11px] font-bold text-primary">1</span>
                 <span>
                   {isAr
                     ? "التقاط أو رفع صور دفاتر الحسابات والمستندات الورقية"
@@ -199,7 +198,7 @@ export function LedgerPhotoClient() {
                 </span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">2</span>
+                <span className="flex size-5 shrink-0 items-center justify-center rounded bg-primary/10 text-[11px] font-bold text-primary">2</span>
                 <span>
                   {isAr
                     ? "استخراج فوري للقيود والمطابقة التلقائية مع سجلات العملاء"
@@ -207,7 +206,7 @@ export function LedgerPhotoClient() {
                 </span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">3</span>
+                <span className="flex size-5 shrink-0 items-center justify-center rounded bg-primary/10 text-[11px] font-bold text-primary">3</span>
                 <span>
                   {isAr
                     ? "مراجعة واعتماد بنقرة واحدة للتحويل إلى فواتير نشطة"
@@ -216,7 +215,7 @@ export function LedgerPhotoClient() {
               </li>
             </ul>
           </div>
-          <div className="mt-4 rounded-xl bg-surface-muted/60 p-3 text-[11px] text-text-muted" dir={isAr ? "rtl" : "ltr"}>
+          <div className="mt-4 rounded-xl bg-surface-muted/60 p-3 text-[11px] text-text-subtle" dir={isAr ? "rtl" : "ltr"}>
             {isAr
               ? "تُبرز الحقول التي تتطلب تدقيقاً للمراجعة قبل الاعتماد النهائي."
               : "Fields requiring review are highlighted for verification."}
@@ -233,8 +232,8 @@ export function LedgerPhotoClient() {
       {msg && <p role="status" className="rounded-xl border border-border bg-surface px-4 py-3 font-bold">{msg}</p>}
 
       {job && job.rows.length === 0 && (
-        <div data-testid="ledger-empty" className="panel-shadow flex flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-surface p-8 text-center">
-          <WarningCircle size={32} weight="fill" className="text-status-due-fg" />
+        <div data-testid="ledger-empty" className="panel-shadow flex flex-col items-center justify-center gap-3 rounded-xl border border-border bg-surface p-8 text-center">
+          <WarningCircle size={32} className="text-status-due-fg" />
           <p className="font-bold text-text">
             {locale === "en" ? "No transactions were detected on this page" : "لم يتم التعرف على أي معاملات في الصفحة"}
           </p>
@@ -249,9 +248,9 @@ export function LedgerPhotoClient() {
       {job && job.rows.length > 0 && (
         <Panel padded={false} className="overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr className="bg-surface-muted/70">
+            <table className="w-full min-w-[720px] border-collapse text-sm">
+              <thead className="sticky top-0">
+                <tr className="bg-surface-muted">
                   <th className="px-3 py-2.5 text-start font-bold">{t("name")}</th>
                   <th className="px-3 py-2.5 text-start font-bold">{t("phone")}</th>
                   <th className="px-3 py-2.5 text-start font-bold">{t("amount")}</th>
@@ -275,8 +274,8 @@ export function LedgerPhotoClient() {
                     </td>
                     <td className={`px-2 py-1.5 ${row.cellConfidence && row.cellConfidence.amount < LOW ? lowCell : ""}`}>
                       <input aria-label={t("amount")} className={cellInput}
-                        value={edits[row.id]?.amountMinor !== undefined ? String(Number(edits[row.id]!.amountMinor) / minorScale) : row.data ? formatCurrencyMinor(BigInt(row.data.amountMinor), currency).replace(/,/g, "") : ""}
-                        onChange={(e) => edit(row, { amountMinor: String(Math.round(Number(e.target.value || "0") * minorScale)) })} />
+                        value={edits[row.id]?.amountMinor !== undefined ? String(Number(edits[row.id]!.amountMinor) / 100) : row.data ? (Number(row.data.amountMinor) / 100).toFixed(2) : ""}
+                        onChange={(e) => edit(row, { amountMinor: String(Math.round(Number(e.target.value || "0") * 100)) })} />
                       {row.cellConfidence && row.cellConfidence.amount < LOW && lowNote}
                     </td>
                     <td className="px-2 py-1.5">
@@ -286,13 +285,13 @@ export function LedgerPhotoClient() {
                     <td className="px-2 py-1.5 text-xs">
                       {row.suggestedDebtorId
                         ? (
-                          <button type="button" className="rounded-full border border-border px-2.5 py-1 font-bold transition-colors hover:border-border-strong hover:bg-surface-muted"
+                          <button type="button" className={cn(buttonVariants({ variant: "outline", size: "default" }))}
                             onClick={() => edit(row, { debtorId: row.suggestedDebtorId })}>
                             {t("useSuggestion", { score: Math.round((row.suggestionScore ?? 0) * 100) })}
                           </button>
                         )
                         : <span className="text-text-muted">{t("newDebtor")}</span>}
-                      {val(row, "debtorId") && <span className="mt-1 block font-bold text-teal-700 dark:text-teal-300">{t("suggestionAccepted")}</span>}
+                      {val(row, "debtorId") && <span className="mt-1 block font-bold text-status-paid-fg dark:text-status-paid-fg">{t("suggestionAccepted")}</span>}
                     </td>
                     <td className="px-2 py-1.5">
                       <button type="button" disabled={busy} className={btnGhost}
@@ -306,16 +305,16 @@ export function LedgerPhotoClient() {
           {job.status === "pending_review" && (
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border p-4 sm:px-6">
               <button data-testid="ledger-commit" type="button" disabled={busy} onClick={() => void onCommit()} className={btnPrimary}>
-                <CheckCircle size={17} weight="fill" />
+                <CheckCircle size={17} />
                 <span>{t("commit")}</span>
               </button>
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => void onDeleteJob(job.id)}
-                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-border bg-surface px-3.5 py-1.5 text-xs font-bold text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 disabled:opacity-50"
+                className={cn(buttonVariants({ variant: "outline", size: "sm" }), "text-text-muted hover:border-danger hover:text-danger")}
               >
-                <Trash size={15} weight="bold" />
+                <Trash size={15} strokeWidth={2.5} />
                 <span>{t("deleteDraft")}</span>
               </button>
             </div>
@@ -337,7 +336,7 @@ export function LedgerPhotoClient() {
                   }`}
                 >
                   <div className="flex min-w-0 items-center gap-3">
-                    <Notebook size={20} weight="fill" aria-hidden className="shrink-0 text-teal-600 dark:text-teal-300" />
+                    <Notebook size={20} aria-hidden className="shrink-0 text-status-paid-fg dark:text-status-paid-fg" />
                     <span className="truncate text-sm font-bold text-text">{j.fileName}</span>
                     <span className="text-xs">
                       {isPending ? (
@@ -353,7 +352,7 @@ export function LedgerPhotoClient() {
                       className={isPending ? btnPrimary : btnGhost}
                       onClick={() => void loadJob(j.id)}
                     >
-                      <Eye size={15} weight="bold" />
+                      <Eye size={15} strokeWidth={2.5} />
                       <span>{t("open")}</span>
                     </button>
                     {isPending && (
@@ -363,9 +362,9 @@ export function LedgerPhotoClient() {
                         disabled={busy}
                         title={t("deleteDraft")}
                         aria-label={t("deleteDraft")}
-                        className="inline-flex size-9 items-center justify-center rounded-xl border border-border bg-surface text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 disabled:opacity-50"
+                        className={cn(buttonVariants({ variant: "outline", size: "icon" }), "size-9 text-text-muted hover:border-danger hover:text-danger")}
                       >
-                        <Trash size={15} weight="bold" />
+                        <Trash size={15} strokeWidth={2.5} />
                       </button>
                     )}
                   </div>

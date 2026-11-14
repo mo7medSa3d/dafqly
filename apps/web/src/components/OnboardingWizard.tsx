@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
-import { ArrowLeft, CheckCircle } from "@phosphor-icons/react";
+import { ArrowLeft, CheckCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { BrandLockup } from "./BrandMark";
 import { ThemeToggle } from "./ThemeToggle";
@@ -69,17 +69,17 @@ export function OnboardingWizard() {
           const current = i === step;
           return (
             <li key={label} className="flex flex-1 items-center gap-2 last:flex-none">
-              <span className={`flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-extrabold ${done || current ? "bg-primary text-primary-fg" : "bg-surface-muted text-text-muted"}`}>
-                {done ? <CheckCircle size={17} weight="fill" aria-hidden /> : <span className="tnum" dir="ltr">{i + 1}</span>}
+              <span className={`flex size-8 shrink-0 items-center justify-center rounded text-sm font-extrabold ${done || current ? "bg-primary text-primary-fg" : "bg-surface-muted text-text-muted"}`}>
+                {done ? <CheckCircle size={17} aria-hidden /> : <span className="tnum" dir="ltr">{i + 1}</span>}
               </span>
               <span className={`hidden text-sm sm:block ${current ? "font-bold" : done ? "font-semibold" : "text-text-muted"}`}>{label}</span>
-              {i < steps.length - 1 && <span className={`mx-1 h-0.5 flex-1 rounded-full ${done ? "bg-teal-500" : "bg-border"}`} aria-hidden />}
+              {i < steps.length - 1 && <span className={`mx-1 h-0.5 flex-1 rounded ${done ? "bg-status-paid-fg" : "bg-border"}`} aria-hidden />}
             </li>
           );
         })}
       </ol>
 
-      <section className="panel-shadow rounded-2xl border border-border bg-surface p-5 sm:p-7">
+      <section className="panel-shadow rounded-xl border border-border bg-surface p-5 sm:p-7">
         {step === 0 && (
           <div className="flex flex-col gap-4">
             <label className={labelCls}><span>{t("businessNameAr")}</span>
@@ -124,13 +124,13 @@ export function OnboardingWizard() {
                 <input data-testid="ob-quiet-end" className={inputCls} type="time" dir="ltr" value={quietEnd} onChange={(e) => setQuietEnd(e.target.value)} /></label>
             </div>
             <label className="flex min-h-touch items-center gap-2.5">
-              <input data-testid="ob-friday" type="checkbox" className="size-[18px] accent-[var(--teal-600)]" checked={fridayMorningSkip} onChange={(e) => setFridayMorningSkip(e.target.checked)} />
+              <input data-testid="ob-friday" type="checkbox" className="size-[18px] accent-primary" checked={fridayMorningSkip} onChange={(e) => setFridayMorningSkip(e.target.checked)} />
               <span className="font-semibold">{t("fridaySkip")}</span></label>
             <label className={labelCls}><span>{t("defaultTermsDays")}</span>
               <input data-testid="ob-terms" className={inputCls} type="number" dir="ltr" min={0} max={120} value={defaultTermsDays} onChange={(e) => setDefaultTermsDays(Number(e.target.value))} /></label>
             <div className="flex gap-2">
               <button className={backBtn} onClick={() => setStep(0)} aria-label={tc("back")}>
-                <ArrowLeft size={18} weight="fill" aria-hidden className="rtl:-scale-x-100" />
+                <ArrowLeft size={18} aria-hidden className="rtl:-scale-x-100" />
               </button>
               <button data-testid="ob-next" className={`${btnPrimary} flex-1`} onClick={() => setStep(2)}>{t("stepTone")}</button>
             </div>
@@ -145,19 +145,19 @@ export function OnboardingWizard() {
                 { value: "polite" as const, label: t("tonePolite") },
                 { value: "firm" as const, label: t("toneFirm") },
               ]).map((o) => (
-                <label key={o.value} className={`flex min-h-touch cursor-pointer items-center gap-2.5 rounded-lg border px-4 py-2.5 font-semibold transition-colors ${tone === o.value ? "border-teal-600 bg-teal-50 dark:bg-surface-muted" : "border-border hover:border-border-strong"}`}>
-                  <input type="radio" name="tone" className="size-[18px] accent-[var(--teal-600)]" checked={tone === o.value} onChange={() => setTone(o.value)} />
+                <label key={o.value} className={`flex min-h-touch cursor-pointer items-center gap-2.5 rounded-lg border px-4 py-2.5 font-semibold transition-colors ${tone === o.value ? "border-primary bg-muted text-foreground" : "border-border hover:border-border-strong"}`}>
+                  <input type="radio" name="tone" className="size-[18px] accent-primary" checked={tone === o.value} onChange={() => setTone(o.value)} />
                   <span>{o.label}</span>
                 </label>
               ))}
             </fieldset>
             <label className="flex items-start gap-2.5 rounded-lg bg-surface-muted/60 px-4 py-3">
-              <input data-testid="ob-consent" type="checkbox" className="mt-1 size-[18px] shrink-0 accent-[var(--teal-600)]" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+              <input data-testid="ob-consent" type="checkbox" className="mt-1 size-[18px] shrink-0 accent-primary" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
               <span className="text-sm">{t("consent")}</span></label>
             {error && <p role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-sm font-semibold text-danger">{error}</p>}
             <div className="flex gap-2">
               <button className={backBtn} onClick={() => setStep(1)} aria-label={tc("back")}>
-                <ArrowLeft size={18} weight="fill" aria-hidden className="rtl:-scale-x-100" />
+                <ArrowLeft size={18} aria-hidden className="rtl:-scale-x-100" />
               </button>
               <button data-testid="ob-create" disabled={busy} onClick={onCreate} className={`${btnPrimary} flex-1`}>{t("createCta")}</button>
             </div>

@@ -1,18 +1,10 @@
 "use client";
 
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  ArrowsClockwise,
-  Bell,
-  BellRinging,
-  CheckCircle,
-  Checks,
-  Sparkle,
-  Warning,
-  WarningCircle,
-  X,
-} from "@phosphor-icons/react";
+import { ArrowsClockwise, Bell, BellRinging, CheckCircle, Checks, Sparkle, Warning, WarningCircle, X } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 
 interface NotificationItem {
@@ -201,29 +193,37 @@ export function NotificationBell({ locale }: { locale: string }) {
     }
   };
 
+  const badge = unreadCount > 9 ? "9+" : String(unreadCount);
+  // WCAG 2.5.3: the visible badge count must be part of the accessible
+  // name, otherwise axe flags label-content-name-mismatch.
+  const bellLabel =
+    unreadCount > 0
+      ? isEn
+        ? `Notifications, ${badge} unread`
+        : `الإشعارات، ${badge} غير مقروءة`
+      : isEn
+        ? "Notifications"
+        : "الإشعارات";
+
   return (
     <div ref={rootRef} className="relative">
       <button
         type="button"
         data-testid="notification-bell-btn"
         onClick={() => setOpen((v) => !v)}
-        aria-label={isEn ? "Notifications" : "الإشعارات"}
+        aria-label={bellLabel}
         aria-expanded={open}
-        className={`relative flex size-9 items-center justify-center rounded-full border transition-all ${
-          open
-            ? "border-primary bg-callout text-primary"
-            : "border-border/70 bg-surface-muted/60 text-text-muted hover:border-border hover:bg-surface-muted hover:text-text"
-        }`}
+        className={cn(buttonVariants({ variant: open ? "soft" : "outline", size: "icon" }), "relative size-9", !(open) && "text-text-muted hover:border-border")}
       >
         {unreadCount > 0 ? (
-          <BellRinging size={17} weight="fill" aria-hidden className={urgentCount > 0 ? "text-status-overdue-fg" : "text-primary"} />
+          <BellRinging size={17} aria-hidden className={urgentCount > 0 ? "text-status-overdue-fg" : "text-primary"} />
         ) : (
-          <Bell size={17} weight="fill" aria-hidden />
+          <Bell size={17} aria-hidden />
         )}
         {unreadCount > 0 && (
           <span
             data-testid="notification-unread-badge"
-            className={`absolute -top-1 ${isEn ? "-right-1" : "-left-1"} flex min-w-[18px] items-center justify-center rounded-full px-1 py-0.5 text-[10px] font-bold leading-none text-primary-fg ${
+            className={`absolute -top-1 ${isEn ? "-right-1" : "-left-1"} flex min-w-[18px] items-center justify-center rounded px-1 py-0.5 text-[10px] font-bold leading-none text-primary-fg ${
               urgentCount > 0 ? "bg-danger" : "bg-primary"
             }`}
           >
@@ -237,7 +237,7 @@ export function NotificationBell({ locale }: { locale: string }) {
           role="dialog"
           aria-label={isEn ? "Workspace Notifications" : "إشعارات مساحة العمل"}
           data-testid="notification-popover"
-          className={`absolute top-11 z-50 w-[min(92vw,390px)] overflow-hidden rounded-2xl border border-border bg-surface panel-shadow ${
+          className={`absolute top-11 z-50 w-[min(92vw,390px)] overflow-hidden rounded-xl border border-border bg-surface panel-shadow ${
             isEn ? "right-0" : "left-0"
           }`}
         >
@@ -248,7 +248,7 @@ export function NotificationBell({ locale }: { locale: string }) {
                 {isEn ? "Notifications" : "الإشعارات"}
               </span>
               {unreadCount > 0 && (
-                <span className="rounded-full bg-callout px-2 py-0.5 text-[11px] font-bold text-primary">
+                <span className="rounded bg-callout px-2 py-0.5 text-[11px] font-bold text-primary">
                   {unreadCount}
                 </span>
               )}
@@ -259,11 +259,10 @@ export function NotificationBell({ locale }: { locale: string }) {
                 onClick={() => void syncNow()}
                 disabled={syncing}
                 title={isEn ? "Refresh alerts" : "تحديث التنبيهات"}
-                className="flex items-center gap-1 rounded-full border border-border/70 bg-surface-muted/60 px-2.5 py-1 text-[11px] font-semibold text-text-muted transition-colors hover:text-text disabled:opacity-50"
+                className={cn(buttonVariants({ variant: "outline", size: "xs" }), "text-text-muted")}
               >
                 <ArrowsClockwise
                   size={13}
-                  weight="fill"
                   aria-hidden
                   className={syncing ? "animate-spin text-primary" : ""}
                 />
@@ -273,9 +272,9 @@ export function NotificationBell({ locale }: { locale: string }) {
                 <button
                   type="button"
                   onClick={() => void handleMarkAllRead()}
-                  className="flex items-center gap-1 rounded-full bg-callout px-2.5 py-1 text-[11px] font-semibold text-primary transition-opacity hover:opacity-85"
+                  className={cn(buttonVariants({ variant: "soft", size: "xs" }))}
                 >
-                  <Checks size={13} weight="fill" aria-hidden />
+                  <Checks size={13} aria-hidden />
                   <span>{isEn ? "Read all" : "قراءة الكل"}</span>
                 </button>
               )}
@@ -295,11 +294,7 @@ export function NotificationBell({ locale }: { locale: string }) {
                 key={tab.id}
                 type="button"
                 onClick={() => setFilter(tab.id)}
-                className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
-                  filter === tab.id
-                    ? "bg-primary text-primary-fg"
-                    : "text-text-muted hover:bg-surface hover:text-text"
-                }`}
+                className={cn(buttonVariants({ variant: filter === tab.id ? "default" : "ghost", size: "sm" }), !(filter === tab.id) && "text-text-muted")}
               >
                 {isEn ? tab.labelEn : tab.labelAr}
               </button>
@@ -307,15 +302,15 @@ export function NotificationBell({ locale }: { locale: string }) {
           </div>
 
           {/* Notification Items */}
-          <div className="max-h-[380px] overflow-y-auto divide-y divide-border/50 no-scrollbar" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
+          <div className="max-h-[380px] overflow-y-auto divide-y divide-border/50">
             {loading ? (
               <div className="px-4 py-8 text-center text-xs text-text-muted">
                 {isEn ? "Loading notifications..." : "جاري تحميل الإشعارات..."}
               </div>
             ) : filteredItems.length === 0 ? (
               <div className="flex flex-col items-center gap-2 px-6 py-9 text-center">
-                <span className="flex size-10 items-center justify-center rounded-full bg-callout text-primary">
-                  <CheckCircle size={20} weight="fill" aria-hidden />
+                <span className="flex size-10 items-center justify-center rounded bg-callout text-primary">
+                  <CheckCircle size={20} aria-hidden />
                 </span>
                 <p className="text-sm font-semibold text-text">
                   {isEn ? "You're all caught up" : "لا توجد تنبيهات جديدة"}
@@ -339,7 +334,7 @@ export function NotificationBell({ locale }: { locale: string }) {
                     }`}
                   >
                     <span className={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl ${box}`}>
-                      <Icon size={16} weight="fill" aria-hidden />
+                      <Icon size={16} aria-hidden />
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
@@ -352,9 +347,9 @@ export function NotificationBell({ locale }: { locale: string }) {
                             type="button"
                             onClick={(e) => void handleDismiss(e, item.id, unread, item.severity === "urgent")}
                             aria-label={isEn ? "Dismiss" : "إخفاء"}
-                            className="rounded-full p-0.5 text-text-subtle opacity-0 transition-opacity hover:bg-surface-muted hover:text-text group-hover:opacity-100"
+                            className={cn(buttonVariants({ variant: "ghost", size: "iconSm" }), "size-6 text-text-subtle opacity-0 group-hover:opacity-100")}
                           >
-                            <X size={12} weight="fill" aria-hidden />
+                            <X size={12} aria-hidden />
                           </button>
                         </div>
                       </div>

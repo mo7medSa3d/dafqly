@@ -1,21 +1,11 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useTranslations, useLocale } from "next-intl";
 import { useCurrency } from "./CurrencyContext";
-import {
-  ChatCircleDots,
-  Check,
-  CheckCircle,
-  Clock,
-  Copy,
-  Robot,
-  ShieldCheck,
-  Sparkle,
-  UploadSimple,
-  User,
-  XCircle,
-} from "@phosphor-icons/react";
+import { ChatCircleDots, Check, CheckCircle, Clock, Copy, Robot, ShieldCheck, Sparkle, UploadSimple, User, XCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { InitialAvatar, LoadingState, Panel, btnPrimary, inputCls, labelCls } from "./ui";
 
@@ -171,7 +161,7 @@ export function AiInboxClient() {
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-extrabold text-text">{t("claimsTitle")}</h2>
-            <span className="rounded-full bg-callout px-3 py-1 text-xs font-bold text-primary">
+            <span className="rounded bg-callout px-3 py-1 text-xs font-bold text-primary">
               {claims.length} {isAr ? "مطالبات" : "Claims"}
             </span>
           </div>
@@ -179,12 +169,12 @@ export function AiInboxClient() {
           {loading ? (
             <LoadingState isAr={isAr} />
           ) : claims.length === 0 ? (
-            <div className="panel-shadow flex items-center gap-3 rounded-2xl border border-border bg-surface p-6 text-sm text-text-muted">
-              <Clock size={22} weight="fill" className="shrink-0 text-text-subtle" />
+            <div className="panel-shadow flex items-center gap-3 rounded-xl border border-border bg-surface p-6 text-sm text-text-muted">
+              <Clock size={22} className="shrink-0 text-text-subtle" />
               <span>{t("claimsEmpty")}</span>
             </div>
           ) : (
-            <div className="panel-shadow overflow-hidden rounded-2xl border border-border bg-surface">
+            <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
               <ul className="flex flex-col divide-y divide-border">
                 {claims.map((c) => (
                   <li key={c.id} data-testid={`claim-${c.id}`} className="flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
@@ -196,7 +186,7 @@ export function AiInboxClient() {
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      <span className="tnum text-lg font-black text-text" dir="ltr">{formatAmountOnly(BigInt(c.amountMinor))}</span>
+                      <span className="tnum text-lg font-extrabold text-primary" dir="ltr">{formatAmountOnly(BigInt(c.amountMinor))}</span>
                       <div className="flex gap-2">
                         <button
                           type="button"
@@ -204,16 +194,16 @@ export function AiInboxClient() {
                           className={`${btnPrimary} px-3 py-1.5 text-xs font-bold`}
                           onClick={() => void actOnClaim(c.id, "confirm")}
                         >
-                          <CheckCircle size={15} weight="fill" aria-hidden />
+                          <CheckCircle size={15} aria-hidden />
                           {t("confirm")}
                         </button>
                         <button
                           type="button"
                           disabled={busy}
-                          className="inline-flex min-h-[38px] items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger disabled:opacity-60"
+                          className={cn(buttonVariants({ variant: "outline", size: "sm" }), "text-text-muted hover:border-danger hover:text-danger")}
                           onClick={() => void actOnClaim(c.id, "reject")}
                         >
-                          <XCircle size={15} weight="fill" aria-hidden />
+                          <XCircle size={15} aria-hidden />
                           {t("reject")}
                         </button>
                       </div>
@@ -229,10 +219,10 @@ export function AiInboxClient() {
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-lg font-extrabold text-text">
-              <Robot size={22} weight="fill" aria-hidden className="text-primary" />
+              <Robot size={22} aria-hidden className="text-primary" />
               <span>{t("intentsTitle")}</span>
             </h2>
-            <span className="rounded-full bg-callout px-3 py-1 text-xs font-bold text-primary">
+            <span className="rounded bg-callout px-3 py-1 text-xs font-bold text-primary">
               {intents.length} {isAr ? "رسائل" : "Messages"}
             </span>
           </div>
@@ -240,12 +230,12 @@ export function AiInboxClient() {
           {loading ? (
             <LoadingState isAr={isAr} />
           ) : intents.length === 0 ? (
-            <div className="panel-shadow flex items-center gap-3 rounded-2xl border border-border bg-surface p-6 text-sm text-text-muted">
-              <CheckCircle size={22} weight="fill" className="shrink-0 text-status-paid-fg" />
+            <div className="panel-shadow flex items-center gap-3 rounded-xl border border-border bg-surface p-6 text-sm text-text-muted">
+              <CheckCircle size={22} className="shrink-0 text-status-paid-fg" />
               <span>{t("intentsEmpty")}</span>
             </div>
           ) : (
-            <div className="panel-shadow overflow-hidden rounded-2xl border border-border bg-surface">
+            <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
               <ul className="flex flex-col divide-y divide-border">
                 {intents.map((i) => {
                   const suggested = aiReplies[i.id];
@@ -259,9 +249,9 @@ export function AiInboxClient() {
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2 font-bold text-text">
                           <span>{i.debtorName ?? (isAr ? "عميل غير محدد" : "Unassigned")}</span>
-                          <span className="rounded-full bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{i.intent}</span>
+                          <span className="rounded bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{i.intent}</span>
                         </div>
-                        <span className="tnum rounded-full border border-border bg-surface-muted px-2.5 py-0.5 text-xs font-semibold text-text-muted" dir="ltr">
+                        <span className="tnum rounded border border-border bg-surface-muted px-2.5 py-0.5 text-xs font-semibold text-text-subtle" dir="ltr">
                           {Math.round(i.confidence * 100)}% {isAr ? "ثقة" : "confidence"}
                         </span>
                       </div>
@@ -275,13 +265,13 @@ export function AiInboxClient() {
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="inline-flex items-center gap-1 font-bold text-primary">
-                              <Sparkle size={13} weight="fill" aria-hidden />
+                              <Sparkle size={13} aria-hidden />
                               {isAr ? "الرد المقترح:" : "Suggested Reply:"}
-                              <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-semibold text-text-muted">
+                              <span className="rounded bg-surface px-2 py-0.5 text-[10px] font-semibold text-text-muted">
                                 {suggested.generationMode === "ai" ? (isAr ? "صياغة AI" : "AI-written") : (isAr ? "قالب آمن" : "Safe template")}
                               </span>
                             </span>
-                            <span className="rounded-full bg-surface px-2.5 py-0.5 text-[11px] font-semibold text-text-muted">
+                            <span className="rounded bg-surface px-2.5 py-0.5 text-[11px] font-semibold text-text-muted">
                               {isAr ? suggested.recommendedActionAr : suggested.recommendedActionEn}
                             </span>
                           </div>
@@ -290,9 +280,9 @@ export function AiInboxClient() {
                             <button
                               type="button"
                               onClick={() => void onCopyReply(i.id, replyText)}
-                              className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-3 py-1 text-[11px] font-bold text-text hover:border-primary"
+                              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
                             >
-                              {copiedId === i.id ? <Check size={12} weight="bold" className="text-primary" /> : <Copy size={12} weight="fill" />}
+                              {copiedId === i.id ? <Check size={12} strokeWidth={2.5} className="text-primary" /> : <Copy size={12} />}
                               <span>{copiedId === i.id ? (isAr ? "تم النسخ" : "Copied") : (isAr ? "نسخ الرد" : "Copy Reply")}</span>
                             </button>
                             {waHref && (
@@ -300,9 +290,9 @@ export function AiInboxClient() {
                                 href={waHref}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 rounded-full bg-status-paid-bg px-3 py-1 text-[11px] font-bold text-status-paid-fg hover:opacity-90"
+                                className="inline-flex items-center gap-1 rounded bg-status-paid-bg px-3 py-1 text-[11px] font-bold text-status-paid-fg hover:opacity-90"
                               >
-                                <ChatCircleDots size={13} weight="fill" />
+                                <ChatCircleDots size={13} />
                                 <span>{isAr ? "إرسال الرد عبر واتساب" : "Send Reply on WhatsApp"}</span>
                               </a>
                             )}
@@ -320,9 +310,9 @@ export function AiInboxClient() {
                             data-testid={`intent-suggest-reply-${i.id}`}
                             disabled={generatingReplyFor === i.id}
                             onClick={() => void onSuggestReply(i)}
-                            className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg bg-callout px-2.5 py-1 text-xs font-bold text-primary transition-all hover:bg-primary hover:text-primary-fg active:scale-95 disabled:opacity-50"
+                            className={cn(buttonVariants({ variant: "soft", size: "sm" }))}
                           >
-                            <Sparkle size={13} weight="fill" aria-hidden />
+                            <Sparkle size={13} aria-hidden />
                             <span>
                               {generatingReplyFor === i.id
                                 ? isAr
@@ -338,9 +328,9 @@ export function AiInboxClient() {
                               href={waHref}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg bg-status-paid-bg px-2.5 py-1 text-xs font-bold text-status-paid-fg transition-all hover:opacity-90 active:scale-95 shadow-2xs"
+                              className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg bg-status-paid-bg px-2.5 py-1 text-xs font-bold text-status-paid-fg transition-all hover:opacity-90 active:scale-95"
                             >
-                              <ChatCircleDots size={14} weight="fill" />
+                              <ChatCircleDots size={14} />
                               <span>{t("chatWhatsapp")}</span>
                             </a>
                           )}
@@ -349,7 +339,7 @@ export function AiInboxClient() {
                               href={`/${locale}/debtors/${i.debtorId}`}
                               className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-bold text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95"
                             >
-                              <User size={13} weight="bold" />
+                              <User size={13} strokeWidth={2.5} />
                               <span>{t("viewDebtor")}</span>
                             </Link>
                           )}
@@ -357,9 +347,9 @@ export function AiInboxClient() {
                             type="button"
                             onClick={() => void onResolveIntent(i.id, "reviewed_by_merchant")}
                             disabled={busy}
-                            className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg bg-surface-muted px-2.5 py-1 text-xs font-bold text-text-muted transition-colors hover:bg-primary hover:text-primary-fg active:scale-95 disabled:opacity-50"
+                            className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "text-text-muted")}
                           >
-                            <Check size={13} weight="bold" />
+                            <Check size={13} strokeWidth={2.5} />
                             <span>{t("resolve")}</span>
                           </button>
                         </div>
@@ -390,8 +380,8 @@ export function AiInboxClient() {
               </select>
             </label>
 
-            <label className="brand-pattern-light flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-border/80 bg-surface-muted/40 p-6 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/70 hover:shadow-xs">
-              <UploadSimple size={28} weight="fill" aria-hidden className="text-primary" />
+            <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-border/80 bg-surface-muted/40 p-6 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/70">
+              <UploadSimple size={28} aria-hidden className="text-primary" />
               <span className="font-bold text-sm text-text">{t("receiptUploadTitle")}</span>
               <span className="text-xs text-text-muted">
                 {isAr
@@ -410,9 +400,9 @@ export function AiInboxClient() {
           </div>
         </Panel>
 
-        <div className="panel-shadow flex flex-col gap-3 rounded-2xl border border-border bg-surface p-5 text-xs text-text-muted">
+        <div className="panel-shadow flex flex-col gap-3 rounded-xl border border-border bg-surface p-5 text-xs text-text-muted">
           <div className="flex items-center gap-2 text-sm font-bold text-text">
-            <ShieldCheck size={18} weight="fill" className="text-primary" />
+            <ShieldCheck size={18} className="text-primary" />
             <span>{isAr ? "سياسة التحقق والاعتماد" : "Verification Policy"}</span>
           </div>
           <p className="leading-relaxed">

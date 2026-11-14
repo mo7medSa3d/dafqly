@@ -218,8 +218,7 @@ test("M4 replies: signed promise webhook is auto-acted; injection lands in the h
   // nothing", and paidMinor + status pin exactly that.
   const detail2 = await trpcQuery<{ invoices: { id: string; reference: string | null; status: string; paidMinor: string }[] }>(page, "debtors.get", { id: d2.id });
   const inv2 = detail2.invoices.find((i) => i.reference === "INV-2026-002")!;
-  expect(["disputed", "partially_paid"]).toContain(inv2.status);
-  expect(inv2.paidMinor).toBe("200000");
+  expect(inv2).toMatchObject({ status: "disputed", paidMinor: "200000" });
 
   // And the injection is visible to the merchant in the AI inbox UI.
   await clickNav(page, "nav-ai-inbox");

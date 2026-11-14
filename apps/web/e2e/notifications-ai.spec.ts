@@ -70,7 +70,7 @@ test("Notifications Bell, Dashboard AI Briefing, Debtors Health & AI Copilot Dra
   await drawer.getByRole("button", { name: "اسأل المساعد" }).click();
   await page.getByTestId("copilot-question-input").fill("من هم أهم العملاء المتأخرين؟");
   await page.getByTestId("copilot-question-input").press("Enter");
-  await expect(drawer).toContainText("شركة الساحل للمقاولات", { timeout: 45000 });
+  await expect(drawer).toContainText("شركة الساحل للمقاولات", { timeout: 10000 });
   await page.keyboard.press("Escape");
   await expect(drawer).toBeHidden();
 

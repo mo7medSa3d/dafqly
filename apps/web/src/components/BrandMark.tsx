@@ -21,7 +21,7 @@ export function BrandMark({
     variant === "color"
       ? "var(--brand-mark-check)"
       : variant === "white"
-        ? "var(--yaseir-yellow)"
+        ? "var(--brand-mark-accent)"
         : "currentColor";
   return (
     <svg
@@ -74,7 +74,7 @@ export function BrandLockup({
   locale?: string;
 }) {
   const isEn = locale === "en";
-  const tileSize = size === "sm" ? "size-9 rounded-xl" : size === "lg" ? "size-12 rounded-2xl" : "size-10 rounded-2xl";
+  const tileSize = size === "sm" ? "size-9 rounded-lg" : size === "lg" ? "size-12 rounded-lg" : "size-10 rounded-lg";
   const markPx = size === "sm" ? 21 : size === "lg" ? 28 : 24;
   const textCls = size === "sm" ? "text-lg" : size === "lg" ? "text-2xl" : "text-xl";
   const tileStyle = onDark
@@ -83,7 +83,7 @@ export function BrandLockup({
 
   return (
     <div className="inline-flex min-w-0 items-center gap-3">
-      <span className={`flex shrink-0 items-center justify-center shadow-sm transition-colors ${tileSize} ${tileStyle}`}>
+      <span className={`flex shrink-0 items-center justify-center transition-colors ${tileSize} ${tileStyle}`}>
         <BrandMark variant="white" size={markPx} />
       </span>
       <div className="flex min-w-0 flex-col leading-none">
@@ -91,7 +91,7 @@ export function BrandLockup({
           {isEn ? "Dafqly" : "دفقلي"}
         </span>
         {showTagline && (
-          <span className={`mt-1 whitespace-nowrap text-[10px] font-medium leading-none text-text-muted ${onDark ? "text-navy-100" : "text-text-muted"}`}>
+          <span className={`mt-1 whitespace-nowrap text-[10px] font-medium leading-none text-text-muted ${onDark ? "opacity-80" : "text-text-muted"}`}>
             {isEn ? "Track. Follow. Get Paid." : "تتبّع. تابع. وحصّل."}
           </span>
         )}

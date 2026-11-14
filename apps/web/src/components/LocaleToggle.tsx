@@ -1,7 +1,9 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Globe, SpinnerGap } from "@phosphor-icons/react";
+import { Globe, SpinnerGap } from "@/components/ui/solid-icons";
 
 export function LocaleToggle({
   currentLocale,
@@ -60,21 +62,25 @@ export function LocaleToggle({
   const label = currentLocale === "ar" ? "English" : "العربية";
   const shortLabel = currentLocale === "ar" ? "EN" : "ع";
   const title = currentLocale === "ar" ? "Switch to English" : "التحويل إلى العربية";
+  // WCAG 2.5.3: in compact mode only the short label ("EN"/"ع") is
+  // visible, so the accessible name must start with it — otherwise axe
+  // flags label-content-name-mismatch on the dashboard header.
+  const accessibleLabel = compact ? `${shortLabel} — ${title}` : title;
 
   return (
     <button
       type="button"
       onClick={handleSwitch}
       data-testid="locale-toggle"
-      title={title}
-      aria-label={title}
+      title={accessibleLabel}
+      aria-label={accessibleLabel}
       disabled={isPending || isSwitching}
-      className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-full bg-surface-muted/60 hover:bg-surface-muted px-3 py-1 text-xs font-bold text-text-muted hover:text-text transition-all duration-150 active:scale-95 disabled:opacity-70 shadow-2xs hover:shadow-xs ${className}`}
+      className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "min-h-[36px]", className)}
     >
       {isPending || isSwitching ? (
-        <SpinnerGap size={15} weight="bold" className="animate-spin text-primary" aria-hidden />
+        <SpinnerGap size={15} strokeWidth={2.5} className="animate-spin text-primary" aria-hidden />
       ) : (
-        <Globe size={15} weight="fill" aria-hidden className="shrink-0 text-primary" />
+        <Globe size={15} aria-hidden className="shrink-0 text-primary" />
       )}
       <span className={compact ? "hidden sm:inline" : ""}>{label}</span>
       {compact && <span className="sm:hidden">{shortLabel}</span>}

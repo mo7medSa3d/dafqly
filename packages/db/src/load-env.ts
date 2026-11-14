@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-export function loadRootEnv(): void {
+function loadRootEnv(): void {
   if (process.env.DATABASE_URL) return;
   const candidates = [
     resolve(process.cwd(), ".env"),

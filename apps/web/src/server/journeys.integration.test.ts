@@ -145,6 +145,13 @@ d("Prompt 03 journeys (service + HTTP layers)", () => {
       debtorId: debtor.id, invoiceId: invoice.id, amountMinor: "10000", promisedOn: "2026-11-20",
     });
     expect(promise.status).toBe("accepted");
+    // Wire shape: tRPC serializes with plain JSON, so a bigint amountMinor
+    // used to fail the whole mutation response ("Do not know how to
+    // serialize a BigInt") even though the row was created — the UI showed
+    // an error and a retry created a duplicate. Pin the serialized shape.
+    expect(() => JSON.stringify(promise)).not.toThrow();
+    expect(typeof promise.amountMinor).toBe("string");
+    expect(promise.amountMinor).toBe("10000");
 
     // An accepted promise cannot be marked broken before its date, and
     // cannot go back to rejected.
@@ -172,6 +179,10 @@ d("Prompt 03 journeys (service + HTTP layers)", () => {
     expect(pending.status).toBe("pending");
     const accepted = await decidePromiseToPay(app(), tenantId, user.id, pending.id, "accepted");
     expect(accepted.status).toBe("accepted");
+    // Same wire-shape pin as createMerchantPromise above.
+    expect(() => JSON.stringify(accepted)).not.toThrow();
+    expect(typeof accepted.amountMinor).toBe("string");
+    expect(accepted.amountMinor).toBe("5000");
     const pending2 = await createPublicPromiseRequest(app(), ownerDb(), link.token, { invoiceId: invoice2.id, amountMinor: "4000", promisedOn: "2026-11-25" }, new Date("2026-11-13T00:00:00.000Z"));
     const rejected = await decidePromiseToPay(app(), tenantId, user.id, pending2.id, "rejected");
     expect(rejected.status).toBe("rejected");

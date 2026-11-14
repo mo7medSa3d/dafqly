@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { createDb, createAppDb, debtors, invoices, reminders, messages, statementLinks, tenants, type Db } from "@tahseel/db";
 import { FakeMessagingProvider, FlakyProvider } from "@tahseel/providers";
-import { formatEgp } from "@tahseel/core";
-import { dispatchDue, planForInvoice, planForTenant, sendGroup, type DispatchSummary, type EngineDeps, type GroupWork } from "./engine";
+import { formatEgp, formatCurrencyMinor } from "@tahseel/core";
+import { applyOptOut, dispatchDue, planForInvoice, planForTenant, resumeReminders, sendGroup, type DispatchSummary, type EngineDeps, type GroupWork } from "./engine";
 
 /**
  * F4 engine acceptance suite (BUILD_PLAN §7-F4 + §10): real Postgres + RLS,
@@ -45,9 +45,9 @@ d("reminder engine (F4)", () => {
     }).returning();
     return row!.id;
   }
-  async function makeInvoice(tenantId: string, debtorId: string, dueOn: string, amount = 100_000n): Promise<string> {
+  async function makeInvoice(tenantId: string, debtorId: string, dueOn: string, amount = 100_000n, currency: "EGP" | "SAR" | "USD" | "AED" | "EUR" | "KWD" | "JPY" = "EGP"): Promise<string> {
     const [row] = await owner.insert(invoices).values({
-      tenantId, debtorId, amountMinor: amount, issuedOn: "2026-11-01", dueOn,
+      tenantId, debtorId, amountMinor: amount, currency, issuedOn: "2026-11-01", dueOn,
     }).returning();
     return row!.id;
   }
@@ -85,6 +85,41 @@ d("reminder engine (F4)", () => {
   afterAll(async () => {
     await owner.$client.end();
     await app.$client.end();
+  });
+
+
+  it("fails closed when quota lookup is unavailable and leaves due reminders retryable", async () => {
+    const tenantId = await makeTenant();
+    const debtorId = await makeDebtor(tenantId, "+20105559999");
+    const invoiceId = await makeInvoice(tenantId, debtorId, "2026-11-20");
+    await planForInvoice(deps(), tenantId, invoiceId, new Date("2026-11-10T00:00:00Z"));
+    whatsapp.sent.length = 0;
+
+    await expect(dispatchDue({ ...deps(), quotaExceeded: async () => { throw new Error("quota store unavailable"); } }, new Date("2026-11-17T08:30:00Z"), { tenantId }))
+      .rejects.toThrow("quota store unavailable");
+
+    const rows = await owner.select().from(reminders).where(eq(reminders.invoiceId, invoiceId));
+    expect(rows.every((row) => row.status === "scheduled")).toBe(true);
+    expect(whatsapp.sent).toHaveLength(0);
+  });
+
+  it("resumes only opt-out-cancelled reminders and replans open invoices", async () => {
+    const tenantId = await makeTenant();
+    const debtorId = await makeDebtor(tenantId, "+20106660000");
+    const invoiceId = await makeInvoice(tenantId, debtorId, "2026-11-20");
+    const plannedAt = new Date("2026-11-10T00:00:00Z");
+    await planForInvoice(deps(), tenantId, invoiceId, plannedAt);
+
+    const optedOut = await applyOptOut(deps(), tenantId, debtorId, new Date("2026-11-11T00:00:00Z"));
+    expect(optedOut.applied).toBe(true);
+    expect(optedOut.cancelledReminders).toBeGreaterThan(0);
+    let rows = await owner.select().from(reminders).where(eq(reminders.invoiceId, invoiceId));
+    expect(rows.every((row) => row.status === "cancelled" && row.skipReason === "opted_out")).toBe(true);
+
+    const resumed = await resumeReminders(deps(), tenantId, debtorId, new Date("2026-11-12T00:00:00Z"));
+    expect(resumed).toEqual({ resumed: true, plannedInvoices: 1 });
+    rows = await owner.select().from(reminders).where(eq(reminders.invoiceId, invoiceId));
+    expect(rows.some((row) => row.status === "scheduled" && row.skipReason === null)).toBe(true);
   });
 
   it("planner persists 6 steps, re-planning is idempotent, paying cancels the future", async () => {
@@ -310,6 +345,25 @@ d("reminder engine (F4)", () => {
     expect(result.planned).toBe(12);
   });
 
+
+  it("consolidates reminder balances without mixing currencies", async () => {
+    const tenantId = await makeTenant();
+    const debtorId = await makeDebtor(tenantId, "+20105558888");
+    const egpInvoiceId = await makeInvoice(tenantId, debtorId, "2026-11-20", 100_000n, "EGP");
+    const usdInvoiceId = await makeInvoice(tenantId, debtorId, "2026-11-20", 25_000n, "USD");
+    const now = new Date("2026-11-10T00:00:00Z");
+    await planForInvoice(deps(), tenantId, egpInvoiceId, now);
+    await planForInvoice(deps(), tenantId, usdInvoiceId, now);
+    whatsapp.sent.length = 0;
+
+    const summary = await dispatchDue(deps(), new Date("2026-11-17T08:30:00Z"), { tenantId });
+    expect(summary.groupsSent).toBe(1);
+    expect(whatsapp.sent).toHaveLength(1);
+    expect(whatsapp.sent[0]!.variables.amount).toBe(
+      `${formatCurrencyMinor(100_000n, "EGP")} EGP؛ ${formatCurrencyMinor(25_000n, "USD")} USD`,
+    );
+  });
+
   // M05: the send step re-checks invoice state under a lock. The payment
   // here lands after the group was claimed (staged as `queued`), i.e. in
   // the window between prepareTenant's guard read and the provider call.
@@ -326,7 +380,7 @@ d("reminder engine (F4)", () => {
       businessName: "محل الاختبار", groupKey: `grp:m05-paid:${invoiceId}`, channel: "whatsapp",
       debtorId, debtorPhone: "+20105556666", templateKey: rem!.templateKey,
       reminderIds: [rem!.id], invoiceIds: [invoiceId],
-      totalOutstandingMinor: 100_000n, earliestDueOn: "2026-11-20", payLinkEnabled: false,
+      earliestDueOn: "2026-11-20", payLinkEnabled: false,
     };
     const summary: DispatchSummary = { tenants: 0, due: 0, groupsSent: 0, remindersSent: 0, skipped: {}, rescheduled: 0, retried: 0, failed: 0, paused: false };
     whatsapp.sent.length = 0;
@@ -353,7 +407,7 @@ d("reminder engine (F4)", () => {
       businessName: "محل الاختبار", groupKey: `grp:m05-partial:${invoiceId}`, channel: "whatsapp",
       debtorId, debtorPhone: "+20105557777", templateKey: rem!.templateKey,
       reminderIds: [rem!.id], invoiceIds: [invoiceId],
-      totalOutstandingMinor: 100_000n, earliestDueOn: "2026-11-20", payLinkEnabled: false,
+      earliestDueOn: "2026-11-20", payLinkEnabled: false,
     };
     const summary: DispatchSummary = { tenants: 0, due: 0, groupsSent: 0, remindersSent: 0, skipped: {}, rescheduled: 0, retried: 0, failed: 0, paused: false };
     whatsapp.sent.length = 0;

@@ -106,6 +106,7 @@ d("webhook processing (F3)", () => {
     const secret = "test-app-secret";
     const good = `sha256=${createHmac("sha256", secret).update(body, "utf8").digest("hex")}`;
     expect(verifyWebhookSignature(body, good, secret)).toBe(true);
+    expect(verifyWebhookSignature(new TextEncoder().encode(body), good, secret)).toBe(true);
     expect(verifyWebhookSignature(body, good, "other-secret")).toBe(false);
     expect(verifyWebhookSignature(`${body} `, good, secret)).toBe(false);
     expect(verifyWebhookSignature(body, null, secret)).toBe(false);

@@ -1,32 +1,17 @@
 "use client";
 
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
+import { inputVariants } from "@/components/ui/input";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  ArrowsInSimple,
-  ArrowsOutSimple,
-  ArrowSquareOut,
-  CalendarCheck,
-  ChartLineUp,
-  Check,
-  ClockCountdown,
-  Copy,
-  Cpu,
-  Lightning,
-  Minus,
-  PaperPlaneTilt,
-  Robot,
-  ShieldWarning,
-  Sparkle,
-  UsersThree,
-  WarningCircle,
-  WhatsappLogo,
-  X,
-} from "@phosphor-icons/react";
+import { ArrowsInSimple, ArrowsOutSimple, ArrowSquareOut, CalendarCheck, ChartLineUp, Check, ClockCountdown, Copy, Cpu, Lightning, Minus, PaperPlaneTilt, PencilSimple, Robot, Sparkle, Trash, UsersThree, WarningCircle, X } from "@/components/ui/solid-icons";
+import { WhatsappLogo } from "@/components/ui/icons";
 import { formatPct, formatDso, type NotificationTone } from "@tahseel/core";
 import { trpc } from "@/lib/trpc-client";
 import { useCurrency } from "./CurrencyContext";
+import { DafqlyAiMascot } from "./DafqlyAiMascot";
 
 export type CopilotTab = "briefing" | "composer" | "assistant";
 export type ComposerMode = "reminder" | "installment";
@@ -36,6 +21,7 @@ export interface OpenCopilotDetail {
   debtorId?: string;
   tone?: NotificationTone;
   mode?: ComposerMode;
+  prompt?: string;
 }
 
 export function openAiCopilot(detail: OpenCopilotDetail = {}) {
@@ -111,6 +97,7 @@ interface InstallmentPlanPayload {
   businessName: string;
   totalMinor: string;
   formattedTotal: string;
+  currency: string;
   installmentsCount: number;
   interval: "weekly" | "biweekly" | "monthly";
   downPaymentPct: number;
@@ -163,21 +150,9 @@ interface CopilotAnswer {
   conversationId: string;
   aiMode: "live" | "fallback";
   aiModel: string | null;
-  aiFallbackReason: "provider_not_configured" | "daily_token_budget_exceeded" | "provider_error" | "empty_response" | null;
+  aiFallbackReason: "provider_not_configured" | "daily_token_budget_exceeded" | "global_budget_exceeded" | "provider_error" | "empty_response" | null;
 }
 
-
-interface PersistedChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  toolCalls?: CopilotAnswer["toolCalls"];
-  aiMode?: "live" | "fallback";
-  aiModel?: string | null;
-  aiFallbackReason?: CopilotAnswer["aiFallbackReason"];
-  matchedDebtor?: CopilotAnswer["matchedDebtor"];
-  quickLinks?: CopilotAnswer["quickLinks"];
-}
 
 function tierBadgeClass(tier: DebtorScoreItem["tier"]) {
   switch (tier) {
@@ -196,10 +171,11 @@ export function AiCopilotDrawer({
   isOpen,
   onClose,
   locale,
-  initialTab = "briefing",
+  initialTab = "assistant",
   initialDebtorId,
   initialTone,
   initialMode = "reminder",
+  initialPrompt,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -208,6 +184,7 @@ export function AiCopilotDrawer({
   initialDebtorId?: string;
   initialTone?: NotificationTone;
   initialMode?: ComposerMode;
+  initialPrompt?: string;
 }) {
   const isEn = locale === "en";
   const router = useRouter();
@@ -249,18 +226,24 @@ export function AiCopilotDrawer({
   // Multi-turn Q&A Copilot state
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
-  const [_copilotAnswer, setCopilotAnswer] = useState<CopilotAnswer | null>(null);
+  const [livePhase, setLivePhase] = useState<"reading_context" | "thinking" | "writing" | null>(null);
+  const [liveTools, setLiveTools] = useState<{ id: string; titleAr: string; titleEn: string; state: "running" | "done" | "failed"; summaryAr?: string; summaryEn?: string }[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const lastPromptRef = useRef<string | undefined>(undefined);
+  const [copilotAnswer, setCopilotAnswer] = useState<CopilotAnswer | null>(null);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [conversationList, setConversationList] = useState<{ id: string; title: string; updatedAt: string }[]>([]);
   // F-18: the server returns only the latest 20 conversations / 60
   // messages — keep the totals so the drawer can say what is hidden.
-  const [conversationTotal, setConversationTotal] = useState(0);
-  const [totalMessages, setTotalMessages] = useState(0);
-  const [persistedMessages, setPersistedMessages] = useState<PersistedChatMessage[]>([]);
-  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [_conversationTotal, setConversationTotal] = useState(0);
+  const [_totalMessages, setTotalMessages] = useState(0);
+  const [persistedMessages, setPersistedMessages] = useState<{ id: string; role: "user" | "assistant"; content: string }[]>([]);
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [copilotError, setCopilotError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
 
   const loadCopilotConversations = useCallback(async () => {
     try {
@@ -277,10 +260,76 @@ export function AiCopilotDrawer({
   }, [isOpen, tab, loadCopilotConversations]);
 
   useEffect(() => {
-    if (tab === "assistant") {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [persistedMessages, asking]);
+
+  useEffect(() => {
+    if (isOpen && initialPrompt && initialPrompt !== lastPromptRef.current) {
+      lastPromptRef.current = initialPrompt;
+      setTab("assistant");
+      void runCopilotIntent("custom_question", initialPrompt);
     }
-  }, [persistedMessages, asking, tab]);
+  }, [isOpen, initialPrompt]);
+
+  const handleDeleteConversation = async (id: string) => {
+    if (!id || loadingConversation || asking) return;
+    setLoadingConversation(true);
+    setCopilotError(null);
+    try {
+      await trpc.intelligence.deleteCopilotConversation.mutate({ conversationId: id });
+      setConversationList((prev) => prev.filter((c) => c.id !== id));
+      setConversationTotal((n) => Math.max(0, n - 1));
+      if (conversationId === id) {
+        startNewConversation();
+      }
+    } catch {
+      setCopilotError(isEn ? "Could not delete conversation." : "تعذر حذف المحادثة.");
+    } finally {
+      setLoadingConversation(false);
+    }
+  };
+
+  const handleRenameConversation = async () => {
+    if (!conversationId || !renameDraft.trim() || loadingConversation) return;
+    setLoadingConversation(true);
+    setCopilotError(null);
+    try {
+      const updated = await trpc.intelligence.renameCopilotConversation.mutate({
+        conversationId,
+        title: renameDraft.trim(),
+      });
+      setConversationList((prev) => prev.map((c) => (c.id === updated.id ? { ...c, title: updated.title } : c)));
+      setRenaming(false);
+    } catch {
+      setCopilotError(isEn ? "Could not rename conversation." : "تعذر تعديل اسم المحادثة.");
+    } finally {
+      setLoadingConversation(false);
+    }
+  };
+
+  const handleClearAllConversations = async () => {
+    if (loadingConversation || asking) return;
+    setLoadingConversation(true);
+    setCopilotError(null);
+    try {
+      await trpc.intelligence.clearCopilotConversations.mutate();
+      setConversationList([]);
+      setConversationTotal(0);
+      startNewConversation();
+    } catch {
+      setCopilotError(isEn ? "Could not clear conversations." : "تعذر مسح المحادثات.");
+    } finally {
+      setLoadingConversation(false);
+    }
+  };
+
+  const handleCopyMessage = async (id: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedMsgId(id);
+      setTimeout(() => setCopiedMsgId(null), 1500);
+    } catch { /* ignore */ }
+  };
 
   const startNewConversation = () => {
     setConversationId(undefined);
@@ -289,7 +338,6 @@ export function AiCopilotDrawer({
     setCopilotAnswer(null);
     setQuestion("");
     setCopilotError(null);
-    setStreamingMessageId(null);
   };
 
   const openSavedConversation = async (id: string) => {
@@ -537,7 +585,10 @@ export function AiCopilotDrawer({
     if (customText) setQuestion("");
 
     const localAssistantId = `stream-${Date.now()}`;
-    setStreamingMessageId(localAssistantId);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setLivePhase("reading_context");
+    setLiveTools([]);
     setCopilotAnswer(null);
     setPersistedMessages((prev) => [
       ...prev,
@@ -548,6 +599,7 @@ export function AiCopilotDrawer({
       const response = await fetch("/api/ai/copilot/stream", {
         method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         body: JSON.stringify({ intent, question: customText, conversationId, locale: isEn ? "en" : "ar" }),
+        signal: controller.signal,
       });
       if (!response.ok || !response.body) throw new Error("stream unavailable");
       const reader = response.body.getReader();
@@ -560,13 +612,19 @@ export function AiCopilotDrawer({
       const handleEvent = (block: string) => {
         const dataLine = block.split("\n").find((line) => line.startsWith("data: "));
         if (!dataLine) return;
-        let event: { type: string; text?: string; response?: CopilotAnswer; message?: string };
-        try {
-          event = JSON.parse(dataLine.slice(6)) as { type: string; text?: string; response?: CopilotAnswer; message?: string };
-        } catch {
-          return;
-        }
-        if (event.type === "token" && event.text) {
+        const event = JSON.parse(dataLine.slice(6)) as {
+          type: string; text?: string; response?: CopilotAnswer; message?: string; phase?: "reading_context" | "thinking" | "writing";
+          id?: string; titleAr?: string; titleEn?: string; ok?: boolean; summaryAr?: string; summaryEn?: string;
+        };
+        if (event.type === "status" && event.phase) setLivePhase(event.phase);
+        else if (event.type === "tool_start" && event.id) {
+          // Text written before a tool call is narration, not the answer: restart the bubble.
+          setPersistedMessages((prev) => prev.map((m) => m.id === localAssistantId ? { ...m, content: "" } : m));
+          setLiveTools((prev) => [...prev, { id: event.id!, titleAr: event.titleAr ?? "", titleEn: event.titleEn ?? "", state: "running" }]);
+        } else if (event.type === "tool_result" && event.id) {
+          setLiveTools((prev) => prev.map((t) => t.id === event.id ? { ...t, state: event.ok ? "done" : "failed", summaryAr: event.summaryAr, summaryEn: event.summaryEn } : t));
+        } else if (event.type === "token" && event.text) {
+          setLivePhase("writing");
           setPersistedMessages((prev) => prev.map((message) => message.id === localAssistantId
             ? { ...message, content: message.content + event.text } : message));
         } else if (event.type === "done" && event.response) {
@@ -592,27 +650,25 @@ export function AiCopilotDrawer({
       setConversationId(typed.conversationId);
       setCopilotAnswer(typed);
       setPersistedMessages((prev) => prev.map((message) => message.id === localAssistantId
-        ? {
-            ...message,
-            content: isEn ? typed.answerEn : typed.answerAr,
-            toolCalls: typed.toolCalls,
-            aiMode: typed.aiMode,
-            aiModel: typed.aiModel,
-            aiFallbackReason: typed.aiFallbackReason,
-            matchedDebtor: typed.matchedDebtor,
-            quickLinks: typed.quickLinks,
-          } : message));
+        ? { ...message, content: isEn ? typed.answerEn : typed.answerAr } : message));
       void loadCopilotConversations();
     } catch (error) {
+      if (controller.signal.aborted) {
+        setPersistedMessages((prev) => prev.filter((message) => message.id !== localAssistantId || message.content));
+        return;
+      }
       setCopilotError(error instanceof Error && error.message === "GLOBAL_AI_BUDGET_EXCEEDED"
         ? (isEn ? "The platform AI monthly budget has been reached." : "تم الوصول إلى سقف إنفاق المنصة الشهري على AI.")
         : (isEn ? "The assistant could not complete this request. No action was executed." : "تعذر إكمال طلب المساعد. لم يتم تنفيذ أي إجراء."));
       setPersistedMessages((prev) => prev.filter((message) => message.id !== localAssistantId));
     } finally {
       setAsking(false);
-      setStreamingMessageId(null);
+      setLivePhase(null);
+      abortRef.current = null;
     }
   };
+
+  const stopAsking = () => abortRef.current?.abort();
 
   if (!isOpen) return null;
 
@@ -628,16 +684,14 @@ export function AiCopilotDrawer({
         role="dialog"
         aria-modal="false"
         data-testid="ai-copilot-drawer"
-        className="fixed bottom-20 left-4 sm:left-6 z-50 flex w-[320px] items-center justify-between gap-2 rounded-2xl border border-primary/35 bg-surface/98 backdrop-blur-xl px-4 py-3 shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-200"
+        className="fixed bottom-20 left-5 z-50 flex w-[310px] items-center justify-between gap-2 rounded-2xl border border-border bg-card px-4 py-3 shadow-2xl"
       >
         <button
           type="button"
           onClick={() => setIsMinimized(false)}
           className="flex min-w-0 flex-1 items-center gap-2.5 text-start"
         >
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-fg">
-            <Sparkle size={16} weight="fill" aria-hidden />
-          </span>
+          <DafqlyAiMascot size={34} mood={asking ? (livePhase === "writing" ? "writing" : "thinking") : "idle"} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-xs font-extrabold text-text">
               {isEn ? "DAFQLY AI Assistant" : "مساعد دفقلي الذكي"}
@@ -652,17 +706,17 @@ export function AiCopilotDrawer({
             type="button"
             onClick={() => setIsMinimized(false)}
             aria-label={isEn ? "Restore window" : "تكبير النافذة"}
-            className="flex size-7 items-center justify-center rounded-lg bg-callout text-primary hover:bg-primary hover:text-primary-fg"
+            className={cn(buttonVariants({ variant: "secondary", size: "icon" }), "size-7")}
           >
-            <ArrowsOutSimple size={14} weight="bold" aria-hidden />
+            <ArrowsOutSimple size={14} strokeWidth={2.5} aria-hidden />
           </button>
           <button
             type="button"
             onClick={onClose}
             aria-label={isEn ? "Close" : "إغلاق"}
-            className="flex size-7 items-center justify-center rounded-lg text-text-muted hover:bg-surface-muted hover:text-text"
+            className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "size-7")}
           >
-            <X size={14} weight="bold" aria-hidden />
+            <X size={14} strokeWidth={2.5} aria-hidden />
           </button>
         </div>
       </div>
@@ -674,32 +728,30 @@ export function AiCopilotDrawer({
       role="dialog"
       aria-modal="false"
       data-testid="ai-copilot-drawer"
-      className={`fixed left-4 z-50 flex flex-col overflow-hidden rounded-3xl border border-border-strong/40 bg-surface/95 dark:bg-surface/95 backdrop-blur-2xl shadow-2xl transition-all duration-200 sm:left-6 ${
+      className={`fixed left-4 z-50 flex flex-col overflow-hidden rounded-2xl border border-border bg-card/95 backdrop-blur-2xl shadow-2xl transition-all duration-200 sm:left-5 ${
         isExpanded
           ? "bottom-20 h-[min(84dvh,760px)] w-[min(94vw,760px)]"
           : "bottom-20 h-[min(76dvh,590px)] w-[min(92vw,430px)]"
       }`}
     >
       {/* Pop-up Window Header with Minimize, Expand/Restore & Close Controls */}
-      <div className="flex shrink-0 items-center justify-between border-b border-border/80 bg-surface px-4 py-3">
+      <div className="flex shrink-0 items-center justify-between border-b border-border bg-card px-4 py-3">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-fg shadow-xs">
-            <Sparkle size={16} weight="fill" aria-hidden />
-          </span>
+          <DafqlyAiMascot size={38} mood={asking ? (livePhase === "writing" ? "writing" : "thinking") : copilotAnswer ? "happy" : "idle"} followPointer />
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <h2 className="truncate text-xs font-black text-text sm:text-sm">
-                {isEn ? "Rased · DAFQLY Copilot" : "راصد · المستشار المالي"}
+              <h2 className="truncate text-xs font-extrabold text-text sm:text-sm">
+                {isEn ? "DAFQLY AI Copilot" : "مساعد دفقلي الذكي"}
               </h2>
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-surface-muted px-2 py-0.5 text-[10px] font-mono font-bold text-text-muted">
-                <Cpu size={10} weight="fill" className="text-primary" aria-hidden />
-                <span>gemini-3.1-flash-lite</span>
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 font-mono text-[10px] font-semibold text-foreground">
+                <Cpu size={10} aria-hidden />
+                <span>{isEn ? "Live Agent" : "متصل ببياناتك"}</span>
               </span>
             </div>
             <p className="truncate text-[10px] text-text-muted">
               {isEn
-                ? "Autonomous Financial Intelligence & Cashflow Strategy"
-                : "التحليل المالي الذكي، كشف فجوات السيولة، وتسريع التحصيل"}
+                ? "Ask questions, draft messages & schedule reminders"
+                : "تحليل فوري، صياغة ذكية، وجدولة تذكيرات في أفضل وقت"}
             </p>
           </div>
         </div>
@@ -712,9 +764,9 @@ export function AiCopilotDrawer({
             onClick={() => setIsMinimized(true)}
             title={isEn ? "Minimize window" : "تصغير النافذة"}
             aria-label={isEn ? "Minimize" : "تصغير"}
-            className="flex size-7 items-center justify-center rounded-lg border border-border/60 bg-surface/80 text-text-muted transition-colors hover:bg-surface-muted hover:text-text"
+            className={cn(buttonVariants({ variant: "outline", size: "icon" }), "size-7")}
           >
-            <Minus size={14} weight="bold" aria-hidden />
+            <Minus size={14} strokeWidth={2.5} aria-hidden />
           </button>
           <button
             type="button"
@@ -730,12 +782,12 @@ export function AiCopilotDrawer({
                   : "تكبير النافذة"
             }
             aria-label={isExpanded ? (isEn ? "Restore size" : "تصغير الحجم") : isEn ? "Expand" : "تكبير"}
-            className="flex size-7 items-center justify-center rounded-lg border border-border/60 bg-surface/80 text-text-muted transition-colors hover:bg-callout hover:text-primary"
+            className={cn(buttonVariants({ variant: "outline", size: "icon" }), "size-7")}
           >
             {isExpanded ? (
-              <ArrowsInSimple size={14} weight="bold" aria-hidden />
+              <ArrowsInSimple size={14} strokeWidth={2.5} aria-hidden />
             ) : (
-              <ArrowsOutSimple size={14} weight="bold" aria-hidden />
+              <ArrowsOutSimple size={14} strokeWidth={2.5} aria-hidden />
             )}
           </button>
           <button
@@ -743,9 +795,9 @@ export function AiCopilotDrawer({
             onClick={onClose}
             aria-label={isEn ? "Close" : "إغلاق"}
             title={isEn ? "Close (Esc)" : "إغلاق (Esc)"}
-            className="flex size-7 items-center justify-center rounded-lg border border-border/60 bg-surface/80 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
+            className={cn(buttonVariants({ variant: "outline", size: "icon" }), "size-7")}
           >
-            <X size={14} weight="bold" aria-hidden />
+            <X size={14} strokeWidth={2.5} aria-hidden />
           </button>
         </div>
       </div>
@@ -763,13 +815,9 @@ export function AiCopilotDrawer({
             key={id}
             type="button"
             onClick={() => setTab(id)}
-            className={`flex items-center justify-center gap-1.5 rounded-xl px-2 py-1.5 text-xs font-bold transition-all ${
-              tab === id
-                ? "bg-surface text-primary shadow-2xs"
-                : "text-text-muted hover:text-text"
-            }`}
+            className={cn(buttonVariants({ variant: tab === id ? "secondary" : "ghost", size: "sm" }), !(tab === id) && "text-text-muted")}
           >
-            <Icon size={13} weight="fill" aria-hidden />
+            <Icon size={13} aria-hidden />
             <span>{isEn ? labelEn : labelAr}</span>
           </button>
         ))}
@@ -791,13 +839,13 @@ export function AiCopilotDrawer({
             className="shrink-0 opacity-75 hover:opacity-100"
             aria-label={isEn ? "Dismiss" : "إغلاق"}
           >
-            <X size={13} weight="bold" />
+            <X size={13} strokeWidth={2.5} />
           </button>
         </div>
       )}
 
       {/* Tab Body */}
-      <div className="flex-1 overflow-y-auto p-4 no-scrollbar" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
+      <div className="flex-1 overflow-y-auto p-4">
         {tab === "briefing" && (
           <div className="flex flex-col gap-3.5">
             {loadingOverview && !overview ? (
@@ -807,14 +855,14 @@ export function AiCopilotDrawer({
             ) : overview ? (
               <>
                 {/* Executive Summary Card */}
-                <div className="rounded-2xl border border-border bg-callout/50 p-3.5">
+                <div className="rounded-xl border border-border bg-muted/50 p-3.5">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-surface px-2.5 py-0.5 text-[11px] font-bold text-primary">
-                      <Sparkle size={11} weight="fill" aria-hidden />
+                    <span className="inline-flex items-center gap-1.5 rounded bg-surface px-2.5 py-0.5 text-[11px] font-bold text-primary">
+                      <Sparkle size={11} aria-hidden />
                       {isEn ? "Executive Briefing" : "الملخص التنفيذي"}
                     </span>
                     <span
-                      className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                      className={`rounded px-2.5 py-0.5 text-[10px] font-bold ${
                         overview.healthStatus === "urgent"
                           ? "bg-status-overdue-bg text-status-overdue-fg"
                           : overview.healthStatus === "attention"
@@ -867,9 +915,9 @@ export function AiCopilotDrawer({
                       data-testid="optimize-all-reminders-btn"
                       disabled={optimizingSchedule}
                       onClick={() => void handleOptimizeAllReminders()}
-                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-primary-fg transition-colors hover:bg-primary-hover disabled:opacity-50"
+                      className={cn(buttonVariants({ variant: "default", size: "sm" }), "w-full")}
                     >
-                      <ClockCountdown size={14} weight="fill" aria-hidden />
+                      <ClockCountdown size={14} aria-hidden />
                       <span>
                         {optimizingSchedule
                           ? isEn
@@ -885,13 +933,13 @@ export function AiCopilotDrawer({
 
                 {/* Portfolio Concentration & Liquidity Velocity Card */}
                 {overview.portfolioRisk && (
-                  <div className="rounded-2xl border border-border bg-surface p-3.5">
+                  <div className="rounded-xl border border-border bg-surface p-3.5">
                     <div className="flex items-center justify-between gap-2">
                       <span className="flex items-center gap-1.5 text-xs font-bold text-text">
-                        <ChartLineUp size={14} weight="fill" className="text-primary" aria-hidden />
+                        <ChartLineUp size={14} className="text-primary" aria-hidden />
                         {isEn ? "Liquidity & Portfolio Risk" : "السيولة وتركز المحفظة"}
                       </span>
-                      <span className="rounded-full bg-callout px-2 py-0.5 text-[10px] font-bold text-primary">
+                      <span className="rounded bg-callout px-2 py-0.5 text-[10px] font-bold text-primary">
                         {isEn
                           ? `Velocity ${overview.portfolioRisk.velocityScore}/100`
                           : `السرعة ${overview.portfolioRisk.velocityScore}/100`}
@@ -922,7 +970,7 @@ export function AiCopilotDrawer({
                 <div>
                   <div className="mb-2 flex items-center justify-between">
                     <h4 className="flex items-center gap-1.5 text-xs font-bold text-text">
-                      <UsersThree size={14} weight="fill" className="text-primary" aria-hidden />
+                      <UsersThree size={14} className="text-primary" aria-hidden />
                       {isEn ? "Recommended Customer Actions" : "اقتراحات متابعة العملاء"}
                     </h4>
                     <span className="text-[10px] text-text-muted">
@@ -959,7 +1007,7 @@ export function AiCopilotDrawer({
                               </p>
                             </div>
                             <span
-                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${tierBadgeClass(d.tier)}`}
+                              className={`rounded px-2 py-0.5 text-[10px] font-bold ${tierBadgeClass(d.tier)}`}
                             >
                               {isEn ? `Health ${d.healthScore}` : `الصحة ${d.healthScore}/100`}
                             </span>
@@ -973,9 +1021,9 @@ export function AiCopilotDrawer({
                             <button
                               type="button"
                               onClick={() => handleSelectDebtorForComposer(d, "reminder")}
-                              className="inline-flex items-center gap-1 rounded-full bg-callout px-2.5 py-1 text-[11px] font-bold text-primary transition-opacity hover:opacity-85"
+                              className={cn(buttonVariants({ variant: "soft", size: "xs" }))}
                             >
-                              <Sparkle size={11} weight="fill" aria-hidden />
+                              <Sparkle size={11} aria-hidden />
                               {isEn ? "Draft Reminder" : "صياغة تنبيه"}
                             </button>
                             {!d.optedOut && (
@@ -983,18 +1031,18 @@ export function AiCopilotDrawer({
                                 type="button"
                                 disabled={dispatchingReminder}
                                 onClick={() => void handleDispatchSmartReminder(d.debtorId, d.recommendation.suggestedTone)}
-                                className="inline-flex items-center gap-1 rounded-full bg-status-paid-bg px-2.5 py-1 text-[11px] font-bold text-status-paid-fg transition-opacity hover:opacity-90 disabled:opacity-50"
+                                className={cn(buttonVariants({ variant: "success", size: "xs" }), "text-status-paid-fg")}
                               >
-                                <ClockCountdown size={11} weight="fill" aria-hidden />
+                                <ClockCountdown size={11} aria-hidden />
                                 {isEn ? "Send at Best Time" : "إرسال في أفضل وقت"}
                               </button>
                             )}
                             <button
                               type="button"
                               onClick={() => handleSelectDebtorForComposer(d, "installment")}
-                              className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted/60 px-2.5 py-1 text-[11px] font-bold text-text transition-colors hover:border-primary hover:text-primary"
+                              className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}
                             >
-                              <CalendarCheck size={11} weight="fill" aria-hidden />
+                              <CalendarCheck size={11} aria-hidden />
                               {isEn ? "Installment Plan" : "جدولة أقساط"}
                             </button>
                           </div>
@@ -1020,13 +1068,9 @@ export function AiCopilotDrawer({
                   setDraftText("");
                   setInstallmentPlan(null);
                 }}
-                className={`flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-bold transition-all ${
-                  composerMode === "reminder"
-                    ? "bg-surface text-primary shadow-2xs"
-                    : "text-text-muted hover:text-text"
-                }`}
+                className={cn(buttonVariants({ variant: composerMode === "reminder" ? "secondary" : "ghost", size: "sm" }), !(composerMode === "reminder") && "text-text-muted")}
               >
-                <Sparkle size={12} weight="fill" aria-hidden />
+                <Sparkle size={12} aria-hidden />
                 <span>{isEn ? "Smart Reminder" : "تذكير ذكي"}</span>
               </button>
               <button
@@ -1036,13 +1080,9 @@ export function AiCopilotDrawer({
                   setComposerMode("installment");
                   setDraftText("");
                 }}
-                className={`flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-bold transition-all ${
-                  composerMode === "installment"
-                    ? "bg-surface text-primary shadow-2xs"
-                    : "text-text-muted hover:text-text"
-                }`}
+                className={cn(buttonVariants({ variant: composerMode === "installment" ? "secondary" : "ghost", size: "sm" }), !(composerMode === "installment") && "text-text-muted")}
               >
-                <CalendarCheck size={12} weight="fill" aria-hidden />
+                <CalendarCheck size={12} aria-hidden />
                 <span>{isEn ? "Installment Plan" : "خطة جدولة وأقساط"}</span>
               </button>
             </div>
@@ -1061,7 +1101,7 @@ export function AiCopilotDrawer({
                   setDraftText("");
                   setInstallmentPlan(null);
                 }}
-                className="min-h-[38px] rounded-xl border border-border-strong/60 bg-surface px-3 text-xs font-medium text-text focus:border-primary focus:outline-none"
+                className={cn(inputVariants)}
               >
                 {(overview?.debtorScores ?? []).map((d) => (
                   <option key={d.debtorId} value={d.debtorId}>
@@ -1073,7 +1113,7 @@ export function AiCopilotDrawer({
 
             {activeDebtor?.optedOut && (
               <div className="flex items-center gap-2 rounded-xl bg-status-overdue-bg px-3 py-2 text-xs font-semibold text-status-overdue-fg">
-                <WarningCircle size={15} weight="fill" aria-hidden />
+                <WarningCircle size={15} aria-hidden />
                 <span>
                   {isEn
                     ? "Customer opted out of reminders. Automated dispatch is blocked."
@@ -1091,7 +1131,7 @@ export function AiCopilotDrawer({
                   <select
                     value={tone}
                     onChange={(e) => setTone(e.target.value as NotificationTone)}
-                    className="min-h-[38px] rounded-xl border border-border-strong/60 bg-surface px-2.5 text-xs text-text focus:border-primary focus:outline-none"
+                    className={cn(inputVariants)}
                   >
                     <option value="friendly">{isEn ? "Friendly" : "ودية"}</option>
                     <option value="polite">{isEn ? "Polite" : "رسمية مهذبة"}</option>
@@ -1106,7 +1146,7 @@ export function AiCopilotDrawer({
                   <select
                     value={msgLocale}
                     onChange={(e) => setMsgLocale(e.target.value as "ar" | "en")}
-                    className="min-h-[38px] rounded-xl border border-border-strong/60 bg-surface px-2.5 text-xs text-text focus:border-primary focus:outline-none"
+                    className={cn(inputVariants)}
                   >
                     <option value="ar">العربية</option>
                     <option value="en">English</option>
@@ -1122,7 +1162,7 @@ export function AiCopilotDrawer({
                   <select
                     value={installmentsCount}
                     onChange={(e) => setInstallmentsCount(Number(e.target.value) as 2 | 3 | 4 | 6)}
-                    className="min-h-[38px] rounded-xl border border-border-strong/60 bg-surface px-2 text-xs text-text focus:border-primary focus:outline-none"
+                    className={cn(inputVariants)}
                   >
                     <option value={2}>{isEn ? "2 payments" : "دفعتان (2)"}</option>
                     <option value={3}>{isEn ? "3 payments" : "٣ دفعات"}</option>
@@ -1137,7 +1177,7 @@ export function AiCopilotDrawer({
                   <select
                     value={interval}
                     onChange={(e) => setInterval(e.target.value as "weekly" | "biweekly" | "monthly")}
-                    className="min-h-[38px] rounded-xl border border-border-strong/60 bg-surface px-2 text-xs text-text focus:border-primary focus:outline-none"
+                    className={cn(inputVariants)}
                   >
                     <option value="weekly">{isEn ? "Weekly" : "أسبوعي"}</option>
                     <option value="biweekly">{isEn ? "Bi-weekly" : "كل أسبوعين"}</option>
@@ -1151,7 +1191,7 @@ export function AiCopilotDrawer({
                   <select
                     value={downPaymentPct}
                     onChange={(e) => setDownPaymentPct(Number(e.target.value) as 0 | 10 | 20 | 25 | 30 | 50)}
-                    className="min-h-[38px] rounded-xl border border-border-strong/60 bg-surface px-2 text-xs text-text focus:border-primary focus:outline-none"
+                    className={cn(inputVariants)}
                   >
                     <option value={0}>{isEn ? "None (0%)" : "بدون (0%)"}</option>
                     <option value={10}>10%</option>
@@ -1170,9 +1210,9 @@ export function AiCopilotDrawer({
                 data-testid="copilot-generate-btn"
                 disabled={!activeDebtor || generatingMsg}
                 onClick={() => void handleGenerateMessage()}
-                className="inline-flex min-h-[38px] flex-1 items-center justify-center gap-1.5 rounded-full bg-primary px-4 text-xs font-bold text-primary-fg transition-colors hover:bg-primary-hover disabled:opacity-50"
+                className={cn(buttonVariants({ variant: "default", size: "sm" }), "flex-1")}
               >
-                <Sparkle size={14} weight="fill" aria-hidden />
+                <Sparkle size={14} aria-hidden />
                 <span>
                   {generatingMsg
                     ? isEn
@@ -1194,9 +1234,9 @@ export function AiCopilotDrawer({
                   data-testid="copilot-dispatch-optimal-btn"
                   disabled={dispatchingReminder}
                   onClick={() => void handleDispatchSmartReminder(activeDebtor.debtorId, tone)}
-                  className="inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-full border border-primary/40 bg-callout px-3.5 text-xs font-bold text-primary transition-colors hover:bg-primary hover:text-primary-fg disabled:opacity-50"
+                  className={cn(buttonVariants({ variant: "soft", size: "sm" }))}
                 >
-                  <ClockCountdown size={14} weight="fill" aria-hidden />
+                  <ClockCountdown size={14} aria-hidden />
                   <span>
                     {dispatchingReminder
                       ? isEn
@@ -1211,7 +1251,7 @@ export function AiCopilotDrawer({
             </div>
 
             {installmentPlan && composerMode === "installment" && (
-              <div className="rounded-2xl border border-border bg-callout/35 p-3">
+              <div className="rounded-xl border border-border bg-callout/35 p-3">
                 {installmentPlan.settled ? (
                   <p className="text-xs font-medium text-text">
                     {isEn
@@ -1223,9 +1263,9 @@ export function AiCopilotDrawer({
                 <div className="mb-1.5 flex items-center justify-between text-xs font-bold text-text">
                   <span>
                     {isEn ? "Installment Schedule" : "جدول الدفعات المقترح"} ({installmentPlan.formattedTotal}{" "}
-                    {currencySymbol})
+                    {installmentPlan.currency})
                   </span>
-                  <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] text-primary">
+                  <span className="rounded bg-surface px-2 py-0.5 text-[10px] text-primary">
                     {installmentPlan.installmentsCount} {isEn ? "tranches" : "أقساط"}
                   </span>
                 </div>
@@ -1239,7 +1279,7 @@ export function AiCopilotDrawer({
                         <span className="text-[11px] text-text-muted" dir="ltr">
                           {tr.dueDate}
                         </span>
-                        <span className="tnum font-extrabold text-text" dir="ltr">
+                        <span className="tnum font-bold text-primary" dir="ltr">
                           {tr.formattedAmount}
                         </span>
                       </div>
@@ -1252,12 +1292,12 @@ export function AiCopilotDrawer({
             )}
 
             {draftText && (
-              <div className="flex flex-col gap-2 rounded-2xl border border-border bg-surface-muted/40 p-3">
+              <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface-muted/40 p-3">
                 <div className="flex items-center justify-between text-[11px] text-text-muted">
                   <span>
                     {isEn ? "Suggested send window:" : "أفضل وقت للإرسال:"} {suggestedSendTime}
                   </span>
-                  <span className="rounded-full bg-callout px-2 py-0.5 font-bold text-primary">
+                  <span className="rounded bg-callout px-2 py-0.5 font-bold text-primary">
                     {composerMode === "installment"
                       ? (isEn ? "Calculated schedule" : "جدول محسوب")
                       : draftGenerationMode === "ai"
@@ -1270,15 +1310,15 @@ export function AiCopilotDrawer({
                   value={draftText}
                   onChange={(e) => setDraftText(e.target.value)}
                   dir={msgLocale === "ar" ? "rtl" : "ltr"}
-                  className="w-full rounded-xl border border-border-strong/60 bg-surface p-2.5 text-xs leading-relaxed text-text focus:border-primary focus:outline-none"
+                  className={cn(inputVariants, "w-full")}
                 />
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => void handleCopyDraft()}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-xs font-semibold text-text hover:border-primary"
+                    className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
                   >
-                    {copied ? <Check size={13} weight="fill" className="text-primary" /> : <Copy size={13} weight="fill" />}
+                    {copied ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
                     <span>{copied ? (isEn ? "Copied" : "تم النسخ") : isEn ? "Copy" : "نسخ"}</span>
                   </button>
                   {waHref && (
@@ -1286,9 +1326,9 @@ export function AiCopilotDrawer({
                       href={waHref}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-full bg-status-paid-bg px-3 py-1 text-xs font-bold text-status-paid-fg transition-opacity hover:opacity-90"
+                      className="inline-flex items-center gap-1.5 rounded bg-status-paid-bg px-3 py-1 text-xs font-bold text-status-paid-fg transition-opacity hover:opacity-90"
                     >
-                      <WhatsappLogo size={13} weight="fill" aria-hidden />
+                      <WhatsappLogo size={13} aria-hidden />
                       <span>{isEn ? "Open WhatsApp" : "فتح واتساب"}</span>
                     </a>
                   )}
@@ -1299,288 +1339,320 @@ export function AiCopilotDrawer({
         )}
 
         {tab === "assistant" && (
-          <div className="flex flex-col gap-3.5">
-            <div className="flex items-center gap-2">
-              <select
-                aria-label={isEn ? "Saved AI conversations" : "المحادثات المحفوظة"}
-                value={conversationId ?? ""}
-                onChange={(event) => void openSavedConversation(event.target.value)}
-                disabled={loadingConversation || asking}
-                className="min-h-[36px] min-w-0 flex-1 rounded-xl border border-border bg-surface px-2.5 text-xs text-text disabled:opacity-60"
-              >
-                <option value="">{isEn ? "Current conversation" : "المحادثة الحالية"}</option>
-                {conversationList.map((item) => (
-                  <option key={item.id} value={item.id}>{item.title}</option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={startNewConversation}
-                disabled={asking || loadingConversation}
-                className="min-h-[36px] shrink-0 rounded-xl border border-border px-3 text-xs font-bold text-primary hover:bg-callout disabled:opacity-50"
-              >
-                {isEn ? "New chat" : "محادثة جديدة"}
-              </button>
+          <div className="flex min-h-0 flex-1 flex-col gap-3">
+            {/* Top Conversation Management Bar */}
+            <div className="flex flex-col gap-2">
+              {renaming && conversationId ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleRenameConversation();
+                  }}
+                  className="flex items-center gap-1.5"
+                >
+                  <input
+                    type="text"
+                    value={renameDraft}
+                    maxLength={80}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    placeholder={isEn ? "Conversation title..." : "اسم المحادثة..."}
+                    className={cn(inputVariants, "h-8 min-h-0 flex-1 text-xs")}
+                    autoFocus
+                  />
+                  <button type="submit" className={cn(buttonVariants({ variant: "default", size: "xs" }))}>
+                    {isEn ? "Save" : "حفظ"}
+                  </button>
+                  <button type="button" onClick={() => setRenaming(false)} className={cn(buttonVariants({ variant: "ghost", size: "xs" }))}>
+                    {isEn ? "Cancel" : "إلغاء"}
+                  </button>
+                </form>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <select
+                    aria-label={isEn ? "Saved AI conversations" : "المحادثات المحفوظة"}
+                    value={conversationId ?? ""}
+                    onChange={(event) => void openSavedConversation(event.target.value)}
+                    disabled={loadingConversation || asking}
+                    className={cn(inputVariants, "h-8 min-h-0 min-w-0 flex-1 text-xs")}
+                  >
+                    <option value="">{isEn ? "New / Current chat" : "محادثة جديدة / الحالية"}</option>
+                    {conversationList.map((item) => (
+                      <option key={item.id} value={item.id}>{item.title}</option>
+                    ))}
+                  </select>
+                  {conversationId && (
+                    <>
+                      <button
+                        type="button"
+                        title={isEn ? "Rename chat" : "إعادة تسمية"}
+                        aria-label={isEn ? "Rename chat" : "إعادة تسمية"}
+                        disabled={asking || loadingConversation}
+                        onClick={() => {
+                          const cur = conversationList.find((c) => c.id === conversationId);
+                          setRenameDraft(cur?.title ?? "");
+                          setRenaming(true);
+                        }}
+                        className={cn(buttonVariants({ variant: "outline", size: "iconSm" }), "size-8 shrink-0")}
+                      >
+                        <PencilSimple size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        title={isEn ? "Delete chat" : "حذف المحادثة"}
+                        aria-label={isEn ? "Delete chat" : "حذف المحادثة"}
+                        disabled={asking || loadingConversation}
+                        onClick={() => void handleDeleteConversation(conversationId)}
+                        className={cn(buttonVariants({ variant: "outline", size: "iconSm" }), "size-8 shrink-0 text-destructive hover:bg-danger-bg")}
+                      >
+                        <Trash size={13} />
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={startNewConversation}
+                    disabled={asking || loadingConversation}
+                    className={cn(buttonVariants({ variant: "outline", size: "xs" }), "h-8 shrink-0")}
+                  >
+                    {isEn ? "New" : "جديد"}
+                  </button>
+                  {conversationList.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void handleClearAllConversations()}
+                      disabled={asking || loadingConversation}
+                      title={isEn ? "Clear all chats" : "مسح كل المحادثات"}
+                      className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "h-8 shrink-0 text-destructive hover:bg-danger-bg")}
+                    >
+                      {isEn ? "Clear all" : "مسح الكل"}
+                    </button>
+                  )}
+                </div>
+              )}
+              {loadingConversation && <p className="text-[11px] text-muted-foreground">{isEn ? "Loading…" : "جارٍ التحميل…"}</p>}
+              {copilotError && <p role="alert" className="rounded-lg border border-destructive/20 bg-danger-bg px-3 py-2 text-xs text-destructive">{copilotError}</p>}
             </div>
-            {loadingConversation && <p className="text-[11px] text-text-muted">{isEn ? "Loading conversation…" : "جارٍ تحميل المحادثة…"}</p>}
-            {copilotError && <p role="alert" className="rounded-lg border border-status-overdue-fg/20 bg-status-overdue-bg px-3 py-2 text-xs text-status-overdue-fg">{copilotError}</p>}
-            {conversationTotal > conversationList.length && (
-              <p className="text-[11px] text-text-muted">
-                {isEn
-                  ? `Showing the latest ${conversationList.length} of ${conversationTotal} saved conversations.`
-                  : `عرض أحدث ${conversationList.length} من أصل ${conversationTotal} محادثة محفوظة.`}
-              </p>
-            )}
-            {totalMessages > persistedMessages.length && persistedMessages.length > 0 && (
-              <p className="text-[11px] text-text-muted">
-                {isEn
-                  ? `Showing the latest ${persistedMessages.length} of ${totalMessages} messages in this conversation.`
-                  : `عرض أحدث ${persistedMessages.length} من أصل ${totalMessages} رسالة في هذه المحادثة.`}
-              </p>
-            )}
-            {persistedMessages.length > 24 && (
-              <p className="text-[11px] text-text-muted">
-                {isEn
-                  ? `This view shows the latest 24 of ${persistedMessages.length} loaded messages.`
-                  : `يعرض هذا العرض أحدث 24 من أصل ${persistedMessages.length} رسالة محمّلة.`}
-              </p>
-            )}
-            {/* Unified Conversation Thread */}
-            {persistedMessages.length > 0 && (
-              <div
-                className="flex max-h-[380px] flex-col gap-3 overflow-y-auto rounded-2xl border border-border bg-surface-muted/30 p-3.5 no-scrollbar"
-                style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
-              >
-                {persistedMessages.map((message) => (
+
+            {/* Middle Scrollable Q&A Chat Area (Questions + Answers + Tool Trace) */}
+            <div className="flex min-h-[220px] flex-1 flex-col gap-3 overflow-y-auto scroll-smooth rounded-2xl border border-border bg-background/60 p-3.5">
+              {!asking && !copilotAnswer && persistedMessages.length === 0 && (
+                <div className="my-auto flex flex-col items-center gap-2 py-6 text-center">
+                  <DafqlyAiMascot size={74} mood="idle" followPointer />
+                  <p className="text-xs font-bold text-foreground">
+                    {isEn ? "Hi! I am your DAFQLY AI assistant." : "أهلاً بك! أنا مساعد دفقلي الذكي."}
+                  </p>
+                  <p className="max-w-xs text-[11px] text-muted-foreground">
+                    {isEn ? "Ask me about any customer, overdue balance, or optimal reminder." : "اسألني عن أي عميل، المتأخرات، أو أفضل وقت للتذكير."}
+                  </p>
+                </div>
+              )}
+
+              {persistedMessages.slice(-24).map((message) => {
+                const isUser = message.role === "user";
+                const isStreamingThis = asking && message.id.startsWith("stream-");
+                return (
                   <div
                     key={message.id}
-                    className={`flex flex-col gap-1.5 ${message.role === "user" ? "items-end" : "items-start"}`}
+                    className={`ai-rise group flex max-w-[92%] flex-col gap-1 ${isUser ? "self-end items-end" : "self-start items-start"}`}
                   >
-                    {/* Tool Calls execution badge attached to assistant message */}
-                    {message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0 && (
-                      <div className="flex flex-col gap-1.5 rounded-2xl border border-primary/25 bg-surface/95 p-2.5 text-[11px] shadow-xs max-w-[95%]">
-                        <span className="flex items-center gap-1.5 font-bold text-primary">
-                          <Cpu size={13} weight="fill" />
-                          <span>
-                            {message.aiMode === "live"
-                              ? isEn
-                                ? `AI used ${message.toolCalls.length} workspace tool(s)`
-                                : `استخدم الـAI عدد ${message.toolCalls.length} من أدوات مساحة العمل`
-                              : isEn
-                                ? "Verified deterministic workspace analysis"
-                                : "تحليل فعلي من محرك النظام الأساسي"}
-                          </span>
-                        </span>
-                        <div className="flex flex-col gap-1">
-                          {message.toolCalls.map((tc, idx) => (
-                            <div
-                              key={`${tc.toolName}-${idx}`}
-                              data-testid={`copilot-tool-call-${tc.toolName}`}
-                              className="flex items-center justify-between gap-2 rounded-lg bg-surface-muted px-2.5 py-1 text-[10px]"
-                            >
-                              <span className="font-bold text-text">
-                                {isEn ? tc.titleEn : tc.titleAr}
-                              </span>
-                              <span className={`truncate ${tc.status === "failed" ? "text-status-overdue-fg" : "text-text-muted"}`}>
-                                {isEn ? tc.summaryEn : tc.summaryAr}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Bubble */}
                     <div
-                      className={`max-w-[92%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-line shadow-xs ${
-                        message.role === "user"
-                          ? "bg-primary text-primary-fg"
-                          : "border border-border bg-surface text-text"
+                      className={`text-xs leading-relaxed whitespace-pre-line ${isStreamingThis && message.content ? "ai-caret " : ""}${
+                        isUser
+                          ? "rounded-2xl rounded-ee-sm bg-primary px-3.5 py-2.5 text-primary-foreground"
+                          : "rounded-2xl rounded-es-sm border border-border bg-card px-3.5 py-2.5 text-foreground"
                       }`}
                     >
-                      {message.content}
-                      {asking && message.id === streamingMessageId && (
-                        <span className="inline-block h-3.5 w-1.5 ms-1 bg-primary animate-pulse align-middle" />
-                      )}
+                      {message.content ? (
+                        message.content
+                      ) : isStreamingThis ? (
+                        <span className="ai-dots py-1" aria-label={isEn ? "Generating" : "جارٍ الكتابة"}><i /><i /><i /></span>
+                      ) : null}
                     </div>
-
-                    {/* Matched Customer Interactive Action Card if present */}
-                    {message.role === "assistant" && message.matchedDebtor && (
-                      <div className="rounded-xl border border-primary/30 bg-callout/40 p-2.5 text-xs flex flex-col gap-1.5 max-w-[92%]">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-bold text-text">{message.matchedDebtor.displayName}</span>
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                              message.matchedDebtor.optimalWindow?.canSend
-                                ? "bg-status-paid-bg text-status-paid-fg"
-                                : "bg-status-overdue-bg text-status-overdue-fg"
-                            }`}
-                          >
-                            {isEn
-                              ? message.matchedDebtor.optimalWindow?.windowLabelEn
-                              : message.matchedDebtor.optimalWindow?.windowLabelAr}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-text-muted">
-                          {isEn
-                            ? message.matchedDebtor.optimalWindow?.strategyReasonEn
-                            : message.matchedDebtor.optimalWindow?.strategyReasonAr}
-                        </p>
-                        <div className="flex flex-wrap gap-1.5 pt-1">
-                          {message.matchedDebtor.optimalWindow?.canSend && (
-                            <button
-                              type="button"
-                              disabled={dispatchingReminder}
-                              onClick={() =>
-                                void handleDispatchSmartReminder(
-                                  message.matchedDebtor!.debtorId,
-                                  message.matchedDebtor!.optimalWindow.recommendedTone,
-                                )
-                              }
-                              className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[10px] font-bold text-primary-fg hover:bg-primary-hover disabled:opacity-50"
-                            >
-                              <ClockCountdown size={12} weight="fill" aria-hidden />
-                              <span>{isEn ? "Dispatch Smart Reminder" : "إرسال/جدولة تذكير ذكي"}</span>
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleSelectDebtorForComposer(message.matchedDebtor!, "installment")
-                            }
-                            className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted/60 px-2.5 py-1 text-[10px] font-bold text-text hover:border-primary hover:text-primary"
-                          >
-                            <CalendarCheck size={11} weight="fill" aria-hidden />
-                            <span>{isEn ? "Installment Plan" : "خطة تقسيط"}</span>
-                          </button>
-                        </div>
-                      </div>
+                    {!isUser && message.content && !isStreamingThis && (
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyMessage(message.id, message.content)}
+                        className="inline-flex items-center gap-1 px-1 text-[10px] font-semibold text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                      >
+                        {copiedMsgId === message.id ? <Check size={10} /> : <Copy size={10} />}
+                        <span>{copiedMsgId === message.id ? (isEn ? "Copied" : "تم النسخ") : (isEn ? "Copy" : "نسخ")}</span>
+                      </button>
                     )}
+                  </div>
+                );
+              })}
 
-                    {/* Quick Action Links if present */}
-                    {message.role === "assistant" && message.quickLinks && message.quickLinks.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                        {message.quickLinks.map((lnk) => (
-                          <Link
-                            key={lnk.href}
-                            href={`/${locale}${lnk.href}`}
-                            onClick={onClose}
-                            className="inline-flex items-center gap-1 rounded-full bg-surface px-2.5 py-1 text-[10px] font-bold text-primary border border-primary/20 shadow-2xs hover:bg-primary hover:text-primary-fg transition-colors"
+              {/* Live Tool Execution Pills inside Chat */}
+              {asking && liveTools.length > 0 && (
+                <div className="ai-rise flex flex-col gap-1.5 rounded-xl border border-border bg-muted/40 p-2.5 text-[11px]" role="status" aria-live="polite">
+                  {liveTools.map((tool, i) => (
+                    <div key={tool.id} style={{ ["--i" as string]: i }} className="ai-step flex items-center justify-between gap-2 rounded-lg bg-card px-2.5 py-1.5">
+                      <span className="flex items-center gap-1.5 font-bold">
+                        {tool.state === "running" ? <span className="ai-spin" aria-hidden="true" /> : <span className={tool.state === "done" ? "text-status-paid-fg" : "text-destructive"} aria-hidden="true">{tool.state === "done" ? "✓" : "!"}</span>}
+                        {isEn ? tool.titleEn : tool.titleAr}
+                      </span>
+                      {tool.state !== "running" && <span className="truncate text-muted-foreground">{isEn ? tool.summaryEn : tool.summaryAr}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Inline Action Cards & Tool Trace for Latest Answer */}
+              {copilotAnswer && !asking && (
+                <div className="flex flex-col gap-2.5 rounded-xl border border-border bg-muted/35 p-3 text-xs">
+                  {copilotAnswer.toolCalls && copilotAnswer.toolCalls.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground">
+                        <Cpu size={11} aria-hidden />
+                        <span>
+                          {copilotAnswer.aiMode === "live"
+                            ? (isEn ? `Used ${copilotAnswer.toolCalls.length} workspace tool(s)` : `استخدم ${copilotAnswer.toolCalls.length} من أدوات مساحة العمل`)
+                            : (isEn ? "Deterministic workspace analysis" : "تحليل مباشر من النظام")}
+                        </span>
+                      </span>
+                      <div className="flex flex-col gap-1">
+                        {copilotAnswer.toolCalls.map((tc, idx) => (
+                          <div
+                            key={`${tc.toolName}-${idx}`}
+                            data-testid={`copilot-tool-call-${tc.toolName}`}
+                            className="flex items-center justify-between gap-2 rounded-lg bg-card px-2.5 py-1 text-[10px]"
                           >
-                            <span>{isEn ? lnk.labelEn : lnk.labelAr}</span>
-                            <ArrowSquareOut size={10} weight="fill" aria-hidden />
-                          </Link>
+                            <span className="font-bold text-foreground">{isEn ? tc.titleEn : tc.titleAr}</span>
+                            <span className={`truncate ${tc.status === "failed" ? "text-destructive" : "text-muted-foreground"}`}>
+                              {isEn ? tc.summaryEn : tc.summaryAr}
+                            </span>
+                          </div>
                         ))}
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    {/* Assistant Message Metadata & Copy */}
-                    {message.role === "assistant" && message.content && (
-                      <div className="flex items-center gap-2 px-1 text-[10px] text-text-muted">
+                  {copilotAnswer.matchedDebtor && (
+                    <div className="rounded-xl border border-border bg-card p-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-foreground">{copilotAnswer.matchedDebtor.displayName}</span>
+                        <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${copilotAnswer.matchedDebtor.optimalWindow.canSend ? "bg-status-paid-bg text-status-paid-fg" : "bg-danger-bg text-destructive"}`}>
+                          {isEn ? copilotAnswer.matchedDebtor.optimalWindow.windowLabelEn : copilotAnswer.matchedDebtor.optimalWindow.windowLabelAr}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {isEn ? copilotAnswer.matchedDebtor.optimalWindow.strategyReasonEn : copilotAnswer.matchedDebtor.optimalWindow.strategyReasonAr}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {copilotAnswer.matchedDebtor.optimalWindow.canSend && (
+                          <button
+                            type="button"
+                            disabled={dispatchingReminder}
+                            onClick={() => void handleDispatchSmartReminder(copilotAnswer.matchedDebtor!.debtorId, copilotAnswer.matchedDebtor!.optimalWindow.recommendedTone)}
+                            className={cn(buttonVariants({ variant: "default", size: "xs" }))}
+                          >
+                            <ClockCountdown size={12} aria-hidden />
+                            <span>{isEn ? "Dispatch Smart Reminder" : "إرسال تذكير ذكي"}</span>
+                          </button>
+                        )}
                         <button
                           type="button"
-                          onClick={() => void navigator.clipboard.writeText(message.content)}
-                          className="hover:text-primary transition-colors flex items-center gap-1"
+                          onClick={() => handleSelectDebtorForComposer(copilotAnswer.matchedDebtor!, "installment")}
+                          className={cn(buttonVariants({ variant: "secondary", size: "xs" }))}
                         >
-                          <Copy size={11} />
-                          <span>{isEn ? "Copy" : "نسخ الرد"}</span>
+                          <CalendarCheck size={11} aria-hidden />
+                          <span>{isEn ? "Installment Plan" : "خطة تقسيط"}</span>
                         </button>
-                        {message.aiModel && <span className="font-mono text-[9px] text-text-subtle">{message.aiModel}</span>}
                       </div>
-                    )}
-                  </div>
-                ))}
-
-                {/* Shimmering Radar Thinking Indicator while waiting for initial tokens */}
-                {asking && (!streamingMessageId || persistedMessages.find((m) => m.id === streamingMessageId)?.content === "") && (
-                  <div className="flex items-center gap-3 rounded-2xl border border-primary/25 bg-callout/40 p-3.5 text-xs text-text shadow-xs animate-in fade-in duration-200">
-                    <div className="relative flex size-5 shrink-0 items-center justify-center">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-30" />
-                      <Sparkle size={14} weight="fill" className="text-primary animate-spin" />
                     </div>
-                    <div className="flex flex-col gap-0.5">
-                      <span className="font-bold text-text">
-                        {isEn ? "DAFQLY Live AI Reasoning" : "جارٍ استرجاع دفاتر المنشأة وتشغيل الأدوات الذكية..."}
-                      </span>
-                      <span className="text-[10px] text-text-muted">
-                        {isEn ? "Calling workspace tools & checking invoices" : "استدعاء Google Gemini 3.1 وفحص سجلات الفواتير والمتأخرات"}
-                      </span>
-                    </div>
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-            )}
+                  )}
 
-            {/* Quick Intents */}
-            <div className="flex flex-wrap gap-1.5">
-              {(
-                [
-                  { id: "daily_summary", en: "Daily Briefing", ar: "ملخص اليوم" },
-                  { id: "priority_customers", en: "Priority Customers", ar: "أهم العملاء" },
-                  { id: "optimize_reminders", en: "Optimal Reminders", ar: "توقيت التذكيرات الذكي" },
-                  { id: "forecast_and_risk", en: "Liquidity & Risk", ar: "السيولة والمخاطر" },
-                  { id: "settlement_options", en: "Settlement Plan", ar: "مقترح جدولة" },
-                  { id: "action_plan", en: "Action Plan", ar: "خطة العمل" },
-                  { id: "inbox_triage", en: "Pending Queue", ar: "صندوق المراجعة" },
-                ] as const
-              ).map((chip) => (
-                <button
-                  key={chip.id}
-                  type="button"
-                  disabled={asking}
-                  onClick={() => void runCopilotIntent(chip.id)}
-                  className="rounded-full border border-border bg-surface-muted/60 px-2.5 py-1 text-[11px] font-bold text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary disabled:opacity-50"
-                >
-                  {isEn ? chip.en : chip.ar}
-                </button>
-              ))}
+                  {copilotAnswer.quickLinks.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {copilotAnswer.quickLinks.map((lnk) => (
+                        <Link
+                          key={lnk.href}
+                          href={`/${locale}${lnk.href}`}
+                          onClick={onClose}
+                          className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[10px] font-bold text-foreground hover:bg-accent"
+                        >
+                          <span>{isEn ? lnk.labelEn : lnk.labelAr}</span>
+                          <ArrowSquareOut size={10} aria-hidden />
+                        </Link>
+                      ))}
+                      <button
+                        type="button"
+                        disabled={optimizingSchedule}
+                        onClick={() => void handleOptimizeAllReminders()}
+                        className={cn(buttonVariants({ variant: "outline", size: "xs" }))}
+                      >
+                        <ClockCountdown size={11} aria-hidden />
+                        <span>{isEn ? "Optimize All" : "جدولة التذكيرات"}</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div ref={chatEndRef} />
             </div>
 
-            {/* Question Input */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!question.trim() || asking) return;
-                void runCopilotIntent("custom_question", question.trim());
-              }}
-              className="flex items-center gap-2"
-            >
-              <input
-                type="text"
-                data-testid="copilot-question-input"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                maxLength={2000}
-                placeholder={
-                  isEn
-                    ? "Ask about any customer by name, overdue risk, optimal reminder time..."
-                    : "اسأل عن أي عميل بالاسم، المتأخرات، أفضل وقت للتذكير، أو التقسيط..."
-                }
-                className="min-h-[38px] flex-1 rounded-xl border border-border-strong/60 bg-surface px-3 text-xs text-text placeholder:text-text-subtle focus:border-primary focus:outline-none"
-              />
-              <span className="shrink-0 text-[11px] text-text-muted" dir="ltr">{question.length}/2000</span>
-              <button
-                type="submit"
-                disabled={!question.trim() || asking}
-                aria-label={isEn ? "Ask" : "إرسال"}
-                className="flex size-[38px] shrink-0 items-center justify-center rounded-xl bg-primary text-primary-fg transition-colors hover:bg-primary-hover disabled:opacity-50"
+            {/* Bottom Pinned Quick Prompts + Typing Field (Nothing below this!) */}
+            <div className="flex shrink-0 flex-col gap-2 pt-1">
+              <div className="no-scrollbar flex gap-1.5 overflow-x-auto pb-0.5">
+                {(
+                  [
+                    { id: "daily_summary", en: "Daily Briefing", ar: "ملخص اليوم" },
+                    { id: "priority_customers", en: "Priority Customers", ar: "أهم العملاء" },
+                    { id: "optimize_reminders", en: "Optimal Reminders", ar: "توقيت التذكيرات" },
+                    { id: "forecast_and_risk", en: "Liquidity & Risk", ar: "السيولة والمخاطر" },
+                    { id: "settlement_options", en: "Settlement Plan", ar: "مقترح جدولة" },
+                  ] as const
+                ).map((chip) => (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    disabled={asking}
+                    onClick={() => void runCopilotIntent(chip.id)}
+                    className={cn(buttonVariants({ variant: "outline", size: "xs" }), "shrink-0 rounded-full")}
+                  >
+                    {isEn ? chip.en : chip.ar}
+                  </button>
+                ))}
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!question.trim() || asking) return;
+                  void runCopilotIntent("custom_question", question.trim());
+                }}
+                className="flex items-center gap-2 rounded-2xl border border-border bg-background p-1.5 shadow-xs focus-within:border-foreground/40"
               >
-                <PaperPlaneTilt size={15} weight="fill" aria-hidden />
-              </button>
-            </form>
-
-
-            <div className="rounded-xl border border-border/60 bg-surface-muted/35 p-2.5 text-[10px] text-text-muted">
-              <p className="flex items-center gap-1 font-semibold text-text">
-                <ShieldWarning size={13} weight="fill" className="text-primary" aria-hidden />
-                <span>{isEn ? "Tenant-Isolated AI Guardrails" : "حماية وعزل بيانات المنشأة"}</span>
-              </p>
-              <p className="mt-0.5 leading-relaxed">
-                {isEn
-                  ? "All AI function calls execute strictly on your RLS-scoped workspace ledger with quiet-hours enforcement and audit logging."
-                  : "تُنفَّذ جميع استدعاءات الدوال حصرياً على دفاتر منشأتك المعزولة مع الالتزام بساعات الهدوء وسجل المراجعة."}
-              </p>
+                <input
+                  type="text"
+                  data-testid="copilot-question-input"
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  maxLength={2000}
+                  placeholder={isEn ? "Ask anything about your ledger..." : "اسأل عن أي عميل، فاتورة، أو خطة تحصيل..."}
+                  className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground outline-none"
+                />
+                {asking ? (
+                  <button
+                    type="button"
+                    onClick={stopAsking}
+                    aria-label={isEn ? "Stop" : "إيقاف"}
+                    className={cn(buttonVariants({ variant: "destructive", size: "xs" }), "h-8 shrink-0 rounded-full px-3")}
+                  >
+                    {isEn ? "Stop" : "إيقاف"}
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={!question.trim()}
+                    aria-label={isEn ? "Ask" : "إرسال"}
+                    className={cn(buttonVariants({ variant: "default", size: "icon" }), "size-8 shrink-0 rounded-full")}
+                  >
+                    <PaperPlaneTilt size={15} aria-hidden />
+                  </button>
+                )}
+              </form>
             </div>
           </div>
         )}

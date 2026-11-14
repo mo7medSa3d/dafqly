@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { normalizeDigits } from "./digits";
-import { CURRENCY_SYMBOLS, formatCurrencyMinor, formatMoney, getCurrencySymbol, parseEgp } from "./money";
+import { parseEgp, formatMoney, formatCurrencyMinor, normalizeCurrencyCode } from "./money";
 import { allocatePayment, addDaysIso, type AllocationTarget } from "./invoices";
 
 /**
@@ -820,9 +820,12 @@ export function parseReceiptScreenshotAnalysis(input: {
   }
 
   const methodLabel = e.method ?? "تحويل إلكتروني";
-  const receiptCur = e.currency ?? "EGP";
-  const amountStrAr = e.amount_minor !== null ? formatMoney(BigInt(e.amount_minor), receiptCur, { locale: "ar" }) : "مبلغ غير محدد";
-  const amountStrEn = e.amount_minor !== null ? formatMoney(BigInt(e.amount_minor), receiptCur, { locale: "en" }) : "unspecified amount";
+  // F-06: the receipt carries its own currency — format the amount in it
+  // (KWD 3 decimals, JPY 0), never as EGP ÷ 100. The Arabic summary uses
+  // the Arabic symbol, the English summary the English one.
+  const receiptCurrency = e.currency ?? "EGP";
+  const amountStrAr = e.amount_minor !== null ? formatMoney(BigInt(e.amount_minor), receiptCurrency, { locale: "ar" }) : "مبلغ غير محدد";
+  const amountStrEn = e.amount_minor !== null ? formatMoney(BigInt(e.amount_minor), receiptCurrency, { locale: "en" }) : "amount not specified";
 
   const summaryAr = extractionUnavailable
     ? "تعذر استخراج بيانات الإيصال آلياً. لم يتم تصنيفه كإيصال صالح أو غير صالح؛ راجع الصورة وأدخل البيانات يدوياً."
@@ -869,7 +872,7 @@ export type NotificationTone = "friendly" | "polite" | "firm" | "urgent";
 
 export interface GenerateSmartNotificationInput {
   debtorName: string;
-  amountMinor: number;
+  amountMinor: bigint | number | string;
   currency?: string;
   daysOverdue: number;
   dueDate: string;
@@ -897,25 +900,31 @@ export interface GenerateSmartNotificationResult {
 }
 
 export function generateSmartNotification(input: GenerateSmartNotificationInput): GenerateSmartNotificationResult {
-  if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) {
+  let amountMinor: bigint;
+  try {
+    if (typeof input.amountMinor === "bigint") amountMinor = input.amountMinor;
+    else if (typeof input.amountMinor === "number") {
+      if (!Number.isSafeInteger(input.amountMinor)) throw new Error("unsafe or fractional number");
+      amountMinor = BigInt(input.amountMinor);
+    } else {
+      const raw = input.amountMinor.trim();
+      if (!/^-?\d+$/.test(raw)) throw new Error("not an integer string");
+      amountMinor = BigInt(raw);
+    }
+  } catch {
     throw new Error("amountMinor must be a positive integer in minor units (hard rule 1)");
   }
+  if (amountMinor <= 0n) throw new Error("amountMinor must be a positive integer in minor units (hard rule 1)");
   const isEn = input.locale === "en";
   const safeDebtorName = sanitizePromptData(input.debtorName);
   const safeBusinessName = sanitizePromptData(input.tenantBusinessName);
   const debtorDisplayName = safeDebtorName || (isEn ? "Valued Customer" : "عزيزي العميل");
   const businessDisplayName = safeBusinessName || (isEn ? "DAFQLY" : "دافقلي");
-  const symbolToCode: Record<string, string> = {
-    "ج.م": "EGP", "ر.س": "SAR", "د.إ": "AED", "د.ك": "KWD", "$": "USD", "€": "EUR", "¥": "JPY",
-  };
-  const rawCur = (input.currency ?? "").trim();
-  const resolvedCode = rawCur
-    ? (CURRENCY_SYMBOLS[rawCur.toUpperCase()] ? rawCur.toUpperCase() : (symbolToCode[rawCur] ?? "EGP"))
+  const currency = input.currency ?? (isEn ? "EGP" : "ج.م");
+  const currencyCode = input.currency && /^[A-Z]{3}$/.test(input.currency)
+    ? normalizeCurrencyCode(input.currency)
     : "EGP";
-  const currency = rawCur
-    ? (CURRENCY_SYMBOLS[rawCur.toUpperCase()] ? getCurrencySymbol(resolvedCode, isEn ? "en" : "ar") : rawCur)
-    : getCurrencySymbol("EGP", isEn ? "en" : "ar");
-  const amountMajor = formatCurrencyMinor(BigInt(input.amountMinor), resolvedCode);
+  const amountMajor = formatCurrencyMinor(amountMinor, currencyCode);
   const invoiceRefText = input.reference ? (isEn ? ` #${input.reference}` : ` رقم ${input.reference}`) : "";
 
   // Select appropriate tone based on overdue status and customer risk flag

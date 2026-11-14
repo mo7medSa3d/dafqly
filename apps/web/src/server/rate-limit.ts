@@ -33,7 +33,7 @@ const buckets = new Map<string, Bucket>();
 export const MAX_RATE_LIMIT_BUCKETS = 10_000;
 
 /** Number of proxies between the client and this app that append to XFF. */
-export function trustedProxyCount(explicit?: number): number {
+function trustedProxyCount(explicit?: number): number {
   if (explicit !== undefined) return Math.max(0, Math.floor(explicit));
   const raw = Number(process.env.TRUSTED_PROXY_COUNT ?? "1");
   return Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 1;

@@ -396,6 +396,7 @@ export interface InstallmentPlanView {
   businessName: string;
   totalMinor: string;
   formattedTotal: string;
+  currency: string;
   installmentsCount: number;
   interval: "weekly" | "biweekly" | "monthly";
   downPaymentPct: number;
@@ -437,6 +438,7 @@ export async function proposeWorkspaceInstallmentPlan(
 
   let debtorName = input.debtorName ?? "العميل";
   let totalMinor = BigInt(input.totalMinor ?? 0);
+  let planCurrency = tenantCurrency;
   let reference: string | undefined;
   let paymentLink: string | undefined;
 
@@ -449,16 +451,21 @@ export async function proposeWorkspaceInstallmentPlan(
       if (deb) {
         debtorName = deb.displayName;
       }
-      const openInvs = await tx
+      const allOpenInvoices = await tx
         .select()
         .from(invoices)
-        .where(
-          and(
-            eq(invoices.debtorId, input.debtorId!),
-            inArray(invoices.status, ["open", "partially_paid"]),
-          ),
-        )
+        .where(and(
+          eq(invoices.debtorId, input.debtorId!),
+          inArray(invoices.status, ["open", "partially_paid"]),
+        ))
         .orderBy(asc(invoices.dueOn));
+      // Installment plans have one amount/currency. Prefer the tenant's
+      // default currency when present; otherwise use the debtor's first
+      // open invoice currency. Never aggregate unlike minor units.
+      planCurrency = allOpenInvoices.some((inv) => inv.currency === tenantCurrency)
+        ? tenantCurrency
+        : normalizeCurrencyCode(allOpenInvoices[0]?.currency ?? tenantCurrency);
+      const openInvs = allOpenInvoices.filter((inv) => inv.currency === planCurrency);
 
       if (totalMinor <= 0n) {
         totalMinor = openInvs.reduce((acc, inv) => {
@@ -476,7 +483,9 @@ export async function proposeWorkspaceInstallmentPlan(
         .where(and(eq(paymentLinks.debtorId, input.debtorId!), eq(paymentLinks.status, "pending")))
         .orderBy(desc(paymentLinks.createdAt))
         .limit(1);
-      if (activeLink?.checkoutUrl) {
+      if (activeLink?.checkoutUrl && planCurrency === "EGP") {
+        // The configured Paymob gateway is EGP-only; never attach its link
+        // to a non-EGP installment plan.
         paymentLink = activeLink.checkoutUrl;
       }
     });
@@ -492,6 +501,7 @@ export async function proposeWorkspaceInstallmentPlan(
       businessName,
       totalMinor: "0",
       formattedTotal: "0",
+      currency: planCurrency,
       installmentsCount: input.installmentsCount,
       interval: input.interval,
       downPaymentPct: input.downPaymentPct,
@@ -508,7 +518,7 @@ export async function proposeWorkspaceInstallmentPlan(
     debtorName,
     businessName,
     totalMinor,
-    currency: tenantCurrency,
+    currency: planCurrency,
     installmentsCount: input.installmentsCount,
     interval: input.interval,
     startDateIso: input.startDateIso ?? todayIso,
@@ -533,6 +543,7 @@ export async function proposeWorkspaceInstallmentPlan(
     businessName: plan.businessName,
     totalMinor: plan.totalMinor.toString(),
     formattedTotal: plan.formattedTotal,
+    currency: planCurrency,
     installmentsCount: plan.installmentsCount,
     interval: plan.interval,
     downPaymentPct: plan.downPaymentPct,
@@ -605,6 +616,7 @@ export async function suggestWorkspaceInboxReply(
         .where(
           and(
             eq(invoices.debtorId, input.debtorId),
+            eq(invoices.currency, tenantCurrency),
             inArray(invoices.status, ["open", "partially_paid", "disputed"]),
           ),
         );
@@ -725,7 +737,7 @@ export async function dispatchSmartReminderForDebtor(
 
     if (!debtor) return null;
 
-    const [openInvs, dispRows, optRows, linkRows] = await Promise.all([
+    const [allOpenInvs, dispRows, optRows, linkRows] = await Promise.all([
       tx
         .select()
         .from(invoices)
@@ -753,6 +765,11 @@ export async function dispatchSmartReminderForDebtor(
         .limit(1),
     ]);
 
+    const defaultCurrency = normalizeCurrencyCode(tenantRow?.settings?.currency);
+    const reminderCurrency = allOpenInvs.some((inv) => inv.currency === defaultCurrency)
+      ? defaultCurrency
+      : allOpenInvs[0]?.currency ?? defaultCurrency;
+    const openInvs = allOpenInvs.filter((inv) => inv.currency === reminderCurrency);
     return {
       timezone: tenantRow?.timezone ?? "Africa/Cairo",
       settings: tenantRow?.settings,
@@ -808,7 +825,7 @@ export async function dispatchSmartReminderForDebtor(
       debtorId: ctxData.debtor.id,
       debtorName: ctxData.debtor.displayName,
       invoiceRef: primaryInv?.reference ?? null,
-      amountFormatted: formatMoney(totalOutstandingMinor, normalizeCurrencyCode(ctxData.settings?.currency)),
+      amountFormatted: formatMoney(totalOutstandingMinor, ctxData.openInvs[0]?.currency ?? normalizeCurrencyCode(ctxData.settings?.currency)),
       optimalSlotIso: window.optimalSlotIso,
       localDateFormatted: window.localDateFormatted,
       localTimeFormatted: window.localTimeFormatted,
@@ -828,7 +845,7 @@ export async function dispatchSmartReminderForDebtor(
   const draftBase = {
     debtorName: ctxData.debtor.displayName,
     tenantBusinessName: businessName,
-    amountMinor: Number(totalOutstandingMinor),
+    amountMinor: totalOutstandingMinor,
     currency: primaryInv.currency,
     daysOverdue: maxOverdue,
     dueDate: primaryInv.dueOn,
@@ -845,8 +862,8 @@ export async function dispatchSmartReminderForDebtor(
   let dispatchedNow = 0;
 
   if (window.isImmediateAllowed && !ctxData.settings?.sendingPaused) {
-    const dispatchRes = await dispatchDue(constDeps, now, { tenantId }).catch(() => null);
-    dispatchedNow = dispatchRes?.remindersSent ?? 0;
+    const dispatchRes = await dispatchDue(constDeps, now, { tenantId });
+    dispatchedNow = dispatchRes.remindersSent;
   }
 
   await withTenant(app, tenantId, async (tx) => {
@@ -868,7 +885,7 @@ export async function dispatchSmartReminderForDebtor(
     debtorId: ctxData.debtor.id,
     debtorName: ctxData.debtor.displayName,
     invoiceRef: primaryInv.reference,
-    amountFormatted: formatMoney(totalOutstandingMinor, normalizeCurrencyCode(ctxData.settings?.currency)),
+    amountFormatted: formatMoney(totalOutstandingMinor, primaryInv.currency),
     optimalSlotIso: window.optimalSlotIso,
     localDateFormatted: window.localDateFormatted,
     localTimeFormatted: window.localTimeFormatted,
@@ -893,12 +910,12 @@ export async function optimizeWorkspaceReminders(
   const deps = engineDeps();
 
   const plannedSteps = await planForTenant(deps, tenantId, now);
-  const dispatchRes = await dispatchDue(deps, now, { tenantId }).catch(() => null);
-  const sent = dispatchRes?.remindersSent ?? 0;
-  const skipped = dispatchRes
-    ? Object.values(dispatchRes.skipped).reduce((a, b) => a + b, 0)
-    : 0;
-  const rescheduled = dispatchRes?.rescheduled ?? 0;
+  // The plan is durable even if dispatch fails; surface the failure rather
+  // than returning an apparently successful optimization with zero sends.
+  const dispatchRes = await dispatchDue(deps, now, { tenantId });
+  const sent = dispatchRes.remindersSent;
+  const skipped = Object.values(dispatchRes.skipped).reduce((a, b) => a + b, 0);
+  const rescheduled = dispatchRes.rescheduled;
 
   await withTenant(app, tenantId, async (tx) => {
     await logAiAudit(tx, tenantId, actorUserId, "ai.reminders_optimized", {

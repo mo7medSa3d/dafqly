@@ -1,18 +1,10 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { useCurrency } from "./CurrencyContext";
-import {
-  ArrowCounterClockwise,
-  CheckCircle,
-  DownloadSimple,
-  Eye,
-  FileCsv,
-  FileText,
-  Trash,
-  UploadSimple,
-  WarningCircle,
-} from "@phosphor-icons/react";
+import { ArrowCounterClockwise, CheckCircle, DownloadSimple, Eye, FileCsv, FileText, Trash, UploadSimple, WarningCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { Panel, StatusPill, btnGhost, btnPrimary, inputCls } from "./ui";
 import { ImportIllustration } from "./illustrations";
@@ -177,11 +169,11 @@ export function ImportClient() {
     <section className="flex flex-col gap-6">
       <div className="grid gap-6 lg:grid-cols-12">
         {/* Upload Dropzone */}
-        <label className="brand-pattern-light panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-border/80 bg-surface/90 p-8 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/30 hover:shadow-md lg:col-span-7">
+        <label className="panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border border-border/80 bg-surface/90 p-8 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/30 lg:col-span-7">
           <ImportIllustration size={104} />
           <div className="flex flex-col items-center gap-1">
             <span className="flex items-center gap-2 text-lg font-extrabold text-text">
-              <UploadSimple size={22} weight="bold" aria-hidden className="text-primary" />
+              <UploadSimple size={22} strokeWidth={2.5} aria-hidden className="text-primary" />
               {t("pick")}
             </span>
             <p className="text-xs text-text-muted">
@@ -192,9 +184,9 @@ export function ImportClient() {
           </div>
 
           <div className="flex items-center gap-2 pt-2">
-            <span className="rounded-md border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-bold text-text-muted">XLSX</span>
-            <span className="rounded-md border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-bold text-text-muted">XLS</span>
-            <span className="rounded-md border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-bold text-text-muted">CSV</span>
+            <span className="rounded-md border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-bold text-text-subtle">XLSX</span>
+            <span className="rounded-md border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-bold text-text-subtle">XLS</span>
+            <span className="rounded-md border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-bold text-text-subtle">CSV</span>
           </div>
 
           <input
@@ -211,10 +203,10 @@ export function ImportClient() {
         </label>
 
         {/* Guidelines / Helper Column */}
-        <div className="panel-shadow flex flex-col justify-between rounded-2xl border border-border bg-surface p-6 lg:col-span-5">
+        <div className="panel-shadow flex flex-col justify-between rounded-xl border border-border bg-surface p-6 lg:col-span-5">
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2"><FileText size={20} weight="fill" className="text-primary" />
+              <div className="flex items-center gap-2"><FileText size={20} className="text-primary" />
               <h2 className="text-base font-bold text-text">
                 {isAr ? "استيراد ملفات الفواتير" : "Invoice File Import"}
               </h2></div>
@@ -230,19 +222,19 @@ export function ImportClient() {
             </p>
             <ul className="flex flex-col gap-1.5 pt-1 text-xs text-text-muted">
               <li className="flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-teal-500" />
+                <span className="size-1.5 rounded-full bg-status-paid-fg" />
                 <span>{isAr ? "اسم العميل أو المنشأة" : "Customer or Business Name"}</span>
               </li>
               <li className="flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-teal-500" />
+                <span className="size-1.5 rounded-full bg-status-paid-fg" />
                 <span>{isAr ? "رقم الهاتف للتواصل والتذكيرات" : "Phone Number"}</span>
               </li>
               <li className="flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-teal-500" />
+                <span className="size-1.5 rounded-full bg-status-paid-fg" />
                 <span>{isAr ? "المبلغ المستحق" : "Amount Due"}</span>
               </li>
               <li className="flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-teal-500" />
+                <span className="size-1.5 rounded-full bg-status-paid-fg" />
                 <span>{isAr ? "تاريخ الاستحقاق (اختياري)" : "Due Date (Optional)"}</span>
               </li>
             </ul>
@@ -251,18 +243,18 @@ export function ImportClient() {
                 type="button"
                 onClick={() => downloadSampleCsv(isAr ? "ar" : "en")}
                 data-testid="import-sample-download"
-                className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95"
+                className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
               >
-                <DownloadSimple size={15} weight="bold" className="text-primary" />
+                <DownloadSimple size={15} strokeWidth={2.5} className="text-primary" />
                 <span>{isAr ? "تحميل نموذج CSV العربي" : "Download Arabic CSV Template"}</span>
               </button>
               <button
                 type="button"
                 onClick={() => downloadSampleCsv("en")}
                 data-testid="import-sample-download-en"
-                className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface-muted/60 px-3 py-1.5 text-xs font-semibold text-text-muted transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95"
+                className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}
               >
-                <DownloadSimple size={15} weight="bold" />
+                <DownloadSimple size={15} strokeWidth={2.5} />
                 <span>{isAr ? "النموذج الإنجليزي (English CSV)" : "English CSV Template"}</span>
               </button>
             </div>
@@ -286,9 +278,9 @@ export function ImportClient() {
           }`}
         >
           {isErrorMsg ? (
-            <WarningCircle size={18} weight="fill" aria-hidden />
+            <WarningCircle size={18} aria-hidden />
           ) : (
-            <CheckCircle size={18} weight="fill" aria-hidden />
+            <CheckCircle size={18} aria-hidden />
           )}
           <span>{msg}</span>
         </div>
@@ -310,7 +302,7 @@ export function ImportClient() {
               <div className="flex items-center justify-between">
                 <legend className="mb-1 font-bold">{t("mapping")}</legend>
                 {job.status !== "pending_review" && (
-                  <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-semibold text-text-muted">
+                  <span className="rounded bg-surface-muted px-3 py-1 text-xs font-semibold text-text-muted">
                     {isAr ? "للقراءة فقط (معتمد)" : "Read-only (committed)"}
                   </span>
                 )}
@@ -318,7 +310,7 @@ export function ImportClient() {
               {job.status === "pending_review" && ((mapping.name === undefined || mapping.name < 0) ||
                 (mapping.phone === undefined || mapping.phone < 0) ||
                 (mapping.amount === undefined || mapping.amount < 0)) && (
-                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs font-bold text-amber-700 dark:text-amber-300">
+                <div className="rounded-xl border border-status-due-fg/40 bg-status-due-bg p-3 text-xs font-bold text-status-due-fg dark:text-status-due-fg">
                   {isAr
                     ? "حدّد أعمدة الاسم والهاتف والمبلغ للمتابعة."
                     : "Name, phone, and amount columns are required to continue."}
@@ -347,9 +339,9 @@ export function ImportClient() {
             </fieldset>
 
             <div className="overflow-x-auto rounded-lg border border-border">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-surface-muted/70 text-start">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead className="sticky top-0">
+                  <tr className="bg-surface-muted text-start">
                     <th className="px-3 py-2.5 text-start font-bold">{t("row")}</th>
                     <th className="px-3 py-2.5 text-start font-bold">{t("fields.name")}</th>
                     <th className="px-3 py-2.5 text-start font-bold">{t("fields.phone")}</th>
@@ -382,7 +374,7 @@ export function ImportClient() {
                   disabled={busy}
                   className={`${btnPrimary} flex items-center gap-2`}
                 >
-                  <CheckCircle size={18} weight="fill" />
+                  <CheckCircle size={18} />
                   <span>{t("commit")}</span>
                 </button>
                 <button
@@ -390,9 +382,9 @@ export function ImportClient() {
                   data-testid="import-discard"
                   onClick={() => void onDelete(job.id)}
                   disabled={busy}
-                  className="inline-flex min-h-[40px] items-center gap-2 rounded-xl border border-border bg-surface px-4 text-xs font-bold text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 disabled:opacity-50"
+                  className={cn(buttonVariants({ variant: "outline", size: "sm" }), "text-text-muted hover:border-danger hover:text-danger")}
                 >
-                  <Trash size={16} weight="bold" />
+                  <Trash size={16} strokeWidth={2.5} />
                   <span>{t("discard")}</span>
                 </button>
               </div>
@@ -406,9 +398,9 @@ export function ImportClient() {
                     data-testid="import-undo"
                     onClick={() => void onUndo(job.id)}
                     disabled={busy}
-                    className="inline-flex min-h-[38px] items-center gap-2 rounded-xl border border-border bg-surface px-4 text-xs font-bold text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95"
+                    className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
                   >
-                    <ArrowCounterClockwise size={16} weight="bold" />
+                    <ArrowCounterClockwise size={16} strokeWidth={2.5} />
                     <span>{t("undo")}</span>
                   </button>
                 )}
@@ -421,8 +413,8 @@ export function ImportClient() {
       <div className="flex flex-col gap-3">
         <h2 className="text-lg font-extrabold">{t("jobs")}</h2>
         {jobs.length === 0 ? (
-          <div className="panel-shadow flex flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-surface p-8 text-center">
-            <FileText size={32} weight="fill" className="text-text-subtle" />
+          <div className="panel-shadow flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-surface p-8 text-center">
+            <FileText size={32} className="text-text-subtle" />
             <p className="font-bold text-text">{isAr ? "لا توجد عمليات استيراد سابقة" : "No previous import jobs"}</p>
             <p className="max-w-md text-xs leading-relaxed text-text-muted">
               {isAr
@@ -448,8 +440,8 @@ export function ImportClient() {
                     }`}
                   >
                     <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400">
-                        <FileCsv size={22} weight="fill" aria-hidden />
+                      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-status-paid-bg text-status-paid-fg dark:text-status-paid-fg">
+                        <FileCsv size={22} aria-hidden />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
@@ -463,17 +455,17 @@ export function ImportClient() {
                         <div className="flex items-center gap-2 pt-0.5 text-xs text-text-muted">
                           <span className="sr-only">{j.status}</span>
                           {isPendingReview && (
-                            <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-bold text-amber-700 dark:text-amber-400">
+                            <span className="inline-flex items-center rounded bg-status-due-bg px-2.5 py-0.5 text-xs font-bold text-status-due-fg dark:text-status-due-fg">
                               {t("statusPending")}
                             </span>
                           )}
                           {isCommitted && (
-                            <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                            <span className="inline-flex items-center rounded bg-status-paid-bg px-2.5 py-0.5 text-xs font-bold text-status-paid-fg dark:text-status-paid-fg">
                               {t("statusCommitted")}
                             </span>
                           )}
                           {isUndone && (
-                            <span className="inline-flex items-center rounded-full bg-surface-muted px-2.5 py-0.5 text-xs font-bold text-text-muted">
+                            <span className="inline-flex items-center rounded bg-surface-muted px-2.5 py-0.5 text-xs font-bold text-text-muted">
                               {t("statusUndone")}
                             </span>
                           )}
@@ -497,9 +489,9 @@ export function ImportClient() {
                               void loadJob(j.id);
                             }}
                             disabled={busy}
-                            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-primary px-3.5 py-1.5 text-xs font-bold text-primary-fg shadow-xs transition-all hover:brightness-110 active:scale-95 disabled:opacity-50"
+                            className={cn(buttonVariants({ variant: "default", size: "sm" }))}
                           >
-                            <Eye size={15} weight="bold" />
+                            <Eye size={15} strokeWidth={2.5} />
                             <span>{t("review")}</span>
                           </button>
                           <button
@@ -509,9 +501,9 @@ export function ImportClient() {
                             disabled={busy}
                             title={t("deleteDraft")}
                             aria-label={t("deleteDraft")}
-                            className="inline-flex size-9 items-center justify-center rounded-xl border border-border bg-surface text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 disabled:opacity-50"
+                            className={cn(buttonVariants({ variant: "outline", size: "icon" }), "size-9 text-text-muted hover:border-danger hover:text-danger")}
                           >
-                            <Trash size={16} weight="bold" />
+                            <Trash size={16} strokeWidth={2.5} />
                           </button>
                         </>
                       ) : (
@@ -524,9 +516,9 @@ export function ImportClient() {
                               void loadJob(j.id);
                             }}
                             disabled={busy}
-                            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text transition-colors hover:border-primary hover:bg-callout hover:text-primary active:scale-95 disabled:opacity-50"
+                            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
                           >
-                            <Eye size={15} weight="bold" />
+                            <Eye size={15} strokeWidth={2.5} />
                             <span>{t("viewDetails")}</span>
                           </button>
                           {isCommitted && (
@@ -535,9 +527,9 @@ export function ImportClient() {
                               data-testid="import-undo"
                               onClick={() => void onUndo(j.id)}
                               disabled={busy}
-                              className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 disabled:opacity-50"
+                              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "text-text-muted hover:border-danger hover:text-danger")}
                             >
-                              <ArrowCounterClockwise size={15} weight="bold" />
+                              <ArrowCounterClockwise size={15} strokeWidth={2.5} />
                               <span>{t("undo")}</span>
                             </button>
                           )}
@@ -548,9 +540,9 @@ export function ImportClient() {
                               disabled={busy}
                               title={t("deleteDraft")}
                               aria-label={t("deleteDraft")}
-                              className="inline-flex size-9 items-center justify-center rounded-xl border border-border bg-surface text-text-muted transition-colors hover:border-danger hover:bg-danger-bg hover:text-danger active:scale-95 disabled:opacity-50"
+                              className={cn(buttonVariants({ variant: "outline", size: "icon" }), "size-9 text-text-muted hover:border-danger hover:text-danger")}
                             >
-                              <Trash size={16} weight="bold" />
+                              <Trash size={16} strokeWidth={2.5} />
                             </button>
                           )}
                         </>

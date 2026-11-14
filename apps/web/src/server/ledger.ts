@@ -249,7 +249,9 @@ export async function listDebtorsPage2(app: Db, tenantId: string, opts: { cursor
         }
         const s = statsMap[inv.debtorId]!;
         s.totalCount += 1;
-        s.paid += inv.paidMinor;
+        // Headline paid totals use the tenant's default currency only;
+        // the invoice list retains each foreign-currency value separately.
+        if (inv.currency === defaultCurrency) s.paid += inv.paidMinor;
         // H09: one rule — disputed invoices are frozen, never outstanding.
         const collectible = outstandingFor(inv);
         if (collectible > 0n) {
@@ -266,9 +268,7 @@ export async function listDebtorsPage2(app: Db, tenantId: string, opts: { cursor
       // debtors keep the plain sum; mixed-currency debtors report the
       // default-currency subtotal as the headline and the full breakdown
       // alongside it. The disputed subtotal follows the same rule.
-      const headline = (m: Map<string, bigint>) => m.size <= 1
-        ? [...m.values()].reduce((a, b) => a + b, 0n)
-        : (m.get(defaultCurrency) ?? 0n);
+      const headline = (m: Map<string, bigint>) => m.get(defaultCurrency) ?? 0n;
       for (const s of Object.values(statsMap)) {
         s.outstanding = headline(s.byCurrency);
         s.disputed = headline(s.disputedByCurrency);
@@ -310,7 +310,7 @@ export interface InvoiceView {
   overdue: boolean; agingBucket: string; source: string;
 }
 
-export function toInvoiceView(r: typeof invoices.$inferSelect, today: string): InvoiceView {
+function toInvoiceView(r: typeof invoices.$inferSelect, today: string): InvoiceView {
   const outstanding = r.amountMinor - r.paidMinor;
   return {
     id: r.id, debtorId: r.debtorId, reference: r.reference ?? `INV-${r.issuedOn.slice(0, 4)}-${r.id.slice(-4).toUpperCase()}`, description: r.description,
@@ -501,6 +501,8 @@ export async function bulkTransitionInvoices(app: Db, tenantId: string, actor: s
 export const recordPaymentInput = z.object({
   debtorId: z.string().uuid(),
   amount: moneyString,
+  /** Selected currency for unallocated payments; explicit allocations must match it. */
+  currency: z.enum(["EGP", "SAR", "USD", "AED", "EUR", "KWD", "JPY"]).optional(),
   method: z.enum(["cash", "instapay", "bank", "wallet", "cheque", "gateway", "other"]).default("cash"),
   receivedOn: dateString,
   referenceNo: z.string().trim().max(80).optional(),
@@ -587,36 +589,31 @@ export async function recordPayment(app: Db, tenantId: string, actor: string, in
     // BEFORE planning, so concurrent payments serialize on the same rows.
     const lockedDebtor = await lockDebtor(tx, input.debtorId);
     const openInvoices = await lockDebtorInvoices(tx, input.debtorId);
-    const targets: AllocationTarget[] = openInvoices.map((i) => ({
+    // F02: every payment is denominated in exactly one currency. The user
+    // may choose it explicitly; otherwise explicit allocations determine it,
+    // then the earliest open invoice, then the tenant default. FX is never
+    // inferred or applied implicitly.
+    const allocatedInvoiceIds = input.allocations?.map((a) => a.invoiceId) ?? null;
+    const allocatedCurrencies = allocatedInvoiceIds
+      ? new Set(openInvoices.filter((i) => allocatedInvoiceIds.includes(i.id)).map((i) => i.currency))
+      : new Set<string>();
+    if (allocatedCurrencies.size > 1) {
+      throw new AppError("CURRENCY_MISMATCH", "A single payment cannot allocate across currencies", 400);
+    }
+    const selectedAllocationCurrency = [...allocatedCurrencies][0];
+    if (input.currency && selectedAllocationCurrency && input.currency !== selectedAllocationCurrency) {
+      throw new AppError("CURRENCY_MISMATCH", "Selected payment currency does not match the allocated invoices", 400);
+    }
+    const firstOpen = openInvoices.find((i) =>
+      (i.status === "open" || i.status === "partially_paid") && i.amountMinor > i.paidMinor,
+    );
+    const settings = input.currency || selectedAllocationCurrency || !firstOpen
+      ? null
+      : await tenantSettings(tx, tenantId);
+    const currency = input.currency ?? selectedAllocationCurrency ?? firstOpen?.currency ?? settings?.currency ?? "EGP";
+    const targets: AllocationTarget[] = openInvoices.filter((i) => i.currency === currency).map((i) => ({
       invoiceId: i.id, amountMinor: i.amountMinor, paidMinor: i.paidMinor, dueOn: i.dueOn, status: i.status,
     }));
-    // F02: one payment, one currency. Explicit allocations must all be in
-    // the same currency; auto-allocation uses the earliest-due open
-    // invoice's currency and ignores other currencies (there is no FX).
-    // With no open invoices, the payment is pure credit in the tenant's
-    // default currency.
-    const allocatedInvoiceIds = input.allocations?.map((a) => a.invoiceId) ?? null;
-    let currency: string;
-    if (allocatedInvoiceIds) {
-      const currencies = new Set(openInvoices.filter((i) => allocatedInvoiceIds.includes(i.id)).map((i) => i.currency));
-      if (currencies.size > 1) {
-        throw new AppError("CURRENCY_MISMATCH", "A single payment cannot allocate across currencies", 400);
-      }
-      if (currencies.size === 1) {
-        currency = [...currencies][0]!;
-      } else {
-        const settings = await tenantSettings(tx, tenantId);
-        currency = settings.currency ?? "EGP";
-      }
-    } else {
-      const firstOpen = openInvoices.find((i) => (i.status === "open" || i.status === "partially_paid") && i.amountMinor > i.paidMinor);
-      if (firstOpen) {
-        currency = firstOpen.currency;
-      } else {
-        const settings = await tenantSettings(tx, tenantId);
-        currency = settings.currency ?? "EGP";
-      }
-    }
     // F-06: parse here, once the payment currency is resolved (explicit
     // allocations' invoice currency, else the first open invoice's, else
     // the tenant default) — parsing before the tx could only assume EGP.
@@ -638,7 +635,14 @@ export async function recordPayment(app: Db, tenantId: string, actor: string, in
       plan = input.allocations && input.allocations.length > 0
         ? validateExplicitAllocations(effectiveMinor, input.allocations.map((a) => ({ invoiceId: a.invoiceId, amountMinor: parseMoney(a.amount, currency) })), targets)
         : allocatePayment(effectiveMinor, targets);
+      // The current debtor schema has one stored credit balance and one
+      // currency. Do not silently overwrite an existing balance by creating
+      // unapplied credit in another currency.
+      if (lockedDebtor && lockedDebtor.creditMinor !== 0n && lockedDebtor.creditCurrency !== currency && plan.creditMinor > 0n) {
+        throw new AppError("CURRENCY_CREDIT_CONFLICT", "This customer already has credit in another currency. Allocate or resolve that credit before recording an additional credit balance.", 409);
+      }
     } catch (err) {
+      if (err instanceof AppError) throw err;
       throw new AppError("INVALID_ALLOCATION", err instanceof Error ? err.message : "Invalid allocation", 400);
     }
     const paymentId = uuidv7();
@@ -684,12 +688,13 @@ export async function recordPayment(app: Db, tenantId: string, actor: string, in
 export interface DebtorDetail extends DebtorView {
   invoices: InvoiceView[];
   payments: {
-    id: string; amountMinor: string; method: string; receivedOn: string; status: string;
+    id: string; amountMinor: string; currency: string; method: string; receivedOn: string; status: string;
     source: string; gatewayTransactionId: string | null; reversalOf: string | null;
   }[];
   creditMinor: string;
   /** Currency of the stored credit (F02/F05). */
   creditCurrency: string;
+  defaultCurrency: string;
   totalOutstandingMinor: string;
 }
 
@@ -714,12 +719,10 @@ export async function getDebtorDetail(app: Db, tenantId: string, debtorId: strin
     }
     const settings = await tenantSettings(tx, tenantId);
     const defaultCurrency = settings.currency ?? "EGP";
-    const headline = (m: Map<string, bigint>) => m.size <= 1
-      ? [...m.values()].reduce((a, b) => a + b, 0n)
-      : (m.get(defaultCurrency) ?? 0n);
+    const headline = (m: Map<string, bigint>) => m.get(defaultCurrency) ?? 0n;
     const outstanding = headline(byCurrency);
     const disputed = headline(disputedByCurrency);
-    const paid = invs.reduce((s, i) => s + i.paidMinor, 0n);
+    const paid = invs.filter((i) => i.currency === defaultCurrency).reduce((s, i) => s + i.paidMinor, 0n);
     const openCount = invs.filter((i) => isCollectibleStatus(i.status) && outstandingFor(i) > 0n).length;
     const disputedCount = invs.filter((i) => disputedFor(i) > 0n).length;
     return {
@@ -731,11 +734,12 @@ export async function getDebtorDetail(app: Db, tenantId: string, debtorId: strin
       }),
       invoices: invs.map((i) => toInvoiceView(i, today)),
       payments: pays.map((p) => ({
-        id: p.id, amountMinor: p.amountMinor.toString(), method: p.method, receivedOn: p.receivedOn, status: p.status,
+        id: p.id, amountMinor: p.amountMinor.toString(), currency: p.currency, method: p.method, receivedOn: p.receivedOn, status: p.status,
         source: p.source, gatewayTransactionId: p.gatewayTransactionId, reversalOf: p.reversalOf,
       })),
       creditMinor: debtor.creditMinor.toString(),
       creditCurrency: debtor.creditCurrency,
+      defaultCurrency,
       totalOutstandingMinor: outstanding.toString(),
     };
   });

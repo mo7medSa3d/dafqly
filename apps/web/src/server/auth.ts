@@ -116,4 +116,3 @@ export const auth = new Proxy({} as AuthInstance, {
     return Reflect.get(getAuth(), prop);
   },
 });
-export type Session = AuthInstance["$Infer"]["Session"];

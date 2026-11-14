@@ -1,14 +1,14 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
+import { inputVariants } from "@/components/ui/input";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { formatCurrencyMinor } from "@tahseel/core";
-import {
-  ArrowLeft, BellRinging, BellSlash, CheckCircle, CurrencyCircleDollar,
-  MagnifyingGlass, Phone, Plus, SortAscending, Sparkle, Users,
-  WarningCircle, WhatsappLogo, X,
-} from "@phosphor-icons/react";
+import { ArrowLeft, BellRinging, BellSlash, CheckCircle, CurrencyCircleDollar, MagnifyingGlass, Phone, Plus, SortAscending, Sparkle, Users, WarningCircle, X } from "@/components/ui/solid-icons";
+import { WhatsappLogo } from "@/components/ui/icons";
 import { trpc } from "@/lib/trpc-client";
 import type { DebtorIntelligenceView } from "@/server/intelligence";
 import { openAiCopilot } from "./AiCopilotDrawer";
@@ -238,10 +238,10 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
     <div className="flex flex-col gap-6">
       {/* Top Overview Financial Summary Strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:gap-4">
-        <div className="panel-shadow flex flex-col gap-1 rounded-2xl border border-border bg-surface p-4">
+        <div className="panel-shadow flex flex-col gap-1 rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center justify-between text-text-muted">
             <span className="text-xs font-semibold">{isAr ? "إجمالي المستحق" : "Total Outstanding"}</span>
-            <CurrencyCircleDollar size={18} weight="fill" className="text-primary" />
+            <CurrencyCircleDollar size={18} className="text-primary" />
           </div>
           <span className="tnum text-xl font-black text-text" dir="ltr">
             {formatAmountOnly(totalOutstandingMinor)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span>
@@ -251,12 +251,12 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
           </span>
         </div>
 
-        <div className="panel-shadow flex flex-col gap-1 rounded-2xl border border-border bg-surface p-4">
+        <div className="panel-shadow flex flex-col gap-1 rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center justify-between text-text-muted">
             <span className="text-xs font-semibold">{isAr ? "مسددين بالكامل" : "Fully Settled"}</span>
-            <CheckCircle size={18} weight="fill" className="text-emerald-500" />
+            <CheckCircle size={18} className="text-status-paid-fg" />
           </div>
-          <span className="tnum text-xl font-black text-text" dir="ltr">
+          <span className="tnum text-xl font-black text-status-paid-fg dark:text-status-paid-fg" dir="ltr">
             {settledCount}
           </span>
           <span className="text-[11px] text-text-muted">
@@ -264,10 +264,10 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
           </span>
         </div>
 
-        <div className="panel-shadow flex flex-col gap-1 rounded-2xl border border-border bg-surface p-4">
+        <div className="panel-shadow flex flex-col gap-1 rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center justify-between text-text-muted">
             <span className="text-xs font-semibold">{isAr ? "إجمالي العملاء" : "Total Customers"}</span>
-            <Users size={18} weight="fill" className="text-primary" />
+            <Users size={18} className="text-primary" />
           </div>
           <span className="tnum text-xl font-black text-text" dir="ltr">
             {totalCount ?? items.length}
@@ -276,14 +276,14 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             {isAr ? "مسجلين بالنظام" : "In the ledger"}
           </span>
           {truncated && (
-            <span className="text-[11px] text-amber-600 dark:text-amber-400">
+            <span className="text-[11px] text-status-due-fg dark:text-status-due-fg">
               {isAr
                 ? `عرض ${items.length} من أصل ${totalCount} — الإجماليات أعلاه تغطي الصفوف المعروضة فقط`
                 : `Showing ${items.length} of ${totalCount} — the totals above cover only the rows shown`}
             </span>
           )}
           {intelTruncated && (
-            <span className="text-[11px] text-amber-600 dark:text-amber-400">
+            <span className="text-[11px] text-status-due-fg dark:text-status-due-fg">
               {isAr
                 ? `تقييم الذكاء يشمل أعلى ${intelTruncated.shown} عميل من أصل ${intelTruncated.total} حسب الرصيد`
                 : `Intelligence scores cover the top ${intelTruncated.shown} of ${intelTruncated.total} debtors by balance`}
@@ -291,12 +291,12 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
           )}
         </div>
 
-        <div className="panel-shadow flex flex-col gap-1 rounded-2xl border border-border bg-surface p-4">
+        <div className="panel-shadow flex flex-col gap-1 rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center justify-between text-text-muted">
             <span className="text-xs font-semibold">{isAr ? "تذكيرات متوقفة" : "Paused Reminders"}</span>
-            <BellSlash size={18} weight="fill" className="text-amber-500" />
+            <BellSlash size={18} className="text-status-due-fg" />
           </div>
-          <span className="tnum text-xl font-black text-text" dir="ltr">
+          <span className="tnum text-xl font-black text-status-due-fg dark:text-status-due-fg" dir="ltr">
             {optedOutCount}
           </span>
           <span className="text-[11px] text-text-muted">
@@ -315,7 +315,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             return aa === bb ? a.displayName.localeCompare(b.displayName) : aa > bb ? -1 : 1;
           }).slice(0, 5);
         const max = BigInt(ranked[0]?.totalOutstandingMinor || "1");
-        return <section data-testid="debtors-top-exposure" className="panel-shadow flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4 sm:p-5">
+        return <section data-testid="debtors-top-exposure" className="panel-shadow flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 sm:p-5">
           <div className="flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-sm font-extrabold text-text">{isAr ? "أكبر أرصدة تحتاج متابعة" : "Largest customer exposures"}</h2><p className="mt-1 text-xs text-text-muted">{isAr ? "أعلى خمسة أرصدة مفتوحة في النتائج الحالية، مرتبة حسب القيمة" : "Top five open balances in the current result set, ranked by value"}</p></div><span className="text-xs font-semibold text-text-muted">{isAr ? "الرصيد المفتوح" : "Open balance"}</span></div>
           <div className="flex flex-col gap-3">{ranked.map((item, index) => {
             const balance = BigInt(item.totalOutstandingMinor || "0");
@@ -329,7 +329,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                   + {otherCurrencies.map((b) => `${formatCurrencyMinor(BigInt(b.minor), b.currency)} ${b.currency}`).join(" · ")}
                 </span>
               )}
-              <div className="col-span-2 h-2 overflow-hidden rounded-full bg-surface-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${width}%` }} /></div>
+              <div className="col-span-2 h-2 overflow-hidden rounded bg-surface-muted"><div className="h-full rounded bg-primary" style={{ width: `${width}%` }} /></div>
             </div>;
           })}</div>
         </section>;
@@ -338,15 +338,15 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
       {feedbackMsg && (
         <div
           role="status"
-          className="flex items-center justify-between rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-bold text-emerald-700 dark:text-emerald-300"
+          className="flex items-center justify-between rounded-xl border border-status-paid-fg/30 bg-status-paid-bg px-4 py-3 text-sm font-bold text-status-paid-fg dark:text-status-paid-fg"
         >
           <span>{feedbackMsg}</span>
           <button
             type="button"
             onClick={() => setFeedbackMsg(null)}
-            className="text-text-muted hover:text-text"
+            className={cn(buttonVariants({ variant: "ghost", size: "iconSm" }), "text-text-muted")}
           >
-            <X size={16} weight="bold" />
+            <X size={16} strokeWidth={2.5} />
           </button>
         </div>
       )}
@@ -360,30 +360,22 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <button
               type="button"
               onClick={() => setFilter("all")}
-              className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all ${
-                filter === "all"
-                  ? "bg-primary text-primary-fg shadow-xs"
-                  : "border border-border bg-surface text-text-muted hover:bg-callout hover:text-text"
-              }`}
+              className={cn(buttonVariants({ variant: filter === "all" ? "default" : "outline", size: "sm" }), !(filter === "all") && "text-text-muted")}
             >
               <span>{isAr ? "الكل" : "All"}</span>
-              <span className="rounded-full bg-surface/20 px-1.5 py-0.2 text-[10px]">{items.length}</span>
+              <span className="rounded bg-surface/20 px-1.5 py-0.2 text-[10px]">{items.length}</span>
             </button>
 
             <button
               type="button"
               data-testid="filter-ai-priority"
               onClick={() => setFilter("ai_priority")}
-              className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all ${
-                filter === "ai_priority"
-                  ? "bg-primary text-primary-fg shadow-xs"
-                  : "border border-border bg-surface text-text-muted hover:bg-callout hover:text-primary"
-              }`}
+              className={cn(buttonVariants({ variant: filter === "ai_priority" ? "default" : "outline", size: "sm" }), !(filter === "ai_priority") && "text-text-muted")}
             >
-              <Sparkle size={14} weight="fill" aria-hidden />
+              <Sparkle size={14} aria-hidden />
               <span>{isAr ? "الأولوية الذكية" : "AI Priority"}</span>
               {aiPriorityCount > 0 && (
-                <span className="rounded-full bg-callout px-1.5 py-0.2 text-[10px] text-primary">
+                <span className="rounded bg-callout px-1.5 py-0.2 text-[10px] text-primary">
                   {aiPriorityCount}
                 </span>
               )}
@@ -392,14 +384,10 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <button
               type="button"
               onClick={() => setFilter("has_balance")}
-              className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all ${
-                filter === "has_balance"
-                  ? "bg-primary text-primary-fg shadow-xs"
-                  : "border border-border bg-surface text-text-muted hover:bg-callout hover:text-text"
-              }`}
+              className={cn(buttonVariants({ variant: filter === "has_balance" ? "default" : "outline", size: "sm" }), !(filter === "has_balance") && "text-text-muted")}
             >
               <span>{isAr ? "عليهم متبقي" : "Has Balance"}</span>
-              <span className="rounded-full bg-red-500/20 px-1.5 py-0.2 text-[10px] text-red-500">
+              <span className="rounded bg-status-overdue-bg px-1.5 py-0.2 text-[10px] text-status-overdue-fg">
                 {debtCount}
               </span>
             </button>
@@ -407,15 +395,11 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <button
               type="button"
               onClick={() => setFilter("settled")}
-              className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all ${
-                filter === "settled"
-                  ? "bg-emerald-600 text-white shadow-xs"
-                  : "border border-border bg-surface text-text-muted hover:bg-callout hover:text-text"
-              }`}
+              className={cn(buttonVariants({ variant: filter === "settled" ? "ghost" : "outline", size: "sm" }), filter === "settled" && "bg-status-paid-bg text-status-paid-fg ring-1 ring-status-paid-fg/30", !(filter === "settled") && "text-text-muted")}
             >
-              <CheckCircle size={14} weight="fill" className={filter === "settled" ? "text-white" : "text-emerald-500"} />
+              <CheckCircle size={14} className={"text-status-paid-fg"} />
               <span>{isAr ? "مسددين بالكامل" : "Fully Settled"}</span>
-              <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.2 text-[10px] text-emerald-600 dark:text-emerald-400">
+              <span className="rounded bg-status-paid-bg px-1.5 py-0.2 text-[10px] text-status-paid-fg dark:text-status-paid-fg">
                 {settledCount}
               </span>
             </button>
@@ -423,15 +407,11 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <button
               type="button"
               onClick={() => setFilter("opted_out")}
-              className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all ${
-                filter === "opted_out"
-                  ? "bg-amber-600 text-white shadow-xs"
-                  : "border border-border bg-surface text-text-muted hover:bg-callout hover:text-text"
-              }`}
+              className={cn(buttonVariants({ variant: filter === "opted_out" ? "ghost" : "outline", size: "sm" }), filter === "opted_out" && "bg-status-due-bg text-status-due-fg ring-1 ring-status-due-fg/30", !(filter === "opted_out") && "text-text-muted")}
             >
-              <BellSlash size={14} weight="fill" className={filter === "opted_out" ? "text-white" : "text-amber-500"} />
+              <BellSlash size={14} className={"text-status-due-fg"} />
               <span>{isAr ? "تذكيرات متوقفة" : "Paused"}</span>
-              <span className="rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px]">
+              <span className="rounded bg-status-due-bg px-1.5 py-0.2 text-[10px]">
                 {optedOutCount}
               </span>
             </button>
@@ -440,15 +420,11 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
               <button
                 type="button"
                 onClick={() => setFilter("risk")}
-                className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all ${
-                  filter === "risk"
-                    ? "bg-red-600 text-white shadow-xs"
-                    : "border border-border bg-surface text-status-overdue-fg hover:bg-danger-bg"
-                }`}
+                className={cn(buttonVariants({ variant: filter === "risk" ? "ghost" : "outline", size: "sm" }), filter === "risk" && "bg-status-overdue-bg text-status-overdue-fg ring-1 ring-status-overdue-fg/30", !(filter === "risk") && "text-status-overdue-fg")}
               >
-                <WarningCircle size={14} weight="fill" />
+                <WarningCircle size={14} />
                 <span>{isAr ? "مخاطرة وشيكات" : "Risk"}</span>
-                <span className="rounded-full bg-red-500/20 px-1.5 py-0.2 text-[10px]">
+                <span className="rounded bg-status-overdue-bg px-1.5 py-0.2 text-[10px]">
                   {riskCount}
                 </span>
               </button>
@@ -456,12 +432,11 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
           </div>
 
           {/* Search & Sort Toolbar */}
-          <div className="panel-shadow flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-3.5 sm:p-4">
+          <div className="panel-shadow flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface p-3.5 sm:p-4">
             <div className="relative min-w-[220px] flex-1">
               <span className="sr-only">{t("search")}</span>
               <MagnifyingGlass
                 size={16}
-                weight="fill"
                 aria-hidden
                 className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-text-subtle"
               />
@@ -476,21 +451,21 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                 <button
                   type="button"
                   onClick={() => setSearch("")}
-                  className="absolute end-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text"
+                  className={cn(buttonVariants({ variant: "ghost", size: "iconSm" }), "absolute end-2 top-1/2 -translate-y-1/2 text-text-muted")}
                 >
-                  <X size={14} weight="bold" />
+                  <X size={14} strokeWidth={2.5} />
                 </button>
               )}
             </div>
 
             {/* Sort Selector */}
             <div className="flex items-center gap-2">
-              <SortAscending size={16} weight="bold" className="text-text-muted" />
+              <SortAscending size={16} strokeWidth={2.5} className="text-text-muted" />
               <select
                 aria-label={t("sortLabel")}
                 value={sort}
                 onChange={(e) => setSort(e.target.value as SortType)}
-                className="rounded-xl border border-border bg-surface px-3 py-2 text-xs font-semibold text-text focus:border-primary focus:outline-hidden"
+                className={cn(inputVariants)}
               >
                 <option value="default">{isAr ? "الترتيب الافتراضي" : "Default"}</option>
                 <option value="ai_priority">{isAr ? "أولوية المتابعة (AI)" : "AI Follow-up Priority"}</option>
@@ -513,7 +488,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
               }
             />
           ) : (
-            <div className="panel-shadow overflow-hidden rounded-2xl border border-border bg-surface">
+            <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
               <ul className="flex flex-col divide-y divide-border">
                 {filteredItems.map((d) => {
                   const balance = BigInt(d.totalOutstandingMinor || "0");
@@ -540,22 +515,22 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
 
                             {/* Debt / Settled status pill */}
                             {hasDebt ? (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-status-overdue-bg px-2.5 py-0.5 text-xs font-extrabold text-status-overdue-fg">
+                              <span className="inline-flex items-center gap-1 rounded bg-status-overdue-bg px-2.5 py-0.5 text-xs font-extrabold text-status-overdue-fg">
                                 <span>{isAr ? "مستحق:" : "Due:"}</span>
                                 <span className="tnum" dir="ltr">{fmt(d.totalOutstandingMinor)}</span>
                                 <span className="text-[10px] font-bold">{currencySymbol}</span>
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                                <CheckCircle size={13} weight="fill" />
+                              <span className="inline-flex items-center gap-1 rounded bg-status-paid-bg px-2.5 py-0.5 text-[11px] font-bold text-status-paid-fg dark:text-status-paid-fg">
+                                <CheckCircle size={13} />
                                 <span>{isAr ? "خالص ومسدد" : "Fully Settled"}</span>
                               </span>
                             )}
 
                             {/* Risk Flag */}
                             {d.riskFlag && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-bold text-red-600 dark:text-red-400">
-                                <WarningCircle size={12} weight="fill" />
+                              <span className="inline-flex items-center gap-1 rounded bg-status-overdue-bg px-2 py-0.5 text-[11px] font-bold text-status-overdue-fg dark:text-status-overdue-fg">
+                                <WarningCircle size={12} />
                                 <span>{isAr ? "شيك مرتد" : "Bounced Cheque"}</span>
                               </span>
                             )}
@@ -564,9 +539,9 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                             {d.optedOut && (
                               <span
                                 data-testid="debtor-opted-out"
-                                className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-bold text-amber-600 dark:text-amber-400"
+                                className="inline-flex items-center gap-1 rounded bg-status-due-bg px-2 py-0.5 text-[11px] font-bold text-status-due-fg dark:text-status-due-fg"
                               >
-                                <BellSlash size={12} weight="fill" />
+                                <BellSlash size={12} />
                                 <span>{isAr ? "تذكيرات متوقفة" : "Reminders Paused"}</span>
                               </span>
                             )}
@@ -574,7 +549,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                             {/* Deterministic portfolio health score */}
                             {intelById[d.id] && (
                               <span
-                                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                                className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-bold ${
                                   intelById[d.id]!.tier === "critical"
                                     ? "bg-status-overdue-bg text-status-overdue-fg"
                                     : intelById[d.id]!.tier === "at_risk"
@@ -584,7 +559,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                                         : "bg-status-paid-bg text-status-paid-fg"
                                 }`}
                               >
-                                <Sparkle size={11} weight="fill" aria-hidden />
+                                <Sparkle size={11} aria-hidden />
                                 <span>{intelById[d.id]!.healthScore}/100</span>
                               </span>
                             )}
@@ -593,7 +568,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                           {/* Rules-based next action recommendation */}
                           {intelById[d.id] && hasDebt && (
                             <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-primary">
-                              <Sparkle size={12} weight="fill" aria-hidden className="shrink-0" />
+                              <Sparkle size={12} aria-hidden className="shrink-0" />
                               <span>
                                 {isAr
                                   ? intelById[d.id]!.recommendation.titleAr
@@ -605,7 +580,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                           {/* Phone & Invoices summary */}
                           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
                             <span className="flex items-center gap-1" dir="ltr">
-                              <Phone size={12} weight="fill" className="text-primary" />
+                              <Phone size={12} className="text-primary" />
                               <span>{d.phoneE164}</span>
                             </span>
                             {d.openInvoicesCount !== undefined && d.openInvoicesCount > 0 && (
@@ -645,10 +620,10 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                                 tone: intelById[d.id]?.recommendation.suggestedTone,
                               })
                             }
-                            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-full bg-callout px-3 py-1.5 text-xs font-bold text-primary transition-colors hover:bg-primary hover:text-primary-fg"
+                            className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}
                             title={isAr ? "صياغة تنبيه بالذكاء الاصطناعي" : "Draft AI reminder"}
                           >
-                            <Sparkle size={14} weight="fill" aria-hidden />
+                            <Sparkle size={14} aria-hidden />
                             <span className="hidden xl:inline">{isAr ? "صياغة ذكية" : "AI Draft"}</span>
                           </button>
                         )}
@@ -656,10 +631,10 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                         <button
                           type="button"
                           onClick={() => openWhatsApp(d)}
-                          className="inline-flex min-h-[38px] items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-600 transition-all hover:bg-emerald-500/20 active:scale-95 dark:text-emerald-400"
+                          className={cn(buttonVariants({ variant: "success", size: "sm" }), "border-status-paid-fg/30 text-status-paid-fg dark:text-status-paid-fg")}
                           title={isAr ? "محادثة مباشرة عبر واتساب" : "Chat on WhatsApp"}
                         >
-                          <WhatsappLogo size={16} weight="fill" />
+                          <WhatsappLogo size={16} />
                           <span className="hidden md:inline">{isAr ? "واتساب" : "WhatsApp"}</span>
                         </button>
 
@@ -670,10 +645,10 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                             data-testid="debtor-resume-reminders"
                             disabled={isToggling}
                             onClick={() => void onToggleReminders(d.id, true)}
-                            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-600 transition-all hover:bg-emerald-500/20 active:scale-95 dark:text-emerald-400"
+                            className={cn(buttonVariants({ variant: "success", size: "sm" }), "border-status-paid-fg/40 text-status-paid-fg dark:text-status-paid-fg")}
                             title={isAr ? "إعادة تفعيل التذكيرات التلقائية لهذا العميل" : "Re-enable automatic reminders"}
                           >
-                            <BellRinging size={15} weight="fill" />
+                            <BellRinging size={15} />
                             <span>{isAr ? "تفعيل التذكير" : "Resume"}</span>
                           </button>
                         ) : (
@@ -682,10 +657,10 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                             data-testid="debtor-pause-reminders"
                             disabled={isToggling}
                             onClick={() => void onToggleReminders(d.id, false)}
-                            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text-muted transition-all hover:border-amber-500/40 hover:text-amber-600 active:scale-95"
+                            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "text-text-muted hover:border-status-due-fg/40 hover:text-status-due-fg")}
                             title={isAr ? "إيقاف التذكيرات التلقائية مؤقتاً" : "Pause automatic reminders"}
                           >
-                            <BellSlash size={15} weight="fill" />
+                            <BellSlash size={15} />
                             <span className="hidden lg:inline">{isAr ? "إيقاف التذكير" : "Pause"}</span>
                           </button>
                         )}
@@ -694,10 +669,10 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                         <Link
                           data-testid="debtor-view"
                           href={`/${locale}/debtors/${d.id}`}
-                          className="inline-flex min-h-[38px] shrink-0 items-center gap-1 rounded-full border border-border-strong/60 bg-surface px-3.5 py-1.5 text-xs font-bold transition-colors hover:border-primary hover:bg-callout hover:text-primary sm:text-xs"
+                          className="inline-flex min-h-[38px] shrink-0 items-center gap-1 rounded border border-border-strong/60 bg-surface px-3.5 py-1.5 text-xs font-bold transition-colors hover:border-primary hover:bg-callout hover:text-primary sm:text-xs"
                         >
                           <span>{t("view")}</span>
-                          <ArrowLeft size={13} weight="fill" aria-hidden className="rtl:-scale-x-100" />
+                          <ArrowLeft size={13} aria-hidden className="rtl:-scale-x-100" />
                         </Link>
                       </div>
                     </li>
@@ -757,15 +732,15 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                 disabled={busy || name.trim().length < 1 || phone.trim().length < 3}
                 className={`${btnPrimary} w-full justify-center`}
               >
-                <Plus size={18} weight="fill" aria-hidden />
+                <Plus size={18} aria-hidden />
                 {t("add")}
               </button>
             </form>
           </Panel>
 
-          <div className="panel-shadow flex flex-col gap-3 rounded-2xl border border-border bg-surface p-5">
+          <div className="panel-shadow flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
             <div className="flex items-center gap-2 text-sm font-bold text-text">
-              <Users size={18} weight="fill" className="text-primary" />
+              <Users size={18} className="text-primary" />
               <span>{isAr ? "إدارة التذكيرات والتواصل" : "Reminders & Communication"}</span>
             </div>
             <p className="text-xs leading-relaxed text-text-muted">

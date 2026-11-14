@@ -417,8 +417,12 @@ export async function createPublicPromiseRequest(
       if (!invoice || !["open", "partially_paid"].includes(invoice.status)) throw new AppError("INVOICE_NOT_ACTIONABLE", "Invoice is not available", 400);
       balance = invoice.amountMinor - invoice.paidMinor;
     } else {
-      const rows = await tx.select({ amountMinor: invoices.amountMinor, paidMinor: invoices.paidMinor })
+      const rows = await tx.select({ amountMinor: invoices.amountMinor, paidMinor: invoices.paidMinor, currency: invoices.currency })
         .from(invoices).where(and(eq(invoices.debtorId, link.debtorId), sql`${invoices.status} in ('open','partially_paid')`));
+      const currencies = new Set(rows.map((row) => row.currency));
+      if (currencies.size > 1) {
+        throw new AppError("CURRENCY_MISMATCH", "Select a specific invoice when the account has balances in multiple currencies", 400);
+      }
       balance = rows.reduce((sum, row) => sum + row.amountMinor - row.paidMinor, 0n);
     }
     const amount = BigInt(input.amountMinor);

@@ -4,13 +4,13 @@ import { likePattern } from "@tahseel/core";
 import { withTenant } from "@tahseel/db";
 import { auditLog, cheques, debtors, invoices } from "@tahseel/db/schema";
 
-export interface SearchDebtorResult {
+interface SearchDebtorResult {
   id: string;
   displayName: string;
   phoneE164: string;
 }
 
-export interface SearchInvoiceResult {
+interface SearchInvoiceResult {
   id: string;
   debtorId: string;
   reference: string | null;
@@ -20,7 +20,7 @@ export interface SearchInvoiceResult {
   description: string | null;
 }
 
-export interface SearchChequeResult {
+interface SearchChequeResult {
   id: string;
   debtorId: string;
   number: string;

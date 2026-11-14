@@ -8,6 +8,7 @@ import { clientIp, rateLimit, rateLimitPeek } from "@/server/rate-limit";
 import { appDb, ownerDb } from "@/server/db";
 import { processInboundReply, recordPendingReceiptIntent } from "@/server/replies";
 import { withAiTenantContext } from "@/server/ai-budget";
+import { readRequestBodyLimited, RequestBodyTooLargeError } from "@/server/request-body";
 
 /**
  * WhatsApp webhook (BUILD_PLAN F3, ADR-015):
@@ -56,20 +57,25 @@ export async function POST(req: Request): Promise<Response> {
   if (!secret) {
     return Response.json({ error: { code: "WEBHOOK_NOT_CONFIGURED", message: "WHATSAPP_APP_SECRET is not set" } }, { status: 503 });
   }
-  // M4: cap the raw body before buffering it (Meta payloads are small).
-  const raw = await req.text();
-  if (raw.length > 1_000_000) {
-    return Response.json({ error: { code: "BODY_TOO_LARGE", message: "webhook body exceeds 1 MB" } }, { status: 413 });
+  // Enforce a byte limit while streaming, before allocating the full body.
+  let rawBytes: Uint8Array;
+  try {
+    rawBytes = await readRequestBodyLimited(req, 1_000_000);
+  } catch (err) {
+    if (err instanceof RequestBodyTooLargeError) {
+      return Response.json({ error: { code: "BODY_TOO_LARGE", message: "webhook body exceeds 1 MB" } }, { status: 413 });
+    }
+    return Response.json({ error: { code: "BAD_BODY", message: "could not read webhook body" } }, { status: 400 });
   }
   const signature = req.headers.get("x-hub-signature-256");
-  if (!verifyWebhookSignature(raw, signature, secret)) {
+  if (!verifyWebhookSignature(rawBytes, signature, secret)) {
     // Consume one token from the bad-signature bucket on every failure.
     rateLimit(`webhook:whatsapp:bad-sig:${ip}`, { limit: 10, windowSeconds: 60 });
     return Response.json({ error: { code: "BAD_SIGNATURE", message: "signature verification failed" } }, { status: 401 });
   }
   let payload: unknown;
   try {
-    payload = JSON.parse(raw);
+    payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBytes));
   } catch {
     return Response.json({ error: { code: "BAD_JSON", message: "body is not JSON" } }, { status: 400 });
   }

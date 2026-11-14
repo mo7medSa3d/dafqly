@@ -1,8 +1,8 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import { AppError, assertChequeTransition, canTransitionCheque, dueAlertKind, formatMoney, groupChequesByWeek,
-  localDateOf, normalizeCurrencyCode, parseMoney, planReversalAllocations, suggestDebtorByName,
+  normalizeCurrencyCode, parseMoney, planReversalAllocations, suggestDebtorByName,
   type ChequeAlertKind, type ChequeStatus, type ChequeExtraction,
 } from "@tahseel/core";
 import {
@@ -53,13 +53,13 @@ export type RegisterChequeInput = z.infer<typeof registerChequeInput>;
 
 export interface ChequeView {
   id: string; debtorId: string; direction: string; number: string; bank: string;
-  amountMinor: string; issueDate: string; dueDate: string; status: ChequeStatus;
+  amountMinor: string; currency: string; issueDate: string; dueDate: string; status: ChequeStatus;
   invoiceId: string | null; imageFileId: string | null; paymentId: string | null;
 }
 
-const toView = (r: typeof cheques.$inferSelect): ChequeView => ({
+const toView = (r: typeof cheques.$inferSelect, currency: string): ChequeView => ({
   id: r.id, debtorId: r.debtorId, direction: r.direction, number: r.number, bank: r.bank,
-  amountMinor: r.amountMinor.toString(), issueDate: r.issueDate, dueDate: r.dueDate,
+  amountMinor: r.amountMinor.toString(), currency, issueDate: r.issueDate, dueDate: r.dueDate,
   status: r.status, invoiceId: r.invoiceId, imageFileId: r.imageFileId, paymentId: r.paymentId,
 });
 
@@ -96,17 +96,24 @@ export async function registerCheque(app: Db, tenantId: string, actor: string, i
     await audit(tx, tenantId, actor, "cheque.registered", "cheque", row!.id, {
       direction: input.direction, amountMinor: amountMinor.toString(), dueDate: input.dueDate,
     });
-    return toView(row!);
+    return toView(row!, currency);
   });
 }
 
 export async function listCheques(app: Db, tenantId: string, opts: { status?: ChequeStatus } = {}): Promise<ChequeView[]> {
   return withTenant(app, tenantId, async (tx) => {
+    const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+    const defaultCurrency = tenant?.settings.currency ?? "EGP";
     const rows = await tx.select().from(cheques);
+    const invoiceIds = [...new Set(rows.flatMap((row) => row.invoiceId ? [row.invoiceId] : []))];
+    const invoiceRows = invoiceIds.length
+      ? await tx.select({ id: invoices.id, currency: invoices.currency }).from(invoices).where(inArray(invoices.id, invoiceIds))
+      : [];
+    const currencyByInvoice = new Map(invoiceRows.map((row) => [row.id, row.currency]));
     return rows
       .filter((r) => !opts.status || r.status === opts.status)
       .sort((a, b) => (a.dueDate === b.dueDate ? (a.id < b.id ? -1 : 1) : a.dueDate < b.dueDate ? -1 : 1))
-      .map(toView);
+      .map((row) => toView(row, row.invoiceId ? (currencyByInvoice.get(row.invoiceId) ?? defaultCurrency) : defaultCurrency));
   });
 }
 
@@ -238,7 +245,12 @@ export async function transitionCheque(
         dedupeKey: `cheque_bounced:${chequeId}`,
       });
     }
-    return { view: toView(row!), action, paymentId: cheque.paymentId, affectedInvoices };
+    const [linkedInvoice] = cheque.invoiceId
+      ? await tx.select({ currency: invoices.currency }).from(invoices).where(eq(invoices.id, cheque.invoiceId)).limit(1)
+      : [];
+    const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+    const currency = linkedInvoice?.currency ?? tenant?.settings.currency ?? "EGP";
+    return { view: toView(row!, currency), action, paymentId: cheque.paymentId, affectedInvoices };
   });
 
   // The payment was already settled inline (F06); only the reminder
@@ -290,14 +302,14 @@ export async function listChequeAlerts(app: Db, tenantId: string): Promise<Chequ
 // ------------------------------------------------------------ photo pre-fill
 export interface ChequePhotoDeps { llm: OcrLlmProvider; storage: StorageProvider }
 
-export interface MatchedDebtorLite {
+interface MatchedDebtorLite {
   id: string;
   displayName: string;
   phoneE164: string;
   outstandingMinor: string;
 }
 
-export interface MatchedInvoiceLite {
+interface MatchedInvoiceLite {
   id: string;
   reference: string | null;
   amountMinor: string;
@@ -339,6 +351,8 @@ export async function extractChequePhoto(
     });
 
     if (result.data) {
+      const [tenantRow] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+      const matchingCurrency = tenantRow?.settings.currency ?? "EGP";
       const allDebtors = await tx
         .select({ id: debtors.id, displayName: debtors.displayName, phoneE164: debtors.phoneE164 })
         .from(debtors)
@@ -359,7 +373,7 @@ export async function extractChequePhoto(
         const matchingInvs = await tx
           .select({ debtorId: invoices.debtorId, id: invoices.id, reference: invoices.reference, amountMinor: invoices.amountMinor, dueOn: invoices.dueOn, paidMinor: invoices.paidMinor })
           .from(invoices)
-          .where(and(eq(invoices.status, "open")));
+          .where(and(eq(invoices.status, "open"), eq(invoices.currency, matchingCurrency)));
 
         const exactMatch = matchingInvs.find((inv) => (inv.amountMinor - inv.paidMinor) === BigInt(result.data!.amount_minor!));
         if (exactMatch) {
@@ -380,7 +394,7 @@ export async function extractChequePhoto(
           const debInvs = await tx
             .select({ id: invoices.id, reference: invoices.reference, amountMinor: invoices.amountMinor, paidMinor: invoices.paidMinor, dueOn: invoices.dueOn })
             .from(invoices)
-            .where(and(eq(invoices.debtorId, deb.id), eq(invoices.status, "open")));
+            .where(and(eq(invoices.debtorId, deb.id), eq(invoices.status, "open"), eq(invoices.currency, matchingCurrency)));
 
           const totalOutstanding = debInvs.reduce((acc, inv) => acc + (inv.amountMinor - inv.paidMinor), 0n);
 
@@ -413,5 +427,3 @@ export async function extractChequePhoto(
 
   return { fileId: stored.id, extraction: result.data, matchedDebtor, matchedInvoice };
 }
-
-export { localDateOf };

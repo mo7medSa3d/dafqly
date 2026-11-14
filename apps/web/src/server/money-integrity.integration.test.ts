@@ -4,11 +4,11 @@ import { eq } from "drizzle-orm";
 import { ownerDb, appDb } from "./db";
 import { user as userTable, tenants, payments, debtors } from "@tahseel/db/schema";
 import { withTenant } from "@tahseel/db";
-import { createTenantForUser } from "./services";
+import { createTenantForUser, updateTenantSettings } from "./services";
 import {
   createDebtor, createInvoice, recordPayment, getDebtorDetail, listInvoicesPage, updateInvoice,
 } from "./ledger";
-import { registerCheque, transitionCheque } from "./cheques";
+import { listCheques, registerCheque, transitionCheque } from "./cheques";
 import { getKpis } from "./reports";
 import { addDaysIso, localDateOf } from "@tahseel/core";
 
@@ -159,6 +159,66 @@ d("money integrity (Prompt 02)", () => {
     const stored = await withTenant(app(), tenant, async (tx) =>
       tx.select().from(payments).where(eq(payments.id, paid.id)));
     expect(stored[0]!.currency).toBe("EGP");
+  });
+
+
+  it("keeps explicit USD payment allocation isolated from EGP and locks tenant currency after activity", async () => {
+    const debtorRow = await createDebtor(app(), tenant, user.id, { displayName: "عميل عملتين", phone: "01077778888" });
+    const egp = await createInvoice(app(), tenant, user.id, { debtorId: debtorRow.id, amount: "100", currency: "EGP", issuedOn: today, dueOn: addDaysIso(today, 7) });
+    const usd = await createInvoice(app(), tenant, user.id, { debtorId: debtorRow.id, amount: "100", currency: "USD", issuedOn: today, dueOn: addDaysIso(today, 7) });
+
+    const payment = await recordPayment(app(), tenant, user.id, {
+      debtorId: debtorRow.id, amount: "100", currency: "USD", receivedOn: today,
+    });
+    expect(payment.currency).toBe("USD");
+    expect(payment.allocations).toEqual([{ invoiceId: usd.id, amountMinor: "10000" }]);
+
+    const detail = await getDebtorDetail(app(), tenant, debtorRow.id, today);
+    expect(detail.defaultCurrency).toBe("EGP");
+    expect(detail.totalOutstandingMinor).toBe("10000");
+    expect(detail.invoices.find((row) => row.id === egp.id)?.status).toBe("open");
+    expect(detail.invoices.find((row) => row.id === usd.id)?.status).toBe("paid");
+    expect(detail.invoices.find((row) => row.id === usd.id)?.currency).toBe("USD");
+
+    await expect(updateTenantSettings(app(), tenant, user.id, { currency: "USD" }))
+      .rejects.toMatchObject({ code: "CURRENCY_LOCKED", status: 409 });
+  });
+
+
+  it("locks the default currency when an unlinked cheque has no stored currency column", async () => {
+    const isolatedUser = { id: randomUUID().replace(/-/g, ""), email: `cheque-currency-${randomUUID()}@example.test`, name: "Cheque Currency" };
+    let isolatedTenant = "";
+    try {
+      await ownerDb().insert(userTable).values([isolatedUser]);
+      isolatedTenant = (await createTenantForUser(appDb(), isolatedUser.id, {
+        businessNameAr: "شركة شيكات", timezone: "Africa/Cairo", quietStart: "21:00", quietEnd: "09:00",
+        fridayMorningSkip: false, defaultTermsDays: 14, tone: "polite" as const, consent: true as const,
+      })).tenantId;
+      const isolatedDebtor = await createDebtor(app(), isolatedTenant, isolatedUser.id, {
+        displayName: "عميل شيك بلا فاتورة", phone: "01099990000",
+      });
+      await registerCheque(app(), isolatedTenant, isolatedUser.id, {
+        debtorId: isolatedDebtor.id, direction: "receivable", number: `UNLINKED-${randomUUID().slice(0, 8)}`,
+        bank: "Test Bank", amount: "125", issueDate: today, dueDate: addDaysIso(today, 10),
+      });
+      await expect(updateTenantSettings(app(), isolatedTenant, isolatedUser.id, { currency: "USD" }))
+        .rejects.toMatchObject({ code: "CURRENCY_LOCKED", status: 409 });
+    } finally {
+      if (isolatedTenant) await ownerDb().delete(tenants).where(eq(tenants.id, isolatedTenant));
+      await ownerDb().delete(userTable).where(eq(userTable.id, isolatedUser.id));
+    }
+  });
+
+  it("preserves the currency of an invoice-linked cheque in list and calendar views", async () => {
+    const debtorRow = await createDebtor(app(), tenant, user.id, { displayName: "عميل شيك دولار", phone: "01088889999" });
+    const usdInvoice = await createInvoice(app(), tenant, user.id, { debtorId: debtorRow.id, amount: "250", currency: "USD", issuedOn: today, dueOn: addDaysIso(today, 10) });
+    const cheque = await registerCheque(app(), tenant, user.id, {
+      debtorId: debtorRow.id, direction: "receivable", number: `USD-${randomUUID().slice(0, 8)}`, bank: "Test Bank",
+      amount: "250", issueDate: today, dueDate: addDaysIso(today, 10), invoiceId: usdInvoice.id,
+    });
+    expect(cheque.currency).toBe("USD");
+    const chequeRows = await listCheques(app(), tenant);
+    expect(chequeRows.find((row) => row.id === cheque.id)?.currency).toBe("USD");
   });
 
   it("F06/H13: clearing a cheque whose invoice was paid meanwhile trims the allocation", async () => {

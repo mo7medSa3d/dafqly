@@ -11,7 +11,7 @@ import { withTenant, type Db } from "@tahseel/db";
 import type { OcrLlmProvider, StorageProvider } from "@tahseel/providers";
 import { renderTemplate } from "@tahseel/templates";
 import { storeUpload, getFileBytes } from "./files";
-import { lockDebtorInvoices, recomputeInvoicePaid } from "./ledger";
+import { lockDebtor, lockDebtorInvoices, recomputeDebtorCredit, recomputeInvoicePaid } from "./ledger";
 import { replanLater } from "./engine";
 import { upsertNotificationInTx } from "./notifications";
 
@@ -78,6 +78,8 @@ export async function processReceiptImage(
 
   const extractionResult = await deps.llm.extractReceipt(bytes, mime);
   const extraction = extractionResult.data;
+  const extractedCurrency = (extraction?.currency ?? "").toUpperCase();
+  const paymentCurrency = ["EGP", "SAR", "USD", "AED", "EUR", "KWD", "JPY"].includes(extractedCurrency) ? extractedCurrency : "EGP";
 
   return withTenant(app, tenantId, async (tx) => {
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
@@ -99,7 +101,7 @@ export async function processReceiptImage(
         }
       }
       if (!debtor && extraction.amount_minor && extraction.amount_minor > 0) {
-        const openInvs = await tx.select().from(invoices).where(eq(invoices.status, "open"));
+        const openInvs = await tx.select().from(invoices).where(and(eq(invoices.status, "open"), eq(invoices.currency, paymentCurrency)));
         const match = openInvs.find((i) => (i.amountMinor - i.paidMinor) === BigInt(extraction.amount_minor!));
         if (match) {
           debtor = allDebtors.find((d) => d.id === match.debtorId) ?? null;
@@ -155,12 +157,19 @@ export async function processReceiptImage(
       };
     }
 
-    // F01: lock the debtor's invoices before matching/allocating, so a
-    // concurrent manual payment cannot allocate the same outstanding.
+    // OCR currency is free text ("LE", "ج.م", ...) — only a supported ISO
+    // code is stored; anything else falls back to EGP rather than failing
+    // the CHECK constraint on payments.currency. Resolve it before matching:
+    // a receipt in USD must never settle an EGP invoice (or vice versa).
+    // Lock debtor first, then invoices, matching the manual-payment path and
+    // serializing the one-currency stored-credit balance.
+    const lockedDebtor = await lockDebtor(tx, debtor.id);
+    if (!lockedDebtor) throw new AppError("NOT_FOUND", "Debtor not found", 404);
     const openInvoices = await lockDebtorInvoices(tx, debtor.id);
+    const currencyInvoices = openInvoices.filter((i) => i.currency === paymentCurrency);
     const match = matchReceiptAmount(
       extraction.amount_minor,
-      openInvoices
+      currencyInvoices
         .filter((i) => i.status === "open" || i.status === "partially_paid")
         .map((i) => ({
           id: i.id,
@@ -176,11 +185,6 @@ export async function processReceiptImage(
       ? localDateOf(new Date(extraction.datetime), tenant.timezone)
       : localDateOf(now, tenant.timezone);
     const paymentId = uuidv7();
-    // OCR currency is free text ("LE", "ج.م", ...) — only a supported ISO
-    // code is stored; anything else falls back to EGP rather than failing
-    // the CHECK constraint on payments.currency.
-    const receiptCurrency = (extraction.currency ?? "").toUpperCase();
-    const paymentCurrency = ["EGP", "SAR", "USD", "AED", "EUR", "KWD", "JPY"].includes(receiptCurrency) ? receiptCurrency : "EGP";
     await tx.insert(payments).values({
       id: paymentId, tenantId, debtorId: debtor.id,
       invoiceId: match.allocations[0]?.invoiceId ?? null,
@@ -195,16 +199,28 @@ export async function processReceiptImage(
     let allocatedInvoiceIds: string[] = [];
     if (decision === "auto_confirm") {
       let allocations = match.allocations.map((a) => ({ invoiceId: a.invoiceId, amountMinor: BigInt(a.amountMinor) }));
+      let creditMinor = 0n;
       if (allocations.length === 0) {
-        const plan = allocatePayment(BigInt(extraction.amount_minor), openInvoices.map((i) => ({
+        const plan = allocatePayment(BigInt(extraction.amount_minor), currencyInvoices.map((i) => ({
           invoiceId: i.id, amountMinor: i.amountMinor, paidMinor: i.paidMinor, dueOn: i.dueOn, status: i.status,
         })));
         allocations = plan.allocations.map((a) => ({ invoiceId: a.invoiceId, amountMinor: a.amountMinor }));
+        creditMinor = plan.creditMinor;
+      } else {
+        const allocatedMinor = allocations.reduce((sum, a) => sum + a.amountMinor, 0n);
+        creditMinor = BigInt(extraction.amount_minor) - allocatedMinor;
+      }
+      if (lockedDebtor.creditMinor !== 0n && lockedDebtor.creditCurrency !== paymentCurrency && creditMinor > 0n) {
+        throw new AppError("CURRENCY_CREDIT_CONFLICT", "Customer has an existing credit balance in another currency; reconcile it before confirming this receipt", 409);
+      }
+      if (lockedDebtor.creditMinor === 0n && lockedDebtor.creditCurrency !== paymentCurrency) {
+        await tx.update(debtors).set({ creditCurrency: paymentCurrency, updatedAt: now }).where(eq(debtors.id, debtor.id));
       }
       for (const a of allocations) {
         await tx.insert(paymentAllocations).values({ tenantId, paymentId, invoiceId: a.invoiceId, amountMinor: a.amountMinor });
       }
       for (const a of allocations) await recomputeInvoicePaid(tx, tenantId, a.invoiceId);
+      if (allocations.length === 0) await recomputeDebtorCredit(tx, tenantId, debtor.id);
       allocatedInvoiceIds = allocations.map((a) => a.invoiceId);
     }
 
@@ -239,7 +255,7 @@ export async function processReceiptImage(
     });
 
     // Debtor reply — templates only. Remaining is computed after settlement.
-    const freshInvoices = await tx.select().from(invoices).where(eq(invoices.debtorId, debtor.id));
+    const freshInvoices = await tx.select().from(invoices).where(and(eq(invoices.debtorId, debtor.id), eq(invoices.currency, paymentCurrency)));
     const remainingMinor = freshInvoices
       .filter((i) => i.status === "open" || i.status === "partially_paid")
       .reduce((s, i) => s + (i.amountMinor - i.paidMinor > 0n ? i.amountMinor - i.paidMinor : 0n), 0n);
