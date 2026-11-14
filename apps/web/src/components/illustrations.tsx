@@ -182,3 +182,22 @@ export function ImportIllustration({ size = 120 }: { size?: number }) {
     </svg>
   );
 }
+
+export function ReminderScheduleIllustration({ size = 140 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 200 200" fill="none" aria-hidden="true" focusable="false" className="shrink-0">
+      <rect x="16" y="20" width="168" height="160" rx="24" fill="var(--illus-stage)" />
+      <circle cx="154" cy="48" r="24" fill="var(--chart-2)" opacity="0.18" />
+      <circle cx="46" cy="154" r="28" fill="var(--chart-1)" opacity="0.18" />
+      <rect x="34" y="42" width="132" height="116" rx="16" fill="var(--card)" stroke="var(--border-strong)" strokeWidth="3" />
+      <path d="M34 58C34 49.163 41.163 42 50 42H150C158.837 42 166 49.163 166 58V72H34V58Z" fill="var(--primary)" />
+      <circle cx="54" cy="57" r="4.5" fill="var(--primary-foreground)" opacity="0.6" />
+      <circle cx="70" cy="57" r="4.5" fill="var(--chart-1)" />
+      <rect x="50" y="88" width="44" height="10" rx="5" fill="var(--foreground)" />
+      <rect x="50" y="108" width="76" height="8" rx="4" fill="var(--muted-foreground)" opacity="0.5" />
+      <rect x="50" y="126" width="56" height="16" rx="8" fill="var(--chart-2)" opacity="0.25" />
+      <circle cx="142" cy="122" r="22" fill="var(--chart-2)" />
+      <path d="M142 111v12l8 5" stroke="var(--primary-foreground)" strokeWidth="3.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

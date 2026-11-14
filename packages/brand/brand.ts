@@ -5,7 +5,7 @@ export const BRAND = {
   tagline: "Track. Follow. Get Paid.",
   supportingLine: "Smarter Receivables. Better Cash Flow.",
   taglineAr: "تتبّع. تابع. وحصّل.",
-  descriptionAr: "دفقلي — منصة إدارة المستحقات والتحصيل الذكي",
+  descriptionAr: "دفقلي — منصة إدارة المستحقات والتدفق النقدي الذكي",
   descriptionEn: "Dafqly — Smarter Receivables. Better Cash Flow.",
   designSystem: "Quiet Ledger (DESIGN.md)",
   colors: {

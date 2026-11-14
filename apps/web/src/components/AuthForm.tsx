@@ -1,9 +1,9 @@
 "use client";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { CheckCircle, Eye, EyeSlash, LockKey, SpinnerGap } from "@/components/ui/solid-icons";
 import { BRAND } from "@tahseel/brand/brand";
@@ -18,8 +18,23 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const t = useTranslations("auth");
   const locale = useLocale();
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const searchParams = useSearchParams();
+  const initialBiz = searchParams.get("business") ?? "";
+  const initialEmail = searchParams.get("email") ?? "";
+  const selectedPlan = searchParams.get("plan") ?? "";
+  const [name, setName] = useState(initialBiz);
+  const [email, setEmail] = useState(initialEmail);
+
+  useEffect(() => {
+    if (initialBiz || initialEmail) return;
+    try {
+      const raw = window.localStorage.getItem("dafqly:workspace-card");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { businessName?: string; email?: string };
+      if (!name && parsed.businessName) setName(parsed.businessName);
+      if (!email && parsed.email) setEmail(parsed.email);
+    } catch {}
+  }, [initialBiz, initialEmail]);
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +66,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   }
 
   const perks = [
-    { t: ar ? "تذكيرات واتساب بذكاء" : "Smart WhatsApp reminders" },
+    { t: ar ? "جدولة تذكيرات سداد ذكية ومؤتمتة" : "Smart automated payment reminders" },
     { t: ar ? "مساعد ذكي على بياناتك الحقيقية" : "A copilot on your real data" },
     { t: ar ? "موافقتك قبل أي إجراء مهم" : "Your approval before any action" },
   ];
@@ -115,7 +130,14 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
               <Link href={`/${locale}/login`} className={`relative z-10 flex min-h-[40px] items-center justify-center rounded-full ${mode === "login" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>{t("loginTitle")}</Link>
               <Link href={`/${locale}/signup`} className={`relative z-10 flex min-h-[40px] items-center justify-center rounded-full ${mode === "signup" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>{t("signupTitle")}</Link>
             </div>
-            <h1 className="text-[32px] font-extrabold leading-tight">{mode === "signup" ? t("signupTitle") : t("loginTitle")}</h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-[32px] font-extrabold leading-tight">{mode === "signup" ? t("signupTitle") : t("loginTitle")}</h1>
+              {mode === "signup" && selectedPlan && (
+                <span className="inline-flex items-center rounded-full border border-border bg-muted px-3 py-1 text-xs font-bold text-foreground">
+                  {ar ? `الباقة: ${selectedPlan}` : `Plan: ${selectedPlan}`}
+                </span>
+              )}
+            </div>
             <p className="-mt-2 text-sm text-muted-foreground">{mode === "signup" ? (ar ? "ابدأ في دقيقة، من غير بطاقة." : "Get started in a minute.") : (ar ? "أهلاً بيك تاني، كمّل من حيث وقفت." : "Welcome back. Pick up where you left off.")}</p>
           </div>
 

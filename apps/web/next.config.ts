@@ -48,9 +48,6 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@tahseel/core", "@tahseel/db", "@tahseel/brand"],
   serverExternalPackages: ["argon2", "postgres"],
-  experimental: {
-    optimizePackageImports: ["lucide-react"],
-  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

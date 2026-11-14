@@ -67,7 +67,7 @@
     "ledgerPhoto": "Smart Scan",
     "aiInbox": "Inbox",
     "cheques": "Cheques",
-    "tasks": "Collection work",
+    "tasks": "Tasks & Tickets",
     "billing": "Billing",
     "settings": "Settings"
   },
@@ -362,7 +362,7 @@
     "step1Title": "Issue Invoices",
     "step1Body": "Record receivables accurately in seconds.",
     "step2Title": "Smart Reminders",
-    "step2Body": "Polite WhatsApp reminders sent right on schedule.",
+    "step2Body": "Polite payment reminders sent right on schedule.",
     "step3Title": "Close & Reconcile",
     "step3Body": "Track cash flow and close invoices as payments arrive."
   },
@@ -394,7 +394,7 @@
     "noLogs": "No recent actions recorded"
   },
   "tasks": {
-    "title": "Collection workspace",
+    "title": "Dafqly Workspace",
     "subtitle": "Manage team tasks, promises to pay, and AI-proposed actions in one operational workspace."
   },
   "statementPortal": {

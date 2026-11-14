@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useLocale } from "next-intl";
 import { ThemeToggle } from "./ThemeToggle";
 import { LocaleToggle } from "./LocaleToggle";
@@ -32,8 +33,7 @@ type CycleEvent = {
   place: string;
   kind: string;
   target: string;
-  seats: number;
-  going: number;
+  stage: string;
 };
 type Tier = {
   name: string;
@@ -88,7 +88,7 @@ type Bubble = { x: number; y: number; r: number; c: number; ph: number; amp: num
 function buildBubbles(seed: number, w: number, h: number, nColors: number, density = 1, scale = 1): Bubble[] {
   const rnd = mulberry32(seed);
   const unit = Math.max(6, Math.min(w, h) * 0.12 * scale);
-  const n = Math.round(clamp(((w * h) / (unit * unit * 1.25)) * density, 12, 1400));
+  const n = Math.round(clamp(((w * h) / (unit * unit * 1.35)) * density, 12, 260));
   const out: Bubble[] = [];
   for (let i = 0; i < n; i++) {
     const r = Math.round(unit * (0.22 + 1.3 * Math.pow(rnd(), 2.3)) * 100) / 100;
@@ -248,13 +248,17 @@ const DF_CSS = `
 .df-shell{width:100%;container-type:inline-size;position:relative}
 .df-in{width:100%;max-width:1240px;margin:0 auto;padding:0 clamp(16px,4cqi,48px)}
 
-.df-disp{font-family:var(--df-display);font-weight:800;letter-spacing:-.02em;line-height:.88}
+.df-disp{font-family:var(--df-display);font-weight:800;letter-spacing:-.02em;line-height:.92}
+[dir="rtl"] .df-disp{letter-spacing:0;line-height:1.15}
 .df-mono{font-family:var(--df-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
 .df-label{font-family:var(--df-display);font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--df-blue)}
 [dir="rtl"] .df-label,[dir="rtl"] .df-mono{letter-spacing:0}
 .df-echo{display:inline-block;white-space:nowrap}
+@container (max-width:480px){.df-echo{white-space:normal}}
 .df-title{display:flex;flex-direction:column;font-family:var(--df-display);font-weight:800;letter-spacing:-.01em;line-height:.95}
-.df-title>span:last-child{padding-bottom:.32em}
+[dir="rtl"] .df-title{letter-spacing:0;line-height:1.28}
+.df-title>span{padding-block:.05em}
+.df-title>span:last-child{padding-bottom:.34em}
 
 /* nav */
 .df-nav{position:sticky;top:0;z-index:40;background:color-mix(in srgb,var(--df-paper) 86%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--df-line)}
@@ -289,7 +293,8 @@ const DF_CSS = `
 .df-btn-ink:hover{transform:translateY(-2px)}
 .df-btn:active{transform:scale(.97)}
 .df-btn[disabled]{opacity:.55;cursor:default;transform:none}
-.df-nav .df-btn{padding:10px 16px;font-size:12px}
+.df-nav .df-btn{padding:9px 14px;font-size:12px}
+@container (max-width:480px){.df-nav .df-in{gap:6px}.df-brand{font-size:15px;gap:7px}.df-nav .df-btn{padding:8px 11px;font-size:11px}}
 
 /* bubbles */
 .df-bub{position:absolute;inset:0}
@@ -301,12 +306,12 @@ const DF_CSS = `
 .df-orbits svg{position:absolute}
 .df-orbit-spin{transform-box:view-box;transform-origin:50% 50%;animation:df-spin 60s linear infinite}
 .df-orbit-spin-r{animation-duration:90s;animation-direction:reverse}
-.df-wm{position:relative;height:clamp(190px,36cqi,460px);margin:0 calc(-1 * clamp(4px,1cqi,14px));cursor:crosshair;touch-action:pan-y}
-.df-hero-mark{position:absolute;inset-inline-end:clamp(16px,4cqi,56px);top:clamp(4px,1.4cqi,20px);display:flex;flex-direction:column;align-items:flex-end;gap:clamp(6px,1cqi,12px);pointer-events:none;z-index:2}
-.df-hero-mark .df-logo{pointer-events:auto;color:var(--df-ink);width:clamp(64px,12cqi,150px);height:auto}
+.df-wm{position:relative;height:clamp(165px,26cqi,340px);margin:clamp(8px,2cqi,18px) 0;cursor:crosshair;touch-action:pan-y}
+.df-hero-mark{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:8px}
+.df-hero-mark .df-logo{color:var(--df-ink);width:clamp(56px,9cqi,110px);height:auto}
 .df-hero-title{font-size:clamp(22px,4.2cqi,54px);color:var(--df-ink);text-align:start}
-.df-hero-title>span{background:var(--df-paper);padding:0 .12em;box-decoration-break:clone;-webkit-box-decoration-break:clone}
-.df-hero-row{position:relative;display:grid;gap:clamp(18px,3cqi,32px);align-items:end;margin-top:clamp(-44px,-3.5cqi,-6px);z-index:3}
+.df-hero-title>span{background:var(--df-paper);padding:.06em .14em;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.df-hero-row{position:relative;display:grid;gap:clamp(18px,3cqi,32px);align-items:end;margin-top:clamp(14px,2.5cqi,28px);z-index:3}
 .df-issue-big{font-family:var(--df-mono);font-weight:800;font-size:clamp(46px,9.5cqi,130px);line-height:.85;letter-spacing:-.04em;color:var(--df-ink);background:var(--df-paper);justify-self:start;padding:.06em .12em 0 0}
 .df-hero-copy{display:flex;flex-direction:column;gap:16px;max-width:520px}
 .df-hero-copy p{font-size:clamp(14px,1.4cqi,16.5px);color:var(--df-soft);line-height:1.65}
@@ -326,7 +331,8 @@ const DF_CSS = `
 
 /* band */
 .df-band{position:relative;height:clamp(190px,28cqi,340px);color:var(--primary-foreground);overflow:hidden}
-.df-band-title{position:absolute;inset-inline-start:clamp(16px,3cqi,40px);top:50%;transform:translateY(-54%);font-size:clamp(22px,4.4cqi,56px);z-index:1;pointer-events:none;color:oklch(0.99 0 0);text-shadow:0 2px 18px oklch(0 0 0 / 0.25)}
+.df-band-title{position:absolute;inset-inline-start:clamp(16px,3cqi,40px);top:50%;transform:translateY(-54%);max-width:60%;font-size:clamp(20px,4cqi,52px);z-index:1;pointer-events:none;color:oklch(0.99 0 0);text-shadow:0 2px 18px oklch(0 0 0 / 0.25)}
+@container (max-width:540px){.df-band-title{max-width:85%}}
 .df-band .df-ast{position:absolute;inset-inline-start:clamp(16px,3cqi,40px);bottom:clamp(14px,2.6cqi,30px);color:oklch(0.99 0 0);z-index:1}
 
 /* sections */
@@ -341,14 +347,15 @@ const DF_CSS = `
 .df-lede{font-size:clamp(15px,1.5cqi,17px);color:var(--df-soft);line-height:1.7;max-width:56ch}
 .df-mission{display:grid;gap:clamp(28px,5cqi,64px);padding-top:clamp(32px,5cqi,64px)}
 .df-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;border-top:1.5px solid var(--df-ink)}
-.df-stat{padding:18px 4px 18px 0;border-bottom:1px solid var(--df-line-strong)}
+.df-stat{padding:18px 0;padding-inline-end:12px;border-bottom:1px solid var(--df-line-strong)}
 .df-stat dt{font-family:var(--df-mono);font-weight:800;font-size:clamp(32px,4.4cqi,54px);line-height:1;letter-spacing:-.03em;color:var(--df-ink);font-variant-numeric:tabular-nums}
 .df-stat dd{margin-top:6px}
 @container (min-width:860px){.df-mission{grid-template-columns:1.1fr 1fr;align-items:start}}
 
 /* ribbons */
 .df-stage{position:relative;height:clamp(400px,64cqi,720px);overflow:hidden;margin-top:clamp(20px,3cqi,40px);--mx:0;--my:0}
-.df-stage-type{position:absolute;inset-inline-start:clamp(8px,2cqi,24px);top:12%;font-size:clamp(40px,12cqi,170px);color:var(--df-ink);line-height:.88;letter-spacing:-.03em;pointer-events:none;opacity:.9}
+.df-stage-type{position:absolute;inset-inline-start:clamp(8px,2cqi,24px);top:10%;font-size:clamp(36px,11cqi,160px);color:var(--df-ink);line-height:.92;letter-spacing:-.03em;pointer-events:none;opacity:.9}
+[dir="rtl"] .df-stage-type{letter-spacing:0;line-height:1.24;font-size:clamp(32px,9.5cqi,136px)}
 .df-stage-type sup{position:relative;top:-.85em;margin-inline-start:.06em;font-size:.4em;color:var(--chart-2);vertical-align:baseline}
 .df-rib{position:absolute;left:var(--x);top:var(--y);width:var(--w);height:clamp(48px,8cqi,100px);transform:translate(-50%,-50%) translate(calc(var(--mx) * var(--k) * 1px),calc(var(--my) * var(--k) * 1px)) rotate(var(--r));transition:transform .7s cubic-bezier(.2,.8,.2,1),box-shadow .4s;overflow:hidden;box-shadow:0 18px 40px -26px oklch(0 0 0 / 0.5)}
 .df-rib:hover{box-shadow:0 26px 60px -24px oklch(0 0 0 / 0.65);z-index:4}
@@ -723,19 +730,27 @@ function Bubbles({
         sparks = sparks.filter((s) => s.life > 0);
       }
       if (m && m.kind === "text") {
-        const key = `${m.font}|${m.text}|${w}|${h}|${m.fit}`;
+        const isArText = /[\u0600-\u06FF]/.test(m.text);
+        const resolvedBodyFont = getComputedStyle(document.body).fontFamily.replace(/var\([^)]+\),?\s*/g, "").trim();
+        const fontStack = resolvedBodyFont
+          ? `${resolvedBodyFont}, system-ui, -apple-system, sans-serif`
+          : "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
+        const key = `${fontStack}|${m.text}|${w}|${h}|${m.fit}`;
         if (key !== textFor) {
-          ctx.font = `800 100px ${m.font}`;
+          ctx.font = `800 100px ${fontStack}`;
           const mw = ctx.measureText(m.text).width || 1;
-          textSize = Math.min((100 * w * m.fit) / mw, h * 1.15);
+          const fit = isArText ? Math.min(m.fit, 0.74) : m.fit;
+          const maxH = isArText ? h * 0.60 : h * 0.85;
+          textSize = Math.min((100 * w * fit) / mw, maxH);
           textFor = key;
         }
         ctx.globalCompositeOperation = "destination-in";
         ctx.fillStyle = "oklch(0 0 0)";
-        ctx.font = `800 ${textSize.toFixed(1)}px ${m.font}`;
+        ctx.font = `800 ${textSize.toFixed(1)}px ${fontStack}`;
+        ctx.direction = isArText ? "rtl" : "ltr";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(m.text, w * 0.5, h * 0.54);
+        ctx.fillText(m.text, w * 0.5, isArText ? h * 0.50 : h * 0.53);
       } else if (knock) {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalCompositeOperation = "destination-out";
@@ -826,6 +841,12 @@ function Bubbles({
     };
 
     resize();
+    if (typeof document !== "undefined" && "fonts" in document) {
+      document.fonts.ready.then(() => {
+        textFor = "";
+        redraw.current();
+      }).catch(() => {});
+    }
     const ro = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : null;
     ro?.observe(cv);
     const io = typeof IntersectionObserver === "function"
@@ -924,10 +945,11 @@ function StatValue({ value, run }: { value: string; run: boolean }) {
 function Marquee({ text, reverse, duration = 26, big }: { text: string; reverse?: boolean; duration?: number; big?: boolean }) {
   const REPS = 10;
   const items = Array.from({ length: REPS });
+  const isArText = /[\u0600-\u06FF]/.test(text);
   const run = (key: string) => (
     <div key={key} style={{ display: "flex" }} aria-hidden={key === "b" ? true : undefined}>
       {items.map((_, i) => (
-        <span className="df-marq-item" key={i}>
+        <span className="df-marq-item" dir={isArText ? "rtl" : "ltr"} key={i}>
           {text}
           <DafqlyLogo size={big ? 44 : 28} />
         </span>
@@ -935,14 +957,14 @@ function Marquee({ text, reverse, duration = 26, big }: { text: string; reverse?
     </div>
   );
   return (
-    <div className={`df-marq${reverse ? " df-marq-r" : ""}`} style={{ ["--d" as string]: `${(duration * REPS) / 4}s` } as React.CSSProperties}>
+    <div dir="ltr" className={`df-marq${reverse ? " df-marq-r" : ""}`} style={{ ["--d" as string]: `${(duration * REPS) / 4}s` } as React.CSSProperties}>
       {run("a")}
       {run("b")}
     </div>
   );
 }
 
-function useInView(threshold = 0.14) {
+function useInView(threshold = 0.01) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const [inView, setInView] = React.useState(false);
   React.useEffect(() => {
@@ -959,10 +981,14 @@ function useInView(threshold = 0.14) {
           io.disconnect();
         }
       },
-      { threshold },
+      { threshold, rootMargin: "0px 0px -24px 0px" },
     );
     io.observe(el);
-    return () => io.disconnect();
+    const fallback = window.setTimeout(() => setInView(true), 700);
+    return () => {
+      io.disconnect();
+      window.clearTimeout(fallback);
+    };
   }, [inView, threshold]);
   return [ref, inView] as const;
 }
@@ -971,6 +997,7 @@ function useInView(threshold = 0.14) {
 
 export function DafqlyLanding() {
   const locale = useLocale();
+  const router = useRouter();
   const ar = locale === "ar";
   const uid = "df" + React.useId().replace(/[^a-zA-Z0-9]/g, "");
 
@@ -993,10 +1020,10 @@ export function DafqlyLanding() {
   const stageRef = React.useRef<HTMLDivElement | null>(null);
   const cardRef = React.useRef<HTMLDivElement | null>(null);
 
-  const [missionRef, missionIn] = useInView(0.15);
-  const [projRef, projIn] = useInView(0.1);
-  const [nightsRef, nightsIn] = useInView(0.12);
-  const [joinRef, joinIn] = useInView(0.12);
+  const [missionRef, missionIn] = useInView(0.01);
+  const [projRef, projIn] = useInView(0.01);
+  const [nightsRef, nightsIn] = useInView(0.01);
+  const [joinRef, joinIn] = useInView(0.01);
 
   const navLinks: NavLink[] = [
     { label: ar ? "الرؤية" : "Overview", target: "mission" },
@@ -1006,28 +1033,28 @@ export function DafqlyLanding() {
   ];
 
   const stats = [
-    { value: "3×", label: ar ? "تحصيل أسرع بمتابعة منتظمة" : "Faster follow-up cadence" },
+    { value: "3×", label: ar ? "تدفق نقدي أسرع بمتابعة منتظمة" : "Faster cashflow cadence" },
     { value: "24/7", label: ar ? "تذكيرات مجدولة بدون تدخل" : "Scheduled reminders, hands-off" },
     { value: "100%", label: ar ? "إجراءات AI بموافقتك" : "AI actions require approval" },
-    { value: "0", label: ar ? "رسائل خارج ساعات الهدوء" : "Messages outside quiet hours" },
+    { value: "0", label: ar ? "إشعارات خارج ساعات الهدوء" : "Alerts outside quiet hours" },
   ];
 
   const modules: ModuleItem[] = [
     {
       code: "#01",
-      title: ar ? "تذكيرات واتساب الذكية" : "Smart WhatsApp Reminders",
-      summary: ar ? "رسائل ودّية أو حازمة تتجدول تلقائياً خارج ساعات الهدوء." : "Polite-to-firm reminders scheduled outside quiet hours automatically.",
-      detail: ar ? "لا تتكرر لنفس الفاتورة ولا تُرسل لعميل أوقف الرسائل. كل رسالة مسجلة ومربوطة بحالة الفاتورة." : "Never sent twice or to opted-out customers. Every reminder is audited and linked to invoice status.",
+      title: ar ? "جدولة التذكيرات الذكية" : "Smart Reminder Scheduling",
+      summary: ar ? "تذكيرات سداد ودّية أو حازمة تتجدول تلقائياً في الأوقات المسموحة خارج ساعات الهدوء." : "Polite-to-firm payment reminders scheduled outside quiet hours automatically.",
+      detail: ar ? "لا تتكرر لنفس الفاتورة ولا تُرسل لعميل أوقف الإشعارات. كل تذكير مسجل ومربوط بحالة الفاتورة." : "Never sent twice or to opted-out customers. Every reminder is audited and linked to invoice status.",
       status: "ongoing",
       progress: 0.92,
       goal: ar ? "التزام 100% بسياسات ساعات الهدوء" : "100% quiet-hours policy compliance",
-      cta: ar ? "ابدأ التذكيرات" : "Start reminders",
+      cta: ar ? "ابدأ الجدولة" : "Start scheduling",
     },
     {
       code: "#02",
-      title: ar ? "المساعد الذكي للتحصيل" : "AI Collections Copilot",
-      summary: ar ? "اسأله بالعربي أو الإنجليزي عن أي عميل أو فاتورة ويقترح الخطوة التالية." : "Ask about any customer or invoice; it reads your real ledger and proposes actions.",
-      detail: ar ? "يقرأ بياناتك الحقيقية، يرتب أولويات المتابعة، ويجهز المسودات — ولا ينفذ أي إجراء إلا بموافقتك." : "Reads your real ledger, ranks priority debtors, and drafts actions awaiting your approval.",
+      title: ar ? "مساعد دفقلي الذكي" : "Dafqly AI Copilot",
+      summary: ar ? "اسأله بالعربي أو الإنجليزي عن أي عميل أو فاتورة ويقترح الخطوة التالية فوراً." : "Ask about any customer or invoice; it reads your real ledger and proposes actions.",
+      detail: ar ? "يقرأ بياناتك الحقيقية، يرتب أولويات المتابعة، ويجهز التذاكر والمسودات — ولا ينفذ أي إجراء إلا بموافقتك." : "Reads your real ledger, ranks priority accounts, and drafts tasks awaiting your approval.",
       status: "open",
       progress: 0.85,
       goal: ar ? "موافقة بشرية إلزامية قبل التنفيذ" : "Mandatory human-in-the-loop approval",
@@ -1047,7 +1074,7 @@ export function DafqlyLanding() {
       code: "#04",
       title: ar ? "بوابة العميل والتعهدات" : "Customer Portal & Promises",
       summary: ar ? "رابط آمن يرى فيه العميل كشف حسابه ويطلب ميعاد سداد." : "A secure statement link where customers view balances and promise to pay.",
-      detail: ar ? "إيصالات التحويل تُعامل كادّعاء حتى تؤكدها، وتعهدات السداد يتم تتبعها تلقائياً حتى التحصيل." : "Transfer screenshots stay claims until confirmed, and promises are tracked until kept.",
+      detail: ar ? "إيصالات التحويل تُعامل كادّعاء حتى تؤكدها، وتعهدات السداد يتم تتبعها تلقائياً حتى إغلاق الفاتورة." : "Transfer screenshots stay claims until confirmed, and promises are tracked until settled.",
       status: "archived",
       progress: 1,
       goal: ar ? "عزل كامل للبيانات لكل منشأة" : "Full tenant isolation & audit trail",
@@ -1056,10 +1083,10 @@ export function DafqlyLanding() {
   ];
 
   const cycleEvents: CycleEvent[] = [
-    { offsetDays: 2, time: "10:00", title: ar ? "تذكير دفعة شركة النور للتوريدات" : "Al-Noor Supplies payment reminder", place: "WhatsApp", kind: ar ? "واتساب" : "WhatsApp", target: ar ? "فاتورة INV-1042" : "Invoice INV-1042", seats: 12, going: 9 },
-    { offsetDays: 5, time: "13:30", title: ar ? "استحقاق شيك بنك مصر CHK-8841" : "Banque Misr cheque CHK-8841 due", place: ar ? "إدارة الشيكات" : "Cheques", kind: ar ? "شيكات" : "Cheques", target: ar ? "مراجعة وتحصيل" : "Deposit & clear", seats: 8, going: 5 },
-    { offsetDays: 9, time: "11:00", title: ar ? "مراجعة تعهد سداد عميل الدلتا" : "Delta Trading promise-to-pay check", place: ar ? "بوابة العميل" : "Portal", kind: ar ? "تعهدات" : "Promises", target: ar ? "تأكيد التحويل" : "Confirm transfer", seats: 15, going: 11 },
-    { offsetDays: 14, time: "16:00", title: ar ? "تقرير المتأخرات وتدفق 8 أسابيع" : "8-week cashflow & aging review", place: "AI Copilot", kind: ar ? "واتساب" : "WhatsApp", target: ar ? "أولوية التحصيل" : "Collection priority", seats: 20, going: 14 },
+    { offsetDays: 2, time: "10:00", title: ar ? "تذكير قبل موعد الاستحقاق" : "Pre-due payment reminder", place: ar ? "ساعات العمل" : "Quiet-hours safe", kind: ar ? "تذكيرات" : "Reminders", target: ar ? "رسالة تلقائية ودّية" : "Polite auto-notice", stage: ar ? "قبل الاستحقاق بـ 48 ساعة" : "48h before due" },
+    { offsetDays: 5, time: "13:30", title: ar ? "تنبيه استحقاق الشيكات" : "Cheque maturity & deposit alert", place: ar ? "إدارة الشيكات" : "Cheques", kind: ar ? "شيكات" : "Cheques", target: ar ? "تحضير للإيداع" : "Deposit & clear", stage: ar ? "يوم الاستحقاق" : "On maturity date" },
+    { offsetDays: 9, time: "11:00", title: ar ? "متابعة تعهدات السداد" : "Promise-to-pay verification", place: ar ? "بوابة العميل" : "Portal", kind: ar ? "تعهدات" : "Promises", target: ar ? "تأكيد التحويل" : "Confirm transfer", stage: ar ? "مراجعة التحويل" : "Claim review" },
+    { offsetDays: 14, time: "16:00", title: ar ? "تقرير السيولة وتدفق 8 أسابيع" : "8-week cashflow & aging review", place: "AI Copilot", kind: ar ? "تذكيرات" : "Reminders", target: ar ? "ترتيب الأولويات" : "Priority ranking", stage: ar ? "مراجعة أسبوعية" : "Weekly digest" },
   ];
 
   const tiers: Tier[] = [
@@ -1073,8 +1100,8 @@ export function DafqlyLanding() {
       name: ar ? "النمو" : "Growth",
       price: ar ? "490 ج.م" : "$19",
       period: ar ? "/شهر" : "/mo",
-      blurb: ar ? "للشركات النشطة في التحصيل اليومي." : "For active daily collections.",
-      perks: ar ? ["تذكيرات واتساب آلية", "المساعد الذكي للتحصيل", "تصوير الدفتر OCR", "ساعات الهدوء المخصصة"] : ["Automated WhatsApp", "AI Copilot & drafts", "Ledger photo OCR", "Custom quiet hours"],
+      blurb: ar ? "للشركات النشطة في إدارة التدفق اليومي." : "For active daily cashflow management.",
+      perks: ar ? ["جدولة تذكيرات ذكية آلية", "مساعد دفقلي الذكي", "تصوير الدفتر OCR", "ساعات الهدوء المخصصة"] : ["Automated smart reminders", "Dafqly AI Copilot", "Ledger photo OCR", "Custom quiet hours"],
       featured: true,
     },
     {
@@ -1090,7 +1117,7 @@ export function DafqlyLanding() {
 
   const skyDay = new Date(Date.now() + dayOffset * 86400000);
   const phase = cyclePhase(skyDay);
-  const healthLabel = phase.illumination < 0.3 ? (ar ? "بداية الدورة" : "Cycle Start") : phase.illumination < 0.7 ? (ar ? "ذروة التحصيل" : "Peak Flow") : (ar ? "إقفال الشهر" : "Month Close");
+  const healthLabel = phase.illumination < 0.3 ? (ar ? "بداية الدورة" : "Cycle Start") : phase.illumination < 0.7 ? (ar ? "ذروة التدفق" : "Peak Flow") : (ar ? "إقفال الشهر" : "Month Close");
 
   const scrollTo = (target: string) => {
     const el = sections.current[target];
@@ -1145,7 +1172,7 @@ export function DafqlyLanding() {
     e.preventDefault();
     if (!bizName.trim()) {
       setStatus("error");
-      setMsg(ar ? "اكتب اسم منشأتك لطباعة البطاقة." : "Enter your business name first.");
+      setMsg(ar ? "اكتب اسم منشأتك لإصدار البطاقة." : "Enter your business name first.");
       return;
     }
     if (!isEmail(email)) {
@@ -1153,13 +1180,84 @@ export function DafqlyLanding() {
       setMsg(ar ? "أدخل بريداً إلكترونياً صحيحاً." : "Enter a valid email address.");
       return;
     }
+    try {
+      window.localStorage.setItem(
+        "dafqly:workspace-card",
+        JSON.stringify({
+          businessName: bizName.trim(),
+          email: email.trim(),
+          plan: chosenTier.name,
+          workspaceId: wsNum,
+        }),
+      );
+    } catch {}
     setStatus("done");
     setPrinted((p) => p + 1);
-    setMsg(ar ? `بطاقة ${bizName.trim()} جاهزة — يمكنك الآن إنشاء حسابك.` : `Card ready for ${bizName.trim()} — continue to create your account.`);
+    setMsg(
+      ar
+        ? `تم إصدار وحفظ بطاقة "${bizName.trim()}" (${wsNum}) — يمكنك تحميل البطاقة أو بدء حسابك مباشرة.`
+        : `Workspace card ${wsNum} issued for "${bizName.trim()}" — download the card or launch your workspace.`,
+    );
+  };
+
+  const downloadCardSvg = () => {
+    const title = (bizName.trim() || (ar ? "منشأة دفقلي" : "Dafqly Workspace")).replace(/[<>&"]/g, "");
+    const planLabel = chosenTier.name.replace(/[<>&"]/g, "");
+    const svgDoc = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 454" width="720" height="454" fill="none">
+      <rect width="720" height="454" rx="32" fill="oklch(0.14 0 0)"/>
+      <circle cx="590" cy="96" r="110" fill="oklch(0.55 0.22 264.53)" opacity="0.22"/>
+      <circle cx="150" cy="360" r="130" fill="oklch(0.81 0.17 75.35)" opacity="0.18"/>
+      <g transform="translate(570 38) scale(0.18)">
+        <path d="${DAFQLY_PATHS.outer}" stroke="oklch(0.99 0 0)" stroke-width="66" stroke-linecap="round"/>
+        <path d="${DAFQLY_PATHS.flow}" stroke="oklch(0.55 0.22 264.53)" stroke-width="66" stroke-linecap="round"/>
+        <path d="${DAFQLY_PATHS.check}" stroke="oklch(0.81 0.17 75.35)" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+      <text x="48" y="84" fill="oklch(0.99 0 0)" font-family="system-ui, sans-serif" font-size="30" font-weight="800">DAFQLY · دفقلي</text>
+      <text x="48" y="118" fill="oklch(0.72 0 0)" font-family="monospace" font-size="14" font-weight="700">WORKSPACE PASS · ${planLabel}</text>
+      <line x1="48" y1="296" x2="672" y2="296" stroke="oklch(0.28 0 0)" stroke-width="1.5"/>
+      <text x="48" y="346" fill="oklch(0.72 0 0)" font-family="monospace" font-size="13" font-weight="700">WORKSPACE NAME</text>
+      <text x="48" y="388" fill="oklch(0.99 0 0)" font-family="system-ui, sans-serif" font-size="32" font-weight="800">${title}</text>
+      <text x="672" y="346" text-anchor="end" fill="oklch(0.72 0 0)" font-family="monospace" font-size="13" font-weight="700">ID</text>
+      <text x="672" y="388" text-anchor="end" fill="oklch(0.81 0.17 75.35)" font-family="monospace" font-size="28" font-weight="800">${wsNum}</text>
+    </svg>`;
+    const blob = new Blob([svgDoc], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `dafqly-card-${wsNum.replace("#", "")}.svg`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const applyCyclePolicyToWorkspace = () => {
+    const selectedStages = shownEvents
+      .filter((ev, row) => simulated[`${ev.title}-${row}`] ?? true)
+      .map((ev) => ({ title: ev.title, offsetDays: ev.offsetDays + dayOffset, time: ev.time, kind: ev.kind }));
+    try {
+      window.localStorage.setItem(
+        "dafqly:cycle-policy",
+        JSON.stringify({
+          dayOffset,
+          defaultTermsDays: Math.max(7, Math.min(60, 14 + dayOffset)),
+          stages: selectedStages,
+        }),
+      );
+    } catch {}
+    router.push(signupWithCardHref);
   };
 
   const wsNum = workspaceNumber(bizName || "dafqly", email);
   const chosenTier = tiers[tierIdx] ?? tiers[0];
+  const signupWithCardHref = React.useMemo(() => {
+    const q = new URLSearchParams();
+    if (bizName.trim()) q.set("business", bizName.trim());
+    if (email.trim()) q.set("email", email.trim());
+    q.set("plan", chosenTier.name);
+    const qs = q.toString();
+    return qs ? `/${locale}/signup?${qs}` : `/${locale}/signup`;
+  }, [bizName, email, chosenTier.name, locale]);
 
   const swatchRow = (
     <div className="df-swatches" role="radiogroup" aria-label={ar ? "لوحة الألوان" : "Bubble palette"}>
@@ -1260,12 +1358,14 @@ export function DafqlyLanding() {
           </div>
 
           <h1 className="sr-only">{ar ? "دفقلي — تتبّع. تابع. وحصّل." : "DAFQLY — Track. Follow. Get Paid."}</h1>
+          <div className="df-in">
+            <div className="df-hero-mark">
+              <Title text={ar ? "دفقلي.\nتدفق نقدي ذكي" : "DAFQLY.\nCASHFLOW"} className="df-hero-title" />
+              <DafqlyLogo size={104} follow />
+            </div>
+          </div>
           <div className="df-wm">
             <Bubbles seed={102} colors={pal.colors} density={2} scale={0.4} mask={wordMask} onPop={() => setPops((p) => p + 1)} />
-            <div className="df-hero-mark">
-              <DafqlyLogo size={130} follow />
-              <Title text={ar ? "دفقلي.\nتحصيل ذكي" : "DAFQLY.\nCOLLECTIONS"} className="df-hero-title" />
-            </div>
           </div>
 
           <div className="df-in">
@@ -1282,8 +1382,8 @@ export function DafqlyLanding() {
                 <Asterisk size={20} className="self-start" />
                 <p>
                   {ar
-                    ? "منصة تحصيل مستحقات ذكية للشركات المصرية والعربية: تذكيرات واتساب في وقتها، تصوير الدفتر بالذكاء الاصطناعي، متابعة الشيكات، وبوابة عملاء معزولة وآمنة."
-                    : "Smart accounts-receivable platform: perfectly timed WhatsApp reminders, AI ledger OCR, cheque tracking, and a tenant-isolated customer statement portal."}
+                    ? "منصة دفقلي لإدارة المستحقات والتدفق النقدي: جدولة تذكيرات ذكية، تصوير الدفتر بالذكاء الاصطناعي، متابعة الشيكات والتذاكر، وبوابة عملاء معزولة وآمنة."
+                    : "Dafqly smart receivables & cashflow platform: automated reminder scheduling, AI ledger OCR, cheque & ticket tracking, and a tenant-isolated customer portal."}
                 </p>
                 <div className="df-ctas">
                   <Link data-testid="landing-hero-signup" href={`/${locale}/signup`} className="df-btn df-btn-solid">
@@ -1291,7 +1391,7 @@ export function DafqlyLanding() {
                     <Arrow rtl={ar} />
                   </Link>
                   <button type="button" className="df-btn df-btn-line" onClick={() => scrollTo("nights")}>
-                    {ar ? "شوف دورة التحصيل" : "Explore schedule"}
+                    {ar ? "استكشف دورة المتابعة" : "Explore schedule"}
                   </button>
                 </div>
                 <div className="df-credit">
@@ -1306,7 +1406,7 @@ export function DafqlyLanding() {
         <section className="df-sec" ref={(el) => { sections.current.mission = el; }} data-section="mission">
           <div className="df-band">
             <Bubbles seed={103} colors={pal.colors} density={2} scale={0.42} mask={bandMask} onPop={() => setPops((p) => p + 1)} />
-            <Title text={ar ? "دفقلي.\nدفتر التحصيل" : "DAFQLY.\nQUIET LEDGER"} className="df-band-title" />
+            <Title text={ar ? "دفقلي.\nدفتر التدفق النقدي" : "DAFQLY.\nQUIET LEDGER"} className="df-band-title" />
             <Asterisk size={18} />
           </div>
           <div className="df-in">
@@ -1315,7 +1415,7 @@ export function DafqlyLanding() {
               <Asterisk size={24} />
             </div>
             <div className="df-meta">
-              <span className="df-label">{ar ? "تذكيرات واتساب" : "WhatsApp Automation"}</span>
+              <span className="df-label">{ar ? "جدولة التذكيرات الذكية" : "Smart Reminder Engine"}</span>
               <span className="df-label">{ar ? "مساعد AI بموافقتك" : "Human-approved AI"}</span>
               <span className="df-label">{ar ? "عزل بيانات RLS" : "Full RLS Isolation"}</span>
             </div>
@@ -1362,7 +1462,7 @@ export function DafqlyLanding() {
             <div className="df-stage-type df-title" aria-hidden="true">
               <span>{ar ? "دفقلي" : "DAFQLY"}</span>
               <span>
-                <span className="df-echo">{ar ? "تحصيل" : "LEDGER"}</span>
+                <span className="df-echo">{ar ? "دفتر ذكي" : "LEDGER"}</span>
                 <sup>v3</sup>
               </span>
             </div>
@@ -1376,7 +1476,7 @@ export function DafqlyLanding() {
               <Bubbles seed={105} colors={pal.colors} density={1.8} scale={0.7} interactive={false} />
             </div>
             <div className="df-rib df-rib-ink" style={{ ["--x" as string]: "84%", ["--y" as string]: "64%", ["--w" as string]: "190%", ["--r" as string]: "36deg", ["--k" as string]: "-18" } as React.CSSProperties}>
-              <Marquee text="DAFQLY · AI COLLECTIONS" reverse duration={22} />
+              <Marquee text={ar ? "دفقلي · ذكاء اصطناعي وتدفق نقدي" : "DAFQLY · AI CASHFLOW ENGINE"} reverse duration={22} />
             </div>
             <div className="df-stage-foot">
               <div className="df-stage-sign">
@@ -1385,8 +1485,8 @@ export function DafqlyLanding() {
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
                 <p className="df-stage-body">
                   {ar
-                    ? "أربع وحدات متكاملة تعمل معاً: أتمتة واتساب، مساعد ذكي، قراءة الدفاتر والشيكات، وبوابة كشف حساب للعملاء."
-                    : "Four integrated modules working in sync: WhatsApp automation, AI copilot, ledger OCR & cheques, and a customer statement portal."}
+                    ? "أربع وحدات متكاملة في دفقلي: جدولة التذكيرات والتذاكر، مساعد ذكي، قراءة الدفاتر والشيكات، وبوابة كشف حساب للعملاء."
+                    : "Four integrated Dafqly modules: smart reminder & ticket scheduling, AI copilot, ledger OCR & cheques, and a customer statement portal."}
                 </p>
               </div>
             </div>
@@ -1453,7 +1553,7 @@ export function DafqlyLanding() {
               <span className="df-label">{ar ? "محاكاة تفاعلية" : "Interactive Preview"}</span>
             </div>
             <div className="df-proj-head" style={{ marginTop: "clamp(22px,3cqi,36px)", marginBottom: 0 }}>
-              <h2 className="df-h2">{ar ? "تحكّم في دورة التحصيل يوم بيوم." : "Control your collection cycle."}</h2>
+              <h2 className="df-h2">{ar ? "تحكّم في دورة التدفق والمتابعة يوم بيوم." : "Control your cashflow cycle day by day."}</h2>
               <Asterisk size={28} />
             </div>
             <div className="df-nights">
@@ -1491,7 +1591,7 @@ export function DafqlyLanding() {
                 <div className="df-sky-facts">
                   <div>
                     <b>{Math.round(phase.illumination * 100)}%</b>
-                    <span className="df-mono" style={{ color: "var(--df-muted)" }} suppressHydrationWarning>{ar ? "نسبة التحصيل" : "Collected"}</span>
+                    <span className="df-mono" style={{ color: "var(--df-muted)" }} suppressHydrationWarning>{ar ? "مؤشر السيولة" : "Cashflow"}</span>
                   </div>
                   <div>
                     <b>{Math.round(phase.waxing ? phase.daysToClose : phase.daysToReset)}d</b>
@@ -1514,19 +1614,20 @@ export function DafqlyLanding() {
                 </div>
                 <ul className="df-events">
                   {shownEvents.map((ev, row) => {
-                    const evDate = new Date(Date.now() + ev.offsetDays * 86400000);
+                    const effectiveOffset = ev.offsetDays + dayOffset;
+                    const evDate = new Date(Date.now() + effectiveOffset * 86400000);
                     const key = `${ev.title}-${row}`;
-                    const activeSim = !!simulated[key];
-                    const count = ev.going + (activeSim ? 1 : 0);
+                    const activeSim = simulated[key] ?? true;
+                    const stageLabel = ev.stage;
                     return (
                       <li key={key} className="df-event">
                         <div className="df-date" suppressHydrationWarning>
                           <b>{String(evDate.getDate()).padStart(2, "0")}</b>
-                          <span>{evDate.toLocaleDateString("en-US", { month: "short" }).toUpperCase()}</span>
+                          <span>{evDate.toLocaleDateString(ar ? "ar-EG" : "en-US", { month: "short" })}</span>
                         </div>
                         <div>
                           <span className="df-label" style={{ fontSize: 10 }}>
-                            {ev.kind} · {ev.time}
+                            {ev.kind} · {ev.time} ({effectiveOffset >= 0 ? `+${effectiveOffset}d` : `${effectiveOffset}d`})
                           </span>
                           <h3>{ev.title}</h3>
                           <div className="df-event-meta">
@@ -1545,24 +1646,33 @@ export function DafqlyLanding() {
                             type="button"
                             className="df-btn df-btn-line df-rsvp"
                             aria-pressed={activeSim}
-                            onClick={() => setSimulated((s) => ({ ...s, [key]: !s[key] }))}
+                            onClick={() => setSimulated((s) => ({ ...s, [key]: !(s[key] ?? true) }))}
                           >
                             {activeSim ? (
                               <>
-                                <CheckIcon /> {ar ? "مجدول" : "Queued"}
+                                <CheckIcon /> {ar ? "مُفعّل" : "Active"}
                               </>
                             ) : (
-                              ar ? "جدولة" : "Queue"
+                              ar ? "تفعيل" : "Enable"
                             )}
                           </button>
-                          <span className="df-going">
-                            {count}/{ev.seats} {ar ? "عملاء" : "accounts"}
-                          </span>
+                          <span className="df-going">{stageLabel}</span>
                         </div>
                       </li>
                     );
                   })}
                 </ul>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 16 }}>
+                  <span className="df-mono" style={{ color: "var(--df-muted)" }}>
+                    {ar
+                      ? `مهلة السداد المحسوبة: ${Math.max(7, Math.min(60, 14 + dayOffset))} يوم`
+                      : `Calculated payment terms: ${Math.max(7, Math.min(60, 14 + dayOffset))} days`}
+                  </span>
+                  <button type="button" onClick={applyCyclePolicyToWorkspace} className="df-btn df-btn-solid">
+                    {ar ? "حفظ وتطبيق هذه الدورة في حسابك" : "Apply this cycle to workspace"}
+                    <Arrow size={12} rtl={ar} />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1642,20 +1752,20 @@ export function DafqlyLanding() {
                     }}
                   />
                   <button type="submit" className="df-btn df-btn-solid">
-                    {ar ? "معاينة البطاقة" : "Preview card"}
+                    {ar ? "إصدار بطاقة المنشأة" : "Issue workspace card"}
                   </button>
                 </form>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
+                  <Link href={signupWithCardHref} className="df-btn df-btn-ink">
+                    {ar ? "إنشاء مساحة العمل بهذه البيانات" : "Create workspace with this card"}
+                    <Arrow size={12} rtl={ar} />
+                  </Link>
+                  <button type="button" onClick={downloadCardSvg} className="df-btn df-btn-line">
+                    {ar ? "تحميل البطاقة (SVG)" : "Download card (SVG)"}
+                  </button>
+                </div>
                 <div className="df-msg" data-s={status} role="status" aria-live="polite">
-                  {status !== "idle" && (
-                    <span>
-                      {msg}{" "}
-                      {status === "done" && (
-                        <Link href={`/${locale}/signup`} className="underline font-extrabold">
-                          {ar ? "إكمال التسجيل ←" : "Complete signup →"}
-                        </Link>
-                      )}
-                    </span>
-                  )}
+                  {status !== "idle" && <span>{msg}</span>}
                 </div>
               </div>
 
@@ -1671,11 +1781,11 @@ export function DafqlyLanding() {
                 >
                   <div className="df-member-bg" style={{ background: bubbleCss(hashStr(bizName + chosenTier.name) || 102, pal.colors, 42, 56) }} />
                   <div className="df-member-rib">
-                    <Marquee text="DAFQLY · LEDGER" duration={18} />
+                    <Marquee text={ar ? "دفقلي · مساحة العمل" : "DAFQLY · WORKSPACE"} duration={18} />
                   </div>
                   <div className="df-member-in">
                     <div className="df-member-top">
-                      <Title text={ar ? "دفقلي.\nتحصيل ذكي" : "DAFQLY.\nCOLLECTIONS"} />
+                      <Title text={ar ? "دفقلي.\nمساحة العمل" : "DAFQLY.\nWORKSPACE"} />
                       <DafqlyLogo size={46} />
                     </div>
                     <div className="df-member-bottom">

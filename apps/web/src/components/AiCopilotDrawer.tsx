@@ -26,7 +26,7 @@ export interface OpenCopilotDetail {
 
 export function openAiCopilot(detail: OpenCopilotDetail = {}) {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent<OpenCopilotDetail>("tahseel:open-ai-copilot", { detail }));
+  window.dispatchEvent(new CustomEvent<OpenCopilotDetail>("dafqly:open-ai-copilot", { detail }));
 }
 
 interface DebtorScoreItem {
@@ -684,7 +684,7 @@ export function AiCopilotDrawer({
         role="dialog"
         aria-modal="false"
         data-testid="ai-copilot-drawer"
-        className="fixed bottom-20 left-5 z-50 flex w-[310px] items-center justify-between gap-2 rounded-2xl border border-border bg-card px-4 py-3 shadow-2xl"
+        className="fixed bottom-20 end-4 sm:end-5 z-50 flex w-[310px] items-center justify-between gap-2 rounded-2xl border border-border bg-card px-4 py-3 shadow-2xl"
       >
         <button
           type="button"
@@ -728,7 +728,7 @@ export function AiCopilotDrawer({
       role="dialog"
       aria-modal="false"
       data-testid="ai-copilot-drawer"
-      className={`fixed left-4 z-50 flex flex-col overflow-hidden rounded-2xl border border-border bg-card/95 backdrop-blur-2xl shadow-2xl transition-all duration-200 sm:left-5 ${
+      className={`fixed end-4 z-50 flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl transition-all duration-200 sm:end-5 ${
         isExpanded
           ? "bottom-20 h-[min(84dvh,760px)] w-[min(94vw,760px)]"
           : "bottom-20 h-[min(76dvh,590px)] w-[min(92vw,430px)]"
@@ -850,7 +850,7 @@ export function AiCopilotDrawer({
           <div className="flex flex-col gap-3.5">
             {loadingOverview && !overview ? (
               <p className="py-10 text-center text-xs text-text-muted">
-                {isEn ? "Analyzing workspace..." : "جاري تحليل بيانات التحصيل..."}
+                {isEn ? "Analyzing workspace..." : "جاري تحليل بيانات دفقلي..."}
               </p>
             ) : overview ? (
               <>

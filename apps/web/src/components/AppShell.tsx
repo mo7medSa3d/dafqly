@@ -82,25 +82,36 @@ export function AppShell({
   const [intel, setIntel] = useState<{
     healthStatus: "strong" | "attention" | "urgent";
     topActions: Array<{ debtorId: string; displayName: string }>;
-  } | null>(null);
+  } | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.sessionStorage.getItem("dafqly:intel-cache");
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { ts: number; data: { healthStatus: "strong" | "attention" | "urgent"; topActions: Array<{ debtorId: string; displayName: string }> } };
+      return Date.now() - parsed.ts < 60_000 ? parsed.data : null;
+    } catch { return null; }
+  });
 
   useEffect(() => {
+    if (intel) return;
     let mounted = true;
     trpc.intelligence.overview
       .query({ syncNotifications: false })
       .then((data) => {
         if (mounted && data) {
-          setIntel({
+          const next = {
             healthStatus: data.healthStatus,
             topActions: data.topActions.map((a) => ({ debtorId: a.debtorId, displayName: a.displayName })),
-          });
+          };
+          setIntel(next);
+          try { window.sessionStorage.setItem("dafqly:intel-cache", JSON.stringify({ ts: Date.now(), data: next })); } catch {}
         }
       })
       .catch(() => {});
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [intel]);
 
   const healthStatus = intel?.healthStatus ?? "strong";
   const priorityCount = intel?.topActions?.length ?? 0;
@@ -131,10 +142,10 @@ export function AppShell({
       setCopilotOpen(true);
     };
     window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("tahseel:open-ai-copilot", handleOpenCopilot);
+    window.addEventListener("dafqly:open-ai-copilot", handleOpenCopilot);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("tahseel:open-ai-copilot", handleOpenCopilot);
+      window.removeEventListener("dafqly:open-ai-copilot", handleOpenCopilot);
     };
   }, []);
 
@@ -225,12 +236,11 @@ export function AppShell({
                           key={href}
                           data-testid={testid}
                           href={`/${locale}/${href}`}
-                          prefetch={false}
-                          onClick={() => setMobileOpen(false)}
+                                                    onClick={() => setMobileOpen(false)}
                           aria-current={active ? "page" : undefined}
                           title={t(key)}
                           className={cn(
-                            "group flex h-9 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors",
+                            "group relative flex h-9.5 items-center gap-2.5 rounded-lg px-2.5 text-[13px] transition-all",
                             collapsed ? "lg:justify-center lg:px-0" : "",
                             active
                               ? "bg-accent font-semibold text-foreground"
@@ -372,7 +382,7 @@ export function AppShell({
           </div>
 
           {/* Sleek Chat-First Floating AI Launcher & Menu */}
-          <div className="fixed bottom-5 left-5 z-40 flex flex-col items-start gap-2.5">
+          <div className="fixed bottom-4 end-4 z-40 flex flex-col items-end gap-2.5 sm:bottom-5 sm:end-5">
             {aiMenuOpen && !copilotOpen && (
               <div
                 data-testid="ai-assistant-menu"
@@ -454,7 +464,7 @@ export function AppShell({
                 >
                   <WhatsappLogo size={16} className="shrink-0 text-status-paid-fg" />
                   <div className="min-w-0 flex-1">
-                    <p className="font-semibold">{isEn ? "Smart Reminder Draft" : "صياغة تذكير واتساب"}</p>
+                    <p className="font-semibold">{isEn ? "Smart Reminder Draft" : "صياغة تذكير ذكي"}</p>
                     <p className="truncate text-[11px] text-muted-foreground">
                       {isEn ? "Context-aware payment reminders" : "رسائل ودية أو حازمة في الوقت المناسب"}
                     </p>

@@ -33,7 +33,7 @@ const envSchema = z.object({
   S3_SECRET_KEY: z.string().default("minioadmin"),
   S3_FORCE_PATH_STYLE: boolFromString(true),
   SMTP_URL: z.string().default("smtp://localhost:1025"),
-  EMAIL_FROM: z.string().default("Tahseel <no-reply@localhost>"),
+  EMAIL_FROM: z.string().default("Dafqly <no-reply@localhost>"),
   // H5: email verification is OFF by default — it needs a real SMTP sender
   // (SMTP_URL above) and must stay off until one is configured; enabling it
   // without a sender fails sign-up loudly (EMAIL_NOT_CONFIGURED), never

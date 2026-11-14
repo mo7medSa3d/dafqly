@@ -1,28 +1,23 @@
 /**
  * <BrandMark> & <BrandLockup> — Adaptive visual identity for "دفقلي" (Dafqly).
- * Automatically adapts to both Light Mode and Dark Mode via CSS token variables
- * and renders "دفقلي" (connected single word) in Arabic or "Dafqly" in English.
+ * Matches DafqlyLogo on the landing page 100% in geometry, proportions, and colors
+ * across Light Mode and Dark Mode.
  */
 export function BrandMark({
   variant = "color",
   size = 40,
 }: {
-  variant?: "color" | "mono" | "white";
+  variant?: "color" | "mono" | "white" | "inverse";
   size?: number;
 }) {
   const main =
     variant === "color"
       ? "var(--brand-mark-primary)"
-      : variant === "white"
-        ? "white"
+      : variant === "inverse" || variant === "white"
+        ? "var(--primary-foreground)"
         : "currentColor";
   const flow = variant === "mono" ? "currentColor" : "var(--brand-mark-accent)";
-  const check =
-    variant === "color"
-      ? "var(--brand-mark-check)"
-      : variant === "white"
-        ? "var(--brand-mark-accent)"
-        : "currentColor";
+  const check = variant === "mono" ? "currentColor" : "var(--brand-mark-check)";
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -59,8 +54,8 @@ export function BrandMark({
 }
 
 /**
- * <BrandLockup> — Signature brand lockup rendering "دفقلي" (connected) in Arabic
- * or "Dafqly" in English according to the active locale.
+ * <BrandLockup> — Signature brand lockup rendering the exact same mark as the
+ * landing page alongside "دفقلي" in Arabic or "Dafqly" in English.
  */
 export function BrandLockup({
   size = "md",
@@ -74,24 +69,18 @@ export function BrandLockup({
   locale?: string;
 }) {
   const isEn = locale === "en";
-  const tileSize = size === "sm" ? "size-9 rounded-lg" : size === "lg" ? "size-12 rounded-lg" : "size-10 rounded-lg";
-  const markPx = size === "sm" ? 21 : size === "lg" ? 28 : 24;
+  const markPx = size === "sm" ? 28 : size === "lg" ? 38 : 32;
   const textCls = size === "sm" ? "text-lg" : size === "lg" ? "text-2xl" : "text-xl";
-  const tileStyle = onDark
-    ? "bg-white/12 border border-white/20"
-    : "bg-[var(--brand-tile-bg)] border border-[var(--brand-tile-border)]";
 
   return (
-    <div className="inline-flex min-w-0 items-center gap-3">
-      <span className={`flex shrink-0 items-center justify-center transition-colors ${tileSize} ${tileStyle}`}>
-        <BrandMark variant="white" size={markPx} />
-      </span>
+    <div className="inline-flex min-w-0 items-center gap-2.5">
+      <BrandMark variant={onDark ? "inverse" : "color"} size={markPx} />
       <div className="flex min-w-0 flex-col leading-none">
-        <span className={`font-extrabold ${textCls} ${onDark ? "text-white" : "text-text"}`}>
+        <span className={`font-extrabold ${textCls} ${onDark ? "text-primary-foreground" : "text-foreground"}`}>
           {isEn ? "Dafqly" : "دفقلي"}
         </span>
         {showTagline && (
-          <span className={`mt-1 whitespace-nowrap text-[10px] font-medium leading-none text-text-muted ${onDark ? "opacity-80" : "text-text-muted"}`}>
+          <span className={`mt-1 whitespace-nowrap text-[10px] font-medium leading-none ${onDark ? "text-primary-foreground/75" : "text-muted-foreground"}`}>
             {isEn ? "Track. Follow. Get Paid." : "تتبّع. تابع. وحصّل."}
           </span>
         )}

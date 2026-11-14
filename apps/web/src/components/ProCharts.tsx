@@ -60,13 +60,14 @@ export function MosaicSparkCard({
   const uid = useId().replace(/:/g, "");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const pts = series.length >= 2 ? series : [0, ...series, 0];
+  const allZero = pts.every((v) => v === 0);
   const W = 320;
   const H = 72;
   const min = Math.min(...pts);
   const max = Math.max(...pts, min + 1);
   const coords: [number, number][] = pts.map((v, i) => [
     (i / Math.max(1, pts.length - 1)) * W,
-    H - 8 - ((v - min) / (max - min)) * (H - 18),
+    allZero ? H - 10 : H - 8 - ((v - min) / (max - min)) * (H - 18),
   ]);
   const line = smoothPath(coords);
   const area = `${line} L${W},${H} L0,${H} Z`;

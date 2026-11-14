@@ -211,15 +211,6 @@ html { scroll-behavior: smooth; }
 :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; transition: outline-offset .15s var(--ease-spring); }
 button:not(:disabled), a[href] { transition: transform .2s var(--ease-spring), background-color .2s, color .2s, border-color .2s, box-shadow .25s; }
 button:not(:disabled):active { transform: scale(.97); }
-main [class*="rounded-xl"][class*="border"]:not(input):not(select):not(button):not(a) {
-  transition: box-shadow .3s ease, border-color .3s ease, transform .3s var(--ease-spring);
-}
-@media (hover: hover) {
-  main section [class*="rounded-xl"][class*="border"]:not(input):not(select):not(button):not(a):hover {
-    box-shadow: 0 12px 30px -18px color-mix(in srgb, var(--foreground) 18%, transparent);
-    border-color: color-mix(in srgb, var(--foreground) 25%, var(--border));
-  }
-}
 .skeleton { border-radius: .6rem; background: linear-gradient(110deg, var(--muted) 30%, color-mix(in srgb, var(--card) 70%, var(--muted)) 50%, var(--muted) 70%); background-size: 200% 100%; animation: ai-sheen 1.4s linear infinite; }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .skeleton { animation: none; } }
 

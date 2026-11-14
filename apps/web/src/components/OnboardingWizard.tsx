@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { ArrowLeft, CheckCircle } from "@/components/ui/solid-icons";
@@ -24,6 +24,28 @@ export function OnboardingWizard() {
   const [quietEnd, setQuietEnd] = useState("09:00");
   const [fridayMorningSkip, setFridayMorningSkip] = useState(false);
   const [defaultTermsDays, setDefaultTermsDays] = useState(14);
+
+  useEffect(() => {
+    try {
+      const cardRaw = window.localStorage.getItem("dafqly:workspace-card");
+      if (cardRaw) {
+        const card = JSON.parse(cardRaw) as { businessName?: string };
+        if (card.businessName) {
+          setBusinessNameAr((prev) => prev || card.businessName || "");
+          if (/^[A-Za-z0-9\s.,&-]+$/.test(card.businessName)) {
+            setBusinessNameEn((prev) => prev || card.businessName || "");
+          }
+        }
+      }
+      const policyRaw = window.localStorage.getItem("dafqly:cycle-policy");
+      if (policyRaw) {
+        const policy = JSON.parse(policyRaw) as { defaultTermsDays?: number };
+        if (typeof policy.defaultTermsDays === "number" && policy.defaultTermsDays >= 0 && policy.defaultTermsDays <= 120) {
+          setDefaultTermsDays(policy.defaultTermsDays);
+        }
+      }
+    } catch {}
+  }, []);
   const [tone, setTone] = useState<"polite" | "firm">("polite");
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);

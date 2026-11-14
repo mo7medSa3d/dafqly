@@ -53,13 +53,13 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
   ];
   const perf = kpisFull.reminderPerformance;
 
-  // Deterministic sparkline series derived from real forecast & aging figures
+  // Strictly real data series — never fabricated fallback numbers
   const weekSeries = forecast.weeks.length >= 2
     ? forecast.weeks.map((w) => w.expectedMinor)
-    : [32, 48, 42, 65, 58, 76, 84];
+    : [0, 0];
   const collectedSeries = forecast.weeks.length >= 2
     ? forecast.weeks.map((w) => w.conservativeMinor)
-    : [18, 28, 34, 30, 48, 60, 72];
+    : [0, Number(summary.collectedThisMonthMinor)];
   const agingSeries = [
     kpisFull.agingBuckets.current,
     kpisFull.agingBuckets["0-7"],
@@ -67,7 +67,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
     kpisFull.agingBuckets["31-60"],
     kpisFull.agingBuckets["60+"],
   ];
-  const overdueSeries = agingSeries.some((v) => v > 0) ? agingSeries : [10, 14, 12, 18, 15];
+  const overdueSeries = agingSeries.some((v) => v > 0) ? agingSeries : [0, 0];
 
   return (
     <AppShell
