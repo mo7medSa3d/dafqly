@@ -65,7 +65,7 @@ export const TEMPLATES = {
   },
   payment_received_pending: {
     key: "payment_received_pending", version: 1, categoryHint: "utility", reminder: true,
-    variables: vars.amountOnly,
+    variables: z.object({}),
     body: {
       ar: "استلمنا الإيصال وجارٍ التأكد من التحويل. شكرًا لكم.",
       en: "We received the receipt and are verifying the transfer. Thank you.",

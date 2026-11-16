@@ -8,7 +8,7 @@ export class EnvError extends Error {
 }
 
 const boolFromString = (def: boolean) =>
-  z.preprocess((v) => (v === undefined ? def : v === "true" || v === true), z.boolean());
+  z.preprocess((v) => (v === undefined ? def : v === "true" || v === "1" || v === true), z.boolean());
 const secret = (name: string) =>
   z.string().min(32, `${name} must be at least 32 chars`).refine((v) => !v.startsWith("change-me"), `${name} still has the placeholder value`);
 
@@ -96,6 +96,7 @@ const envSchema = z.object({
   // USD per 1M tokens for the spend cap when a model id is not in the built-in table.
   AI_PRICE_INPUT_USD_PER_M: z.coerce.number().nonnegative().max(10_000).optional(),
   AI_PRICE_OUTPUT_USD_PER_M: z.coerce.number().nonnegative().max(10_000).optional(),
+  OPENROUTER_API_KEY: z.string().optional().default(""),
   GEMINI_API_KEY: z.string().optional().default(""),
   ANTHROPIC_API_KEY: z.string().optional().default(""),
   LLM_MODEL_AGENT: z.string().default("claude-sonnet-5-5"),
@@ -132,6 +133,15 @@ export function parseEnv(input: Record<string, string | undefined>): AppEnv {
     // with fake providers and no real S3/AI credentials, so the three
     // "no real provider configured" checks are skipped there only. A real
     // production host never sets the flag and still fails closed here.
+    if (!s3.E2E_FAKE_PROVIDERS) {
+      const appUrl = new URL(s3.APP_URL);
+      if (appUrl.protocol !== "https:" || appUrl.hostname === "localhost" || appUrl.hostname === "127.0.0.1") {
+        throw new EnvError("Production requires APP_URL to be an HTTPS non-localhost URL");
+      }
+      if (s3.EMAIL_VERIFICATION_ENABLED && s3.SMTP_URL.startsWith("smtp://localhost")) {
+        throw new EnvError("Production with EMAIL_VERIFICATION_ENABLED=true requires a non-localhost SMTP_URL");
+      }
+    }
     if (!s3.E2E_FAKE_PROVIDERS && !s3.ALLOW_LOCAL_S3) {
       const s3Url = new URL(s3.S3_ENDPOINT);
       if (s3Url.protocol !== "https:" || s3Url.hostname === "localhost" || s3Url.hostname === "127.0.0.1") {
@@ -168,6 +178,9 @@ export function parseEnv(input: Record<string, string | undefined>): AppEnv {
       } catch (err) {
         throw new EnvError(`AI_PROVIDERS_JSON must be a non-empty JSON array of provider configs (${err instanceof Error ? err.message : "invalid"})`);
       }
+    }
+    if (!s3.DRY_RUN_MESSAGING && !s3.E2E_FAKE_PROVIDERS && (!s3.WHATSAPP_APP_SECRET || !s3.WHATSAPP_WEBHOOK_VERIFY_TOKEN)) {
+      throw new EnvError("Live messaging requires WHATSAPP_APP_SECRET and WHATSAPP_WEBHOOK_VERIFY_TOKEN for webhook verification");
     }
   }
   return parsed.data;

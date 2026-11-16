@@ -28,7 +28,7 @@ describe("AnthropicLlmProvider (mocked fetch, ADR-022 shapes)", () => {
     expect(url).toBe("https://api.anthropic.com/v1/messages");
     const headers = init.headers as Record<string, string>;
     expect(headers["x-api-key"]).toBe("sk-test");
-    expect(headers["anthropic-version"]).toBe("2023-06-01");
+    expect(headers["anthropic-version"]).toBe("2026-10-21");
     const body = JSON.parse(init.body as string) as Record<string, unknown>;
     expect(body.tool_choice).toEqual({ type: "tool", name: "classify_reply" });
     expect((body.tools as { name: string }[])[0]!.name).toBe("classify_reply");
@@ -83,6 +83,16 @@ describe("FakeLlmProvider (FAKE, deterministic synthetic reader)", () => {
     expect(out.data?.rows[0]).toMatchObject({ amount_minor: 70000 });
     expect(out.data?.rows[0]?.cellConfidence.amount).toBe(0.3);
     expect(out.data?.rows[0]?.cellConfidence.name).toBe(0.95);
+  });
+
+  it("parses synthetic ledger major-unit strings using the tenant currency", async () => {
+    const fake = new FakeLlmProvider();
+    const img = svgWith({
+      kind: "ledger",
+      rows: [{ name: "KWD row", phone: null, amount_minor: "1.234", date: null, note: null, confidence: 0.95, cellConfidence: { name: 0.95, amount: 0.95 } }],
+    });
+    const out = await fake.extractLedgerPage(img, "image/svg+xml", "KWD");
+    expect(out.data?.rows[0]?.amount_minor).toBe(1234);
   });
 
   it("reads a synthetic cheque payload for the F9 pre-fill (and null without one)", async () => {

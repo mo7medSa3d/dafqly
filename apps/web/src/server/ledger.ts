@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, ilike, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, ilike, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import {
@@ -116,13 +116,19 @@ async function loadPaymentView(tx: Db, paymentId: string): Promise<PaymentView |
  * UNIQUE(tenant_id, reference) is the backstop.
  */
 export async function nextInvoiceReference(tx: Db, tenantId: string, year: string): Promise<string> {
-  const [row] = await tx.insert(invoiceSequences).values({ tenantId, nextVal: 1001n })
-    .onConflictDoUpdate({
-      target: invoiceSequences.tenantId,
-      set: { nextVal: sql`${invoiceSequences.nextVal} + 1`, updatedAt: new Date() },
-    })
-    .returning({ seq: invoiceSequences.nextVal });
-  return `INV-${year}-${row!.seq}`;
+  for (;;) {
+    const [row] = await tx.insert(invoiceSequences).values({ tenantId, nextVal: 1001n })
+      .onConflictDoUpdate({
+        target: invoiceSequences.tenantId,
+        set: { nextVal: sql`${invoiceSequences.nextVal} + 1`, updatedAt: new Date() },
+      })
+      .returning({ seq: invoiceSequences.nextVal });
+    const candidate = `INV-${year}-${row!.seq}`;
+    const [exists] = await tx.select({ id: invoices.id }).from(invoices)
+      .where(and(eq(invoices.tenantId, tenantId), eq(invoices.reference, candidate)))
+      .limit(1);
+    if (!exists) return candidate;
+  }
 }
 
 // ------------------------------------------------------------------ debtors
@@ -310,13 +316,13 @@ export interface InvoiceView {
   overdue: boolean; agingBucket: string; source: string;
 }
 
-function toInvoiceView(r: typeof invoices.$inferSelect, today: string): InvoiceView {
+function toInvoiceView(r: typeof invoices.$inferSelect, today: string, tenantCurrency = "EGP"): InvoiceView {
   const outstanding = r.amountMinor - r.paidMinor;
   return {
     id: r.id, debtorId: r.debtorId, reference: r.reference ?? `INV-${r.issuedOn.slice(0, 4)}-${r.id.slice(-4).toUpperCase()}`, description: r.description,
     amountMinor: r.amountMinor.toString(), paidMinor: r.paidMinor.toString(),
     outstandingMinor: (outstanding > 0n ? outstanding : 0n).toString(),
-    currency: r.currency, currencyWarning: r.currency !== "EGP",
+    currency: r.currency, currencyWarning: r.currency !== tenantCurrency,
     issuedOn: r.issuedOn, dueOn: r.dueOn, status: r.status,
     overdue: isOverdue(r.status, r.dueOn, today), agingBucket: agingBucket(r.dueOn, today),
     source: r.source,
@@ -357,7 +363,7 @@ export async function createInvoice(app: Db, tenantId: string, actor: string, in
       }).returning();
       await audit(tx, tenantId, actor, "invoice.created", "invoice", row!.id, null,
         { amountMinor: amountMinor.toString(), dueOn, currency: row!.currency });
-      return toInvoiceView(row!, input.issuedOn);
+      return toInvoiceView(row!, input.issuedOn, settings.currency ?? "EGP");
     });
   } catch (err) {
     // A merchant-supplied reference that collides with an existing one
@@ -416,10 +422,12 @@ export async function listInvoicesPage(app: Db, tenantId: string, filters: Invoi
     // F-15: the aging panel is computed client-side from the loaded page
     // (first 100) — without a total the UI presented partial sums as the
     // filtered result.
+    const settings = await tenantSettings(tx, tenantId);
+    const defaultCurrency = settings.currency ?? "EGP";
     const [countRow] = await tx.select({ n: sql<number>`count(*)` }).from(invoices)
       .where(and(...baseConditions));
     return {
-      items: page.map((r) => toInvoiceView(r, today)),
+      items: page.map((r) => toInvoiceView(r, today, defaultCurrency)),
       totalCount: Number(countRow?.n ?? 0),
       nextCursor: hasMore && page.length > 0 ? { id: page[page.length - 1]!.id } : null,
     };
@@ -428,8 +436,10 @@ export async function listInvoicesPage(app: Db, tenantId: string, filters: Invoi
 
 export async function updateInvoice(app: Db, tenantId: string, actor: string, invoiceId: string,
   input: { amount?: string; description?: string | null; reference?: string | null; dueOn?: string; issuedOn?: string }, today: string): Promise<InvoiceView> {
-  const view = await withTenant(app, tenantId, async (tx) => {
-    const [before] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId));
+  let view: InvoiceView;
+  try {
+  view = await withTenant(app, tenantId, async (tx) => {
+    const [before] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for("update");
     if (!before) throw new AppError("NOT_FOUND", "Invoice not found", 404);
     // H06: terminal invoices bypassed the status machine — a paid,
     // cancelled or written-off invoice could still be edited. Only the
@@ -460,24 +470,40 @@ export async function updateInvoice(app: Db, tenantId: string, actor: string, in
     await audit(tx, tenantId, actor, "invoice.updated", "invoice", invoiceId,
       { amountMinor: before.amountMinor.toString(), status: before.status, dueOn: before.dueOn },
       { amountMinor: amountMinor.toString(), status, dueOn: row!.dueOn });
-    return toInvoiceView(row!, today);
+    const settings = await tenantSettings(tx, tenantId);
+    return toInvoiceView(row!, today, settings.currency ?? "EGP");
   });
+  } catch (err) {
+    const e = err as { code?: string; cause?: { code?: string } } | null;
+    const code = e?.code ?? e?.cause?.code;
+    if (code === "23505") {
+      throw new AppError("DUPLICATE_REFERENCE", "An invoice with this reference already exists", 409);
+    }
+    throw err;
+  }
   replanLater(tenantId, invoiceId); // F4: an edit re-plans future steps; sent steps are never resent
   return view;
 }
 
 export async function transitionInvoice(app: Db, tenantId: string, actor: string, invoiceId: string, to: InvoiceStatus, today = "9999-12-31"): Promise<InvoiceView> {
   const view = await withTenant(app, tenantId, async (tx) => {
-    const [before] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId));
+    const [before] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for("update");
     if (!before) throw new AppError("NOT_FOUND", "Invoice not found", 404);
     if (!canTransition(before.status, to)) {
       throw new AppError("ILLEGAL_TRANSITION", `Cannot move invoice from ${before.status} to ${to}`, 409);
+    }
+    if (to === "open" || to === "partially_paid" || to === "paid") {
+      const derived = deriveStatusFromPaid(before.amountMinor, before.paidMinor);
+      if (to !== derived) {
+        throw new AppError("ILLEGAL_TRANSITION", `Payment status must be ${derived} based on paid amount, not ${to}`, 409);
+      }
     }
     const [row] = await tx.update(invoices).set({ status: to, updatedAt: new Date() })
       .where(eq(invoices.id, invoiceId)).returning();
     await audit(tx, tenantId, actor, to === "disputed" ? "invoice.disputed" : "invoice.status_changed", "invoice", invoiceId,
       { status: before.status }, { status: to });
-    return toInvoiceView(row!, today);
+    const settings = await tenantSettings(tx, tenantId);
+    return toInvoiceView(row!, today, settings.currency ?? "EGP");
   });
   replanLater(tenantId, invoiceId);
   return view;
@@ -546,17 +572,30 @@ async function reconcileAcceptedPromises(tx: Db, tenantId: string, debtorId: str
     eq(promisesToPay.tenantId, tenantId), eq(promisesToPay.debtorId, debtorId),
     inArray(promisesToPay.status, ["accepted", "kept"]),
   ));
+  if (tracked.length === 0) return;
+  const settings = await tenantSettings(tx, tenantId);
+  const defaultCurrency = settings.currency ?? "EGP";
   for (const promise of tracked) {
     const acceptedAt = promise.reviewedAt ?? promise.createdAt;
-    const [collected] = await tx.select({ amountMinor: sql<bigint>`coalesce(sum(${paymentAllocations.amountMinor}), 0)::bigint` })
+    const collectedByCurrency = await tx.select({
+      currency: invoices.currency,
+      amountMinor: sql<bigint>`coalesce(sum(${paymentAllocations.amountMinor}), 0)::bigint`,
+    })
       .from(paymentAllocations)
       .innerJoin(payments, eq(payments.id, paymentAllocations.paymentId))
+      .innerJoin(invoices, eq(invoices.id, paymentAllocations.invoiceId))
       .where(and(
         eq(payments.tenantId, tenantId), eq(payments.debtorId, debtorId), eq(payments.status, "confirmed"),
-        gte(payments.createdAt, acceptedAt),
+        or(
+          gte(payments.createdAt, acceptedAt),
+          and(eq(payments.method, "cheque"), gte(payments.updatedAt, acceptedAt)),
+        ),
         promise.invoiceId ? eq(paymentAllocations.invoiceId, promise.invoiceId) : sql`true`,
-      ));
-    const isCovered = (collected?.amountMinor ?? 0n) >= promise.amountMinor;
+      ))
+      .groupBy(invoices.currency);
+    const isCovered = promise.invoiceId
+      ? collectedByCurrency.some((c) => c.amountMinor >= promise.amountMinor)
+      : collectedByCurrency.some((c) => c.currency === defaultCurrency && c.amountMinor >= promise.amountMinor);
     if (isCovered && promise.status === "accepted") {
       const fulfilledAt = new Date();
       await tx.update(promisesToPay).set({ status: "kept", fulfilledAt, updatedAt: fulfilledAt }).where(and(
@@ -624,8 +663,9 @@ export async function recordPayment(app: Db, tenantId: string, actor: string, in
     // invoice first, via allocatePayment). A zero stored credit adopts the
     // payment's currency so future payments in that currency can consume it.
     let effectiveMinor = amountMinor;
-    if (lockedDebtor && lockedDebtor.creditMinor > 0n && lockedDebtor.creditCurrency === currency) {
+    if (lockedDebtor && lockedDebtor.creditMinor !== 0n && lockedDebtor.creditCurrency === currency) {
       effectiveMinor = amountMinor + lockedDebtor.creditMinor;
+      if (effectiveMinor < 0n) effectiveMinor = 0n;
     }
     if (lockedDebtor && lockedDebtor.creditMinor === 0n && lockedDebtor.creditCurrency !== currency) {
       await tx.update(debtors).set({ creditCurrency: currency, updatedAt: new Date() }).where(eq(debtors.id, input.debtorId));
@@ -732,7 +772,7 @@ export async function getDebtorDetail(app: Db, tenantId: string, debtorId: strin
         disputed, disputedCount,
         disputedByCurrency: [...disputedByCurrency.entries()].map(([currency, minor]) => ({ currency, minor: minor.toString() })),
       }),
-      invoices: invs.map((i) => toInvoiceView(i, today)),
+      invoices: invs.map((i) => toInvoiceView(i, today, defaultCurrency)),
       payments: pays.map((p) => ({
         id: p.id, amountMinor: p.amountMinor.toString(), currency: p.currency, method: p.method, receivedOn: p.receivedOn, status: p.status,
         source: p.source, gatewayTransactionId: p.gatewayTransactionId, reversalOf: p.reversalOf,
@@ -765,7 +805,7 @@ export interface LedgerReconciliationView {
  */
 export async function getLedgerReconciliation(app: Db, tenantId: string): Promise<LedgerReconciliationView> {
   return withTenant(app, tenantId, async (tx) => {
-    const invs = await tx.select({ id: invoices.id, paidMinor: invoices.paidMinor }).from(invoices);
+    const invs = await tx.select({ id: invoices.id, paidMinor: invoices.paidMinor, currency: invoices.currency }).from(invoices);
     const pays = await tx.select({
       id: payments.id, debtorId: payments.debtorId, amountMinor: payments.amountMinor,
       currency: payments.currency, status: payments.status, createdAt: payments.createdAt,
@@ -803,7 +843,18 @@ export async function getDebtorTimeline(app: Db, tenantId: string, debtorId: str
     const pays = await tx.select().from(payments).where(eq(payments.debtorId, debtorId));
     const msgs = await tx.select().from(messages).where(eq(messages.debtorId, debtorId));
     const invIds = new Set(invs.map((i) => i.id));
-    const audits = await tx.select().from(auditLog).where(eq(auditLog.tenantId, tenantId));
+    const invIdList = invs.map((i) => i.id);
+    const auditScope = invIdList.length > 0
+      ? or(
+          and(eq(auditLog.entity, "debtor"), eq(auditLog.entityId, debtorId)),
+          and(eq(auditLog.entity, "invoice"), inArray(auditLog.entityId, invIdList), ne(auditLog.action, "invoice.created")),
+          and(eq(auditLog.action, "invoice.disputed"), inArray(auditLog.entityId, invIdList)),
+        )
+      : and(eq(auditLog.entity, "debtor"), eq(auditLog.entityId, debtorId));
+    const audits = await tx.select().from(auditLog)
+      .where(and(eq(auditLog.tenantId, tenantId), auditScope))
+      .orderBy(desc(auditLog.createdAt))
+      .limit(200);
     const events: TimelineEvent[] = [];
     for (const inv of invs) {
       events.push({

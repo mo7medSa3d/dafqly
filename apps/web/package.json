@@ -15,8 +15,6 @@
   "dependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.3.0",
     "@fontsource/plus-jakarta-sans": "^5.3.0",
-    "@radix-ui/react-dialog": "^1.1.15",
-    "@radix-ui/react-slot": "^1.2.3",
     "@tahseel/brand": "workspace:*",
     "@tahseel/core": "workspace:*",
     "@tahseel/db": "workspace:*",

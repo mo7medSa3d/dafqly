@@ -1,5 +1,5 @@
 "use client";
-import { cn } from "@/lib/utils";
+import { cn, todayIso } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { inputVariants } from "@/components/ui/input";
 import { useCallback, useEffect, useState } from "react";
@@ -10,7 +10,7 @@ import { BellRinging, BellSlash, CalendarCheck, Check, CheckCircle, Clock, FileT
 import { normalizeCurrencyCode } from "@tahseel/core";
 import { trpc } from "@/lib/trpc-client";
 import type { DebtorIntelligenceView } from "@/server/intelligence";
-import { openAiCopilot } from "./AiCopilotDrawer";
+import { openAiCopilot } from "./copilot-events";
 import { Panel, SecurityNotice, StatusPill, btnGhost, btnPrimary, btnSmall, inputCls, labelCls, linkAction } from "./ui";
 import { WhatsAppShareButton, invoiceShareMessage, totalShareMessage } from "./WhatsAppShare";
 
@@ -79,7 +79,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   const [amount, setAmount] = useState("");
   const [paymentCurrency, setPaymentCurrency] = useState("");
   const [method, setMethod] = useState<"cash" | "instapay" | "bank" | "wallet" | "cheque" | "gateway" | "other">("cash");
-  const [receivedOn, setReceivedOn] = useState(() => new Date().toISOString().slice(0, 10));
+  const [receivedOn, setReceivedOn] = useState(() => todayIso());
   const [alloc, setAlloc] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -94,6 +94,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   const [refundForId, setRefundForId] = useState<string | null>(null);
   const [refundAmount, setRefundAmount] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -142,7 +143,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   useEffect(() => { void load(); }, [load]);
 
   async function onSaveDebtor() {
-    setBusy(true);
+    setBusy(true); setActionError(null);
     try {
       await trpc.debtors.update.mutate({
         id: debtorId,
@@ -152,6 +153,8 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
       });
       setEditingDebtor(false);
       await load();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : (isAr ? "تعذّر حفظ بيانات العميل" : "Failed to save customer details"));
     } finally { setBusy(false); }
   }
 
@@ -188,9 +191,16 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   }
 
   async function onDelete() {
-    await trpc.debtors.remove.mutate({ id: debtorId });
-    router.push(`/${locale}/debtors`);
-    router.refresh();
+    if (!window.confirm(isAr ? "هل أنت متأكد من حذف هذا العميل؟" : "Are you sure you want to delete this customer?")) return;
+    setBusy(true); setActionError(null);
+    try {
+      await trpc.debtors.remove.mutate({ id: debtorId });
+      router.push(`/${locale}/debtors`);
+      router.refresh();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : (isAr ? "تعذّر حذف العميل" : "Failed to delete customer"));
+      setBusy(false);
+    }
   }
 
   async function onCreateStatement() {
@@ -203,8 +213,13 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   }
 
   async function onRevokeStatement(linkId: string) {
-    await trpc.statements.revoke.mutate({ linkId });
-    await load();
+    setBusy(true); setActionError(null);
+    try {
+      await trpc.statements.revoke.mutate({ linkId });
+      await load();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : (isAr ? "تعذّر إلغاء رابط كشف الحساب" : "Failed to revoke statement link"));
+    } finally { setBusy(false); }
   }
 
   async function onResolveDispute(disputeId: string, resolution: "reopen_invoice" | "cancel_invoice") {
@@ -248,13 +263,23 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   }
 
   async function onConfirmClaim(paymentId: string) {
-    await trpc.payments.confirm.mutate({ paymentId });
-    await load();
+    setBusy(true); setActionError(null);
+    try {
+      await trpc.payments.confirm.mutate({ paymentId });
+      await load();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : (isAr ? "تعذّر تأكيد الدفعة" : "Failed to confirm payment"));
+    } finally { setBusy(false); }
   }
 
   async function onRejectClaim(paymentId: string) {
-    await trpc.payments.reject.mutate({ paymentId });
-    await load();
+    setBusy(true); setActionError(null);
+    try {
+      await trpc.payments.reject.mutate({ paymentId });
+      await load();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : (isAr ? "تعذّر رفض الدفعة" : "Failed to reject payment"));
+    } finally { setBusy(false); }
   }
 
   if (loadError) {
@@ -295,6 +320,14 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
 
   return (
     <section className="flex flex-col gap-6">
+      {actionError && (
+        <div role="alert" className="flex items-center justify-between rounded-xl border border-danger/30 bg-danger-bg px-4 py-3 text-sm font-semibold text-danger">
+          <span>{actionError}</span>
+          <button type="button" onClick={() => setActionError(null)} className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "underline hover:bg-danger/10")}>
+            {isAr ? "إغلاق" : "Dismiss"}
+          </button>
+        </div>
+      )}
       {/* Identity + balance strip */}
       <section className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
         <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6">
@@ -425,7 +458,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               className={btnGhost}
             >
               <PencilSimple size={17} aria-hidden />
-              {tc("save")}
+              {tc.has("edit") ? tc("edit") : (isAr ? "تعديل" : "Edit")}
             </button>
             <button data-testid="debtor-delete" onClick={() => void onDelete()} className={cn(buttonVariants({ variant: "outline", size: "default" }), "border-status-overdue-fg/40 text-status-overdue-fg")}>
               <Trash size={17} aria-hidden />

@@ -23,9 +23,11 @@ export function generateStaticParams() {
 }
 
 export const viewport: Viewport = {
+  // Brand navy, not the page background: e2e/m0.spec.ts pins the theme
+  // color to navy-700 (#1C2350) light / navy-800 (#141A3C) dark.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: tokens.semantic.light.bg },
-    { media: "(prefers-color-scheme: dark)", color: tokens.semantic.dark.bg },
+    { media: "(prefers-color-scheme: light)", color: tokens.color.navy["700"] },
+    { media: "(prefers-color-scheme: dark)", color: tokens.color.navy["800"] },
   ],
   colorScheme: "light dark",
 };

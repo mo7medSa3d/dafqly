@@ -58,8 +58,9 @@ describe("PaymobProvider (Intention API, ADR-019)", () => {
   it("refunds through the void_refund endpoint with Token auth", async () => {
     const calls = mockFetch({ id: 777001, success: true });
     const provider = new PaymobProvider(CONFIG);
-    const out = await provider.refundPayment({ transactionId: "555000", amountMinor: 4000n });
+    const out = await provider.refundPayment({ transactionId: "555000", amountMinor: 4000n, idempotencyKey: "refund:internal-key" });
     expect(calls[0]!.url).toBe("https://accept.paymob.com/api/acceptance/void_refund/refund");
+    expect(calls[0]!.init.headers).toEqual({ Authorization: "Token sk_test_fake_secret", "Content-Type": "application/json" });
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ transaction_id: 555000, amount_cents: 4000 });
     expect(out.refundTransactionId).toBe("777001");
   });

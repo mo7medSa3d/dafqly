@@ -21,11 +21,11 @@
 
 For every task, follow this loop:
 
-1. Restate the acceptance criteria in your own words in `docs/PROGRESS.md`.
+1. Restate the acceptance criteria in your own words in `docs/DECISIONS.md`.
 2. Write failing tests first (unit or integration).
 3. Implement the smallest correct change.
 4. Run `pnpm lint && pnpm typecheck && pnpm test`. All must be green.
-5. Exercise the feature for real: Playwright for UI flows, `curl` or a script for APIs and webhooks. Capture the evidence (command and output) in `docs/PROGRESS.md`.
+5. Exercise the feature for real: Playwright for UI flows, `curl` or a script for APIs and webhooks. Capture the evidence (command and output) in `docs/DECISIONS.md`.
 6. Self-review the diff against Section 1.
 7. Commit small, with conventional messages (`feat(reminders): ...`).
 
@@ -33,7 +33,7 @@ For every task, follow this loop:
 
 **Stop and ask the human when:** you need credentials or an external account; a decision involves legal, pricing or privacy; an ambiguity changes the data model; a test still fails after three genuinely different attempts (report your diagnosis, do not hack around it).
 
-Keep two living files: `docs/PROGRESS.md` (what is done, evidence, what is next) and `docs/DECISIONS.md` (short ADRs: context, decision, consequences).
+Keep one living file: `docs/DECISIONS.md` (short ADRs: context, decision, consequences, evidence).
 
 ## 3. Stack (decided; deviate only with an ADR)
 
@@ -61,7 +61,7 @@ packages/core       Pure domain logic (no IO): money, phone, schedules, matching
 packages/providers  whatsapp, sms, paymob, llm, storage, clock (+ fakes)
 packages/templates  Message template registry (ar, en) and variable schemas
 packages/eval       Golden datasets and eval runners for LLM features
-docs/               PROGRESS.md, DECISIONS.md, RUNBOOK.md
+docs/               DECISIONS.md, RUNBOOK.md
 ```
 
 Keep `packages/core` free of IO so it can be tested exhaustively and cheaply.
@@ -272,7 +272,7 @@ This feature carries legal and privacy risk under Egypt's personal data protecti
 | M5 (week 8) | F9, F11, F12, F13 | Cheques, dashboard, forecast, quotas |
 | M6 (week 9) | Hardening | Security checklist, backups, load test, runbook, pilot-ready |
 
-At the end of each milestone: update `PROGRESS.md`, tag a release, and write a short demo script the human can follow.
+At the end of each milestone: update `DECISIONS.md`, tag a release, and write a short demo script the human can follow.
 
 ## 11. Inputs the human must provide (ask early)
 
@@ -287,7 +287,7 @@ At the end of each milestone: update `PROGRESS.md`, tag a release, and write a s
 ## 12. Final acceptance checklist
 
 - [ ] All Section 1 rules demonstrably enforced by tests.
-- [ ] Every feature F0 to F13 meets its acceptance criteria, with evidence in `PROGRESS.md`.
+- [ ] Every feature F0 to F13 meets its acceptance criteria, with evidence in `DECISIONS.md`.
 - [ ] `pnpm lint`, `typecheck`, `test`, `eval` and E2E are all green in CI.
 - [ ] No double-send under race, no cross-tenant leakage, no non-allowlisted LLM action.
 - [ ] Arabic RTL UI reviewed on a real phone.

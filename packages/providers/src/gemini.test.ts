@@ -35,6 +35,24 @@ describe("cleanSchemaForGemini", () => {
     expect(cleaned.properties.method.enum).toEqual(["instapay", "bank"]);
     expect(cleaned.properties.method.nullable).toBe(true);
   });
+
+  it("prefers string in [number, string] unions and strips unsupported OpenAPI keywords", () => {
+    const input = {
+      type: "object",
+      $schema: "http://json-schema.org/draft-07/schema#",
+      properties: {
+        amount: { type: ["number", "string"], default: "0", exclusiveMinimum: 0 },
+      },
+    };
+    const cleaned = cleanSchemaForGemini(input) as {
+      $schema?: string;
+      properties: { amount: { type: string; default?: unknown; exclusiveMinimum?: unknown } };
+    };
+    expect(cleaned.$schema).toBeUndefined();
+    expect(cleaned.properties.amount.type).toBe("string");
+    expect(cleaned.properties.amount.default).toBeUndefined();
+    expect(cleaned.properties.amount.exclusiveMinimum).toBeUndefined();
+  });
 });
 
 describe("GeminiLlmProvider", () => {
@@ -239,5 +257,19 @@ describe("Gemini native text streaming", () => {
     const result = await provider.streamText("Prompt", "System", (delta) => deltas.push(delta));
     expect(deltas).toEqual(["Hello ", "world."]);
     expect(result).toMatchObject({ text: "Hello world.", inputTokens: 12, outputTokens: 4, model: "gemini-3.5-flash-lite" });
+  });
+});
+
+describe("cleanSchemaForGemini properties preservation", () => {
+  it("preserves tool parameters named default or format inside properties", () => {
+    const cleaned = cleanSchemaForGemini({
+      type: "object",
+      properties: {
+        default: { type: "boolean", default: false },
+        format: { type: "string", format: "date" },
+      },
+    }) as { properties: Record<string, { type: string; default?: unknown; format?: unknown }> };
+    expect(cleaned.properties.default).toEqual({ type: "boolean" });
+    expect(cleaned.properties.format).toEqual({ type: "string" });
   });
 });

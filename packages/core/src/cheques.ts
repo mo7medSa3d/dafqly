@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { coerceAmountMinor } from "./ai";
 import { addDaysIso } from "./invoices";
 
 /**
@@ -105,10 +106,19 @@ export function groupChequesByWeek<T extends { dueDate: string; id: string }>(ch
  * (hard rule 4); invalid output parses to null and the merchant types the
  * cheque by hand.
  */
+const chequeAmountMinorField = z.union([z.number(), z.string()]).transform((v, ctx) => {
+  const minor = coerceAmountMinor(v);
+  if (minor === null || minor <= 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "amount_minor must be a positive readable amount" });
+    return z.NEVER;
+  }
+  return minor;
+});
+
 export const chequeExtractionSchema = z.object({
   number: z.string().trim().min(1).max(40).nullable(),
   bank: z.string().trim().min(1).max(120).nullable(),
-  amount_minor: z.number().int().positive().nullable(),
+  amount_minor: chequeAmountMinorField.nullable(),
   issue_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
   drawer_name: z.string().trim().nullable().optional().default(null),

@@ -3,7 +3,7 @@ import {
   computePaymobHmac, verifyPaymobHmac, hashStatementToken, generateStatementToken,
 } from "./payments-crypto";
 import {
-  parsePaymobCallback, decideGatewayCallback,
+  parsePaymobCallback, decideGatewayCallback, paymobHmacMessage,
   planReversalAllocations, reconcileGateway, reconcileLedger, redactPaymobPayload,
   statementLinkState, outstandingForLink, STATEMENT_DEFAULT_EXPIRY_DAYS,
 } from "./payments";
@@ -109,9 +109,13 @@ describe("decideGatewayCallback (webhook is the only source of truth)", () => {
     const late = new Date("2026-11-09T12:00:00Z");
     expect(decideGatewayCallback(cb({}), { link, now: late, txnAlreadyProcessed: false })).toEqual({ action: "ignore", reason: "link_expired" });
   });
-  it("refund and void callbacks reverse", () => {
+  it("does not treat an unsigned cumulative refund amount as a trusted reversal amount", () => {
+    // refunded_amount_cents is not in Paymob's 20-field HMAC message. The callback
+    // itself is therefore an audit signal only until Transaction Inquiry verifies it.
     expect(decideGatewayCallback(cb({ is_refunded: true, id: 999 }), { link: { ...link, status: "paid" }, now, txnAlreadyProcessed: false }))
-      .toEqual({ action: "reverse", reason: "refund", amountMinor: 10000n });
+      .toEqual({ action: "ignore", reason: "refund_requires_inquiry" });
+  });
+  it("a signed void callback can reverse the full transaction", () => {
     expect(decideGatewayCallback(cb({ is_voided: true, id: 998 }), { link: { ...link, status: "paid" }, now, txnAlreadyProcessed: false }).action).toBe("reverse");
   });
 });
@@ -319,5 +323,44 @@ describe("redactPaymobPayload (M3)", () => {
     expect(redacted.obj.amount_cents).toBe(50000);
     expect(redacted.obj.order.merchant_order_id).toBe("link-1");
     expect(JSON.stringify(payload)).toContain("512345"); // input untouched
+  });
+  it("paymobHmacMessage tolerates missing nested order/source_data without throwing TypeError", () => {
+    expect(() => paymobHmacMessage({ amount_cents: 1000, created_at: "2026-01-01", currency: "EGP" } as never)).not.toThrow();
+  });
+  it("parsePaymobCallback rejects payloads missing currency instead of defaulting to EGP", () => {
+    expect(() => parsePaymobCallback({
+      obj: {
+        id: 1, amount_cents: 1000, created_at: "2026-01-01", error_occured: false,
+        is_auth: false, is_capture: true, is_refunded: false, is_voided: false, pending: false,
+        success: true, order: { id: 10 },
+      },
+    })).toThrow();
+  });
+});
+
+describe("paymobHmacMessage null field handling", () => {
+  it("serializes null/undefined fields as empty string instead of 'null'", () => {
+    const msg = paymobHmacMessage({
+      amount_cents: 10000,
+      created_at: "2026-11-15T10:00:00",
+      currency: "EGP",
+      error_occured: false,
+      has_parent_transaction: false,
+      id: 123,
+      integration_id: 456,
+      is_3d_secure: true,
+      is_auth: false,
+      is_capture: false,
+      is_refunded: false,
+      is_standalone_payment: true,
+      is_voided: false,
+      order: { id: 789 },
+      owner: 1,
+      pending: false,
+      source_data: { pan: null as unknown as string, sub_type: "wallet", type: "wallet" },
+      success: true,
+    });
+    expect(msg).not.toContain("null");
+    expect(msg).toContain("falsewalletwallettrue");
   });
 });

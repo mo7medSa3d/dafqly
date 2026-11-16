@@ -15,7 +15,7 @@ import { ProviderError, type SendResult, type SendTemplateInput, type TextCapabl
  * calls within the process.
  */
 export interface WhatsAppConfig {
-  apiVersion: string; // e.g. "v24.0" — from WHATSAPP_API_VERSION
+  apiVersion: string; // e.g. "v27.0" — from WHATSAPP_API_VERSION
   phoneNumberId: string;
   accessToken: string;
   /** Template language code sent to Meta (our templates are Arabic-first). */
@@ -27,6 +27,7 @@ interface GraphError { error?: { code?: number; message?: string } }
 interface GraphSendOk { messages?: { id?: string }[] }
 
 export class WhatsAppCloudProvider implements TextCapableProvider {
+  private static readonly MAX_CACHE_ENTRIES = 5_000;
   private byKey = new Map<string, SendResult>();
   private readonly fetchImpl: typeof fetch;
   constructor(private readonly config: WhatsAppConfig) {
@@ -35,6 +36,15 @@ export class WhatsAppCloudProvider implements TextCapableProvider {
 
   private get configured(): boolean {
     return Boolean(this.config.apiVersion && this.config.phoneNumberId && this.config.accessToken);
+  }
+
+  private remember(key: string, result: SendResult): void {
+    if (this.byKey.has(key)) this.byKey.delete(key);
+    this.byKey.set(key, result);
+    if (this.byKey.size > WhatsAppCloudProvider.MAX_CACHE_ENTRIES) {
+      const oldest = this.byKey.keys().next().value;
+      if (oldest !== undefined) this.byKey.delete(oldest);
+    }
   }
 
   private async post(body: Record<string, unknown>): Promise<SendResult> {
@@ -47,6 +57,7 @@ export class WhatsAppCloudProvider implements TextCapableProvider {
         method: "POST",
         headers: { Authorization: `Bearer ${this.config.accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15_000),
       },
     );
     const json = (await res.json().catch(() => ({}))) as GraphSendOk & GraphError;
@@ -79,7 +90,7 @@ export class WhatsAppCloudProvider implements TextCapableProvider {
           : {}),
       },
     });
-    this.byKey.set(input.idempotencyKey, result);
+    this.remember(input.idempotencyKey, result);
     return result;
   }
 
@@ -94,7 +105,7 @@ export class WhatsAppCloudProvider implements TextCapableProvider {
       type: "text",
       text: { body: input.body, preview_url: false },
     });
-    this.byKey.set(input.idempotencyKey, result);
+    this.remember(input.idempotencyKey, result);
     return result;
   }
 }

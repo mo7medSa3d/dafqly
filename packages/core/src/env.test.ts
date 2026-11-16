@@ -34,8 +34,8 @@ describe("parseEnv", () => {
     expect(env.DRY_RUN_MESSAGING).toBe(false);
   });
   it("rejects insecure or placeholder object storage configuration in production", () => {
-    expect(() => parseEnv({ ...base, NODE_ENV: "production" })).toThrow(/HTTPS object-storage/i);
-    expect(() => parseEnv({ ...base, NODE_ENV: "production", S3_ENDPOINT: "https://objects.example.com" })).toThrow(/non-default S3/i);
+    expect(() => parseEnv({ ...base, NODE_ENV: "production", APP_URL: "https://app.example.com" })).toThrow(/HTTPS object-storage/i);
+    expect(() => parseEnv({ ...base, NODE_ENV: "production", APP_URL: "https://app.example.com", S3_ENDPOINT: "https://objects.example.com" })).toThrow(/non-default S3/i);
   });
   it("ADR-033: E2E_FAKE_PROVIDERS lets the production-mode e2e sandbox boot without real S3/AI, and only there", () => {
     // Without the flag the guard still fails closed (pinned by the test
@@ -52,7 +52,7 @@ describe("parseEnv", () => {
   });
   it("requires complete WhatsApp config for production live messaging and refuses unimplemented SMS", () => {
     const secure = {
-      ...base, NODE_ENV: "production", S3_ENDPOINT: "https://objects.example.com",
+      ...base, NODE_ENV: "production", APP_URL: "https://app.example.com", S3_ENDPOINT: "https://objects.example.com",
       S3_ACCESS_KEY: "prod-access-key", S3_SECRET_KEY: "prod-secret-key", DRY_RUN_MESSAGING: "false",
       GEMINI_API_KEY: "production-gemini-key",
     };
@@ -65,5 +65,14 @@ describe("parseEnv", () => {
   });
   it("only allows the supported AI provider identifiers", () => {
     expect(() => parseEnv({ ...base, AI_PROVIDER: "fake" })).toThrow(/AI_PROVIDER/i);
+  });
+  it("requires HTTPS non-localhost APP_URL and non-localhost SMTP when email verification is enabled in production", () => {
+    const prodBase = {
+      ...base, NODE_ENV: "production", S3_ENDPOINT: "https://objects.example.com",
+      S3_ACCESS_KEY: "prod-access-key", S3_SECRET_KEY: "prod-secret-key",
+      DRY_RUN_MESSAGING: "true", GEMINI_API_KEY: "production-gemini-key",
+    };
+    expect(() => parseEnv({ ...prodBase, APP_URL: "http://localhost:3000" })).toThrow(/HTTPS non-localhost/i);
+    expect(() => parseEnv({ ...prodBase, APP_URL: "https://app.example.com", EMAIL_VERIFICATION_ENABLED: "1" })).toThrow(/non-localhost SMTP_URL/i);
   });
 });

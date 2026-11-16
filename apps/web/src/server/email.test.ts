@@ -62,7 +62,7 @@ describe("email (H5 SMTP seam)", () => {
     await withStubSmtp(async (url, received) => {
       await sendVerificationEmailLink(
         { to: "user@example.test", url: "https://app.example.test/verify?token=abc123" },
-        { smtpUrl: url, from: "Tahseel <no-reply@example.test>" },
+        { smtpUrl: url, from: "Dafqly <no-reply@example.test>" },
       );
       const body = decodeQuotedPrintable(received());
       expect(body).toContain("user@example.test");

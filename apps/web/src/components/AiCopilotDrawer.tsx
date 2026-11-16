@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { cn, todayIso } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { inputVariants } from "@/components/ui/input";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -12,22 +12,7 @@ import { formatPct, formatDso, type NotificationTone } from "@tahseel/core";
 import { trpc } from "@/lib/trpc-client";
 import { useCurrency } from "./CurrencyContext";
 import { DafqlyAiMascot } from "./DafqlyAiMascot";
-
-export type CopilotTab = "briefing" | "composer" | "assistant";
-export type ComposerMode = "reminder" | "installment";
-
-export interface OpenCopilotDetail {
-  tab?: CopilotTab;
-  debtorId?: string;
-  tone?: NotificationTone;
-  mode?: ComposerMode;
-  prompt?: string;
-}
-
-export function openAiCopilot(detail: OpenCopilotDetail = {}) {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent<OpenCopilotDetail>("dafqly:open-ai-copilot", { detail }));
-}
+import type { ComposerMode, CopilotTab } from "./copilot-events";
 
 interface DebtorScoreItem {
   debtorId: string;
@@ -420,6 +405,8 @@ export function AiCopilotDrawer({
     () => overview?.debtorScores.find((d) => d.debtorId === selectedDebtorId) ?? null,
     [overview, selectedDebtorId],
   );
+  const activeOutstandingMinor = activeDebtor ? BigInt(activeDebtor.outstandingMinor) : 0n;
+  const isActiveSettled = activeDebtor ? activeOutstandingMinor <= 0n : false;
 
   const handleSelectDebtorForComposer = (d: DebtorScoreItem, mode: ComposerMode = "reminder") => {
     setSelectedDebtorId(d.debtorId);
@@ -433,7 +420,16 @@ export function AiCopilotDrawer({
 
   const handleGenerateMessage = async () => {
     if (!activeDebtor) return;
-    const amountMinorNum = Math.max(100, Number(BigInt(activeDebtor.outstandingMinor)));
+    const outstanding = BigInt(activeDebtor.outstandingMinor);
+    if (outstanding <= 0n) {
+      setDispatchFeedback({
+        ok: false,
+        messageAr: "لا يوجد رصيد مستحق على هذا العميل — الحساب مسدد بالكامل.",
+        messageEn: "This customer has no outstanding balance — the account is fully settled.",
+      });
+      return;
+    }
+    const amountMinorNum = Number(outstanding);
     setGeneratingMsg(true);
     setDispatchFeedback(null);
     try {
@@ -445,7 +441,7 @@ export function AiCopilotDrawer({
           installmentsCount,
           interval,
           downPaymentPct,
-          startDateIso: overview?.todayIso ?? new Date().toISOString().slice(0, 10),
+          startDateIso: overview?.todayIso ?? todayIso(),
         });
         const typedPlan = res as InstallmentPlanPayload;
         setInstallmentPlan(typedPlan);
@@ -457,14 +453,20 @@ export function AiCopilotDrawer({
           setDraftText(msgLocale === "en" ? typedPlan.proposalTextEn : typedPlan.proposalTextAr);
         }
         setDraftGenerationMode("rules");
-        setSuggestedSendTime("10:30 AM (Africa/Cairo)");
+        setSuggestedSendTime(
+          new Intl.DateTimeFormat(msgLocale === "en" ? "en-US" : "ar-EG", {
+            hour: "2-digit",
+            minute: "2-digit",
+            timeZoneName: "short",
+          }).format(new Date()),
+        );
       } else {
         const res = await trpc.aiWorkspace.generateNotification.mutate({
           debtorId: activeDebtor.debtorId,
           debtorName: activeDebtor.displayName,
           amountMinor: amountMinorNum,
           daysOverdue: activeDebtor.maxDaysOverdue,
-          dueDate: overview?.todayIso ?? new Date().toISOString().slice(0, 10),
+          dueDate: overview?.todayIso ?? todayIso(),
           riskFlag: activeDebtor.riskFlag,
           tone,
           locale: msgLocale,
@@ -475,7 +477,11 @@ export function AiCopilotDrawer({
         setSuggestedSendTime(res.suggestedSendTime);
       }
     } catch {
-      // Non-fatal
+      setDispatchFeedback({
+        ok: false,
+        messageAr: "تعذر توليد الرسالة أو خطة الجدولة. حاول مرة أخرى.",
+        messageEn: "Could not generate the message or installment plan. Please try again.",
+      });
     } finally {
       setGeneratingMsg(false);
     }
@@ -610,12 +616,17 @@ export function AiCopilotDrawer({
       // `null` initializer and reads back as `never` here.
       const finalResponseHolder: { current: CopilotAnswer | null } = { current: null };
       const handleEvent = (block: string) => {
-        const dataLine = block.split("\n").find((line) => line.startsWith("data: "));
+        const dataLine = block.split("\n").find((line) => line.startsWith("data:"));
         if (!dataLine) return;
-        const event = JSON.parse(dataLine.slice(6)) as {
+        let event: {
           type: string; text?: string; response?: CopilotAnswer; message?: string; phase?: "reading_context" | "thinking" | "writing";
           id?: string; titleAr?: string; titleEn?: string; ok?: boolean; summaryAr?: string; summaryEn?: string;
         };
+        try {
+          event = JSON.parse(dataLine.slice(5).replace(/^ /, "")) as typeof event;
+        } catch {
+          return;
+        }
         if (event.type === "status" && event.phase) setLivePhase(event.phase);
         else if (event.type === "tool_start" && event.id) {
           // Text written before a tool call is narration, not the answer: restart the bubble.
@@ -657,7 +668,7 @@ export function AiCopilotDrawer({
         setPersistedMessages((prev) => prev.filter((message) => message.id !== localAssistantId || message.content));
         return;
       }
-      setCopilotError(error instanceof Error && error.message === "GLOBAL_AI_BUDGET_EXCEEDED"
+      setCopilotError(error instanceof Error && (error.message === "AI_GLOBAL_BUDGET_EXCEEDED" || error.message === "GLOBAL_AI_BUDGET_EXCEEDED")
         ? (isEn ? "The platform AI monthly budget has been reached." : "تم الوصول إلى سقف إنفاق المنصة الشهري على AI.")
         : (isEn ? "The assistant could not complete this request. No action was executed." : "تعذر إكمال طلب المساعد. لم يتم تنفيذ أي إجراء."));
       setPersistedMessages((prev) => prev.filter((message) => message.id !== localAssistantId));
@@ -1076,6 +1087,7 @@ export function AiCopilotDrawer({
               <button
                 type="button"
                 data-testid="composer-mode-installment"
+                disabled={isActiveSettled}
                 onClick={() => {
                   setComposerMode("installment");
                   setDraftText("");
@@ -1208,7 +1220,7 @@ export function AiCopilotDrawer({
               <button
                 type="button"
                 data-testid="copilot-generate-btn"
-                disabled={!activeDebtor || generatingMsg}
+                disabled={!activeDebtor || generatingMsg || isActiveSettled}
                 onClick={() => void handleGenerateMessage()}
                 className={cn(buttonVariants({ variant: "default", size: "sm" }), "flex-1")}
               >
@@ -1508,6 +1520,19 @@ export function AiCopilotDrawer({
                           {copilotAnswer.aiMode === "live"
                             ? (isEn ? `Used ${copilotAnswer.toolCalls.length} workspace tool(s)` : `استخدم ${copilotAnswer.toolCalls.length} من أدوات مساحة العمل`)
                             : (isEn ? "Deterministic workspace analysis" : "تحليل مباشر من النظام")}
+                          {copilotAnswer.aiMode !== "live" && copilotAnswer.aiFallbackReason ? (
+                            <span className="ms-1.5 rounded bg-muted px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground">
+                              {copilotAnswer.aiFallbackReason === "global_budget_exceeded"
+                                ? (isEn ? "AI budget cap reached" : "تم بلوغ حد ميزانية الذكاء الاصطناعي")
+                                : copilotAnswer.aiFallbackReason === "daily_token_budget_exceeded"
+                                  ? (isEn ? "Daily token limit reached" : "تم بلوغ الحد اليومي")
+                                  : copilotAnswer.aiFallbackReason === "provider_not_configured"
+                                    ? (isEn ? "AI provider not configured" : "مزود الذكاء غير مُفعّل")
+                                    : copilotAnswer.aiFallbackReason === "provider_error"
+                                      ? (isEn ? "AI provider error" : "خطأ في مزود الذكاء")
+                                      : (isEn ? "Empty AI response" : "استجابة فارغة")}
+                            </span>
+                          ) : null}
                         </span>
                       </span>
                       <div className="flex flex-col gap-1">
@@ -1550,14 +1575,16 @@ export function AiCopilotDrawer({
                             <span>{isEn ? "Dispatch Smart Reminder" : "إرسال تذكير ذكي"}</span>
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => handleSelectDebtorForComposer(copilotAnswer.matchedDebtor!, "installment")}
-                          className={cn(buttonVariants({ variant: "secondary", size: "xs" }))}
-                        >
-                          <CalendarCheck size={11} aria-hidden />
-                          <span>{isEn ? "Installment Plan" : "خطة تقسيط"}</span>
-                        </button>
+                        {BigInt(copilotAnswer.matchedDebtor.outstandingMinor) > 0n && (
+                          <button
+                            type="button"
+                            onClick={() => handleSelectDebtorForComposer(copilotAnswer.matchedDebtor!, "installment")}
+                            className={cn(buttonVariants({ variant: "secondary", size: "xs" }))}
+                          >
+                            <CalendarCheck size={11} aria-hidden />
+                            <span>{isEn ? "Installment Plan" : "خطة تقسيط"}</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1622,7 +1649,7 @@ export function AiCopilotDrawer({
                   if (!question.trim() || asking) return;
                   void runCopilotIntent("custom_question", question.trim());
                 }}
-                className="flex items-center gap-2 rounded-2xl border border-border bg-background p-1.5 shadow-xs focus-within:border-foreground/40"
+                className="flex items-center gap-2 rounded-2xl border border-border bg-background p-1.5 shadow-xs transition-all duration-200 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20"
               >
                 <input
                   type="text"
@@ -1631,7 +1658,7 @@ export function AiCopilotDrawer({
                   onChange={(e) => setQuestion(e.target.value)}
                   maxLength={2000}
                   placeholder={isEn ? "Ask anything about your ledger..." : "اسأل عن أي عميل، فاتورة، أو خطة تحصيل..."}
-                  className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground outline-none"
+                  className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:outline-none"
                 />
                 {asking ? (
                   <button

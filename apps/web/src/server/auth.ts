@@ -8,14 +8,15 @@ import * as schema from "@tahseel/db/schema";
 
 /**
  * H5: email verification is OFF by default (EMAIL_VERIFICATION_ENABLED=1
- * turns it on). It must stay off until a real SMTP sender is configured:
- * with the flag on and no sender, sign-up fails loudly with
+ * or true turns it on). It must stay off until a real SMTP sender is
+ * configured: with the flag on and no sender, sign-up fails loudly with
  * EMAIL_NOT_CONFIGURED (email.ts) instead of silently never verifying.
- * Read straight from process.env (not the cached env()) so tests can flip
- * it per case.
  */
 export function emailVerificationEnabled(): boolean {
-  return process.env.EMAIL_VERIFICATION_ENABLED === "1";
+  if (process.env.NODE_ENV === "test") {
+    return process.env.EMAIL_VERIFICATION_ENABLED === "1" || process.env.EMAIL_VERIFICATION_ENABLED === "true";
+  }
+  return env().EMAIL_VERIFICATION_ENABLED;
 }
 
 /**

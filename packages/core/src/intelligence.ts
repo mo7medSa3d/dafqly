@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { sanitizePromptData, type NotificationTone, type ReplyIntent } from "./ai";
-import { formatCurrencyMinor, getCurrencySymbol, type SupportedCurrency } from "./money";
+import { formatCurrencyMinor, getCurrencySymbol, normalizeCurrencyCode, type SupportedCurrency } from "./money";
 import { isInQuietHours, nextAllowedSlot, localDateOf, DEFAULT_POLICY, type SchedulePolicy } from "./time";
 
 /**
@@ -929,7 +929,13 @@ export interface NotificationCandidate {
 
 export interface OperationalSignalsInput {
   todayIso: string;
-  pendingClaims: readonly { id: string; debtorId: string; debtorName: string; amountMinor: bigint }[];
+  pendingClaims: readonly {
+    id: string;
+    debtorId: string;
+    debtorName: string;
+    amountMinor: bigint;
+    currency?: SupportedCurrency | string;
+  }[];
   openDisputes: readonly { id: string; debtorId: string; debtorName: string; invoiceRef: string | null }[];
   humanIntents: readonly { id: string; intent: string; bodySnippet: string }[];
   upcomingCheques: readonly {
@@ -939,8 +945,15 @@ export interface OperationalSignalsInput {
     dueDate: string;
     amountMinor: bigint;
     status: string;
+    currency?: SupportedCurrency | string;
   }[];
-  severeOverdueDebtors: readonly { debtorId: string; displayName: string; overdueMinor: bigint; maxDaysOverdue: number }[];
+  severeOverdueDebtors: readonly {
+    debtorId: string;
+    displayName: string;
+    overdueMinor: bigint;
+    maxDaysOverdue: number;
+    currency?: SupportedCurrency | string;
+  }[];
   quotaRatio: number | null;
   briefingSummaryAr?: string;
   briefingSummaryEn?: string;
@@ -949,14 +962,15 @@ export interface OperationalSignalsInput {
 }
 
 export function buildOperationalNotificationCandidates(input: OperationalSignalsInput): NotificationCandidate[] {
-  const symAr = getCurrencySymbol(input.currency, "ar");
-  const symEn = getCurrencySymbol(input.currency, "en");
   const out: NotificationCandidate[] = [];
   const monthKey = input.todayIso.slice(0, 7);
 
   for (const claim of input.pendingClaims.slice(0, 5)) {
+    const cur = normalizeCurrencyCode(claim.currency ?? input.currency);
+    const symAr = getCurrencySymbol(cur, "ar");
+    const symEn = getCurrencySymbol(cur, "en");
     const safeName = sanitizePromptData(claim.debtorName) || claim.debtorName;
-    const amt = formatCurrencyMinor(claim.amountMinor, input.currency);
+    const amt = formatCurrencyMinor(claim.amountMinor, cur);
     out.push({
       kind: "receipt_claim",
       severity: "warning",
@@ -1004,8 +1018,11 @@ export function buildOperationalNotificationCandidates(input: OperationalSignals
   }
 
   for (const chq of input.upcomingCheques.slice(0, 5)) {
+    const cur = normalizeCurrencyCode(chq.currency ?? input.currency);
+    const symAr = getCurrencySymbol(cur, "ar");
+    const symEn = getCurrencySymbol(cur, "en");
     const safeName = sanitizePromptData(chq.debtorName) || chq.debtorName;
-    const amt = formatCurrencyMinor(chq.amountMinor, input.currency);
+    const amt = formatCurrencyMinor(chq.amountMinor, cur);
     const isBounced = chq.status === "bounced";
     out.push({
       kind: "cheque_alert",
@@ -1022,8 +1039,11 @@ export function buildOperationalNotificationCandidates(input: OperationalSignals
   }
 
   for (const deb of input.severeOverdueDebtors.slice(0, 3)) {
+    const cur = normalizeCurrencyCode(deb.currency ?? input.currency);
+    const symAr = getCurrencySymbol(cur, "ar");
+    const symEn = getCurrencySymbol(cur, "en");
     const safeName = sanitizePromptData(deb.displayName) || deb.displayName;
-    const amt = formatCurrencyMinor(deb.overdueMinor, input.currency);
+    const amt = formatCurrencyMinor(deb.overdueMinor, cur);
     out.push({
       kind: "overdue_alert",
       severity: deb.maxDaysOverdue > 30 ? "urgent" : "warning",
@@ -1034,7 +1054,7 @@ export function buildOperationalNotificationCandidates(input: OperationalSignals
       actionUrl: `/debtors/${deb.debtorId}`,
       entityType: "debtor",
       entityId: deb.debtorId,
-      dedupeKey: `overdue:${deb.debtorId}:${monthKey}`,
+      dedupeKey: deb.currency ? `overdue:${deb.debtorId}:${cur}:${monthKey}` : `overdue:${deb.debtorId}:${monthKey}`,
     });
   }
 

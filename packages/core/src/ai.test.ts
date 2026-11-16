@@ -38,6 +38,13 @@ describe("Zod parsers (LLM output is untrusted)", () => {
     expect(parseLedgerExtraction({ rows: [{ ...base, amount_minor: 42.5 }] })!.rows[0]!.amount_minor).toBe(4250);
   });
 
+  it("parses ledger amounts with the tenant currency exponent (KWD=3, JPY=0)", () => {
+    const base = { name: "x", phone: null, date: null, note: null, confidence: 0.9, cellConfidence: { name: 0.9, amount: 0.9 } };
+    expect(parseLedgerExtraction({ rows: [{ ...base, amount_minor: "1.234" }] }, "KWD")!.rows[0]!.amount_minor).toBe(1234);
+    expect(parseLedgerExtraction({ rows: [{ ...base, amount_minor: "500" }] }, "JPY")!.rows[0]!.amount_minor).toBe(500);
+    expect(parseLedgerExtraction({ rows: [{ ...base, amount_minor: "500.5" }] }, "JPY")).toBeNull();
+  });
+
   it("returns null on invalid LLM output (routes to human)", () => {
     expect(parseLedgerExtraction({ rows: [{ name: "x" }] })).toBeNull();
     expect(parseLedgerExtraction("garbage")).toBeNull();
@@ -501,3 +508,46 @@ describe("AI Workspace Engine", () => {
 
 });
 
+
+describe("receiptExtractionSchema multi-currency and reference checks", () => {
+  it("parses KWD (3 decimals) and JPY (0 decimals) using extracted currency", () => {
+    const kwd = parseReceiptExtraction({
+      is_receipt: true,
+      amount_minor: "1.250",
+      currency: "KWD",
+      reference_no: "REF-KWD-1",
+      confidence: 0.95,
+    });
+    expect(kwd?.amount_minor).toBe(1250);
+
+    const jpy = parseReceiptExtraction({
+      is_receipt: true,
+      amount_minor: "500",
+      currency: "JPY",
+      reference_no: "REF-JPY-1",
+      confidence: 0.95,
+    });
+    expect(jpy?.amount_minor).toBe(500);
+  });
+
+  it("fails duplicate_reference check when reference_no is null", () => {
+    const extraction = parseReceiptExtraction({
+      is_receipt: true,
+      amount_minor: "100.00",
+      currency: "EGP",
+      reference_no: null,
+      datetime: new Date().toISOString(),
+      confidence: 0.95,
+    })!;
+    const res = evaluateReceiptChecks({
+      extraction,
+      sha256: "abc",
+      seenHashes: new Set(),
+      seenReferences: new Set(),
+      now: new Date(),
+    });
+    const dupRef = res.checks.find((c) => c.key === "duplicate_reference");
+    expect(dupRef?.passed).toBe(false);
+    expect(res.allPassed).toBe(false);
+  });
+});

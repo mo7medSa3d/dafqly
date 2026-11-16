@@ -83,7 +83,9 @@ export function MosaicSparkCard({
       <div className="px-5 pt-5">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <h3 className="text-sm font-bold text-card-foreground">{title}</h3>
+            {/* h2, not h3: this card is the first heading after the page h1,
+                and axe flags an h1 -> h3 skip (heading-order). */}
+            <h2 className="text-sm font-bold text-card-foreground">{title}</h2>
             {subtitle && <p className="mt-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{subtitle}</p>}
           </div>
           {badge && (
@@ -519,13 +521,5 @@ export function RankedBars({ items }: { items: RankedItem[] }) {
         </li>
       ))}
     </ol>
-  );
-}
-
-export function MiniProgress({ value }: { value: number }) {
-  return (
-    <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
-      <span className="pc-bar block h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
-    </span>
   );
 }

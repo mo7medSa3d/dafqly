@@ -53,7 +53,6 @@
 
 ## مراجع التشغيل
 
-- `docs/PROGRESS.md`
 - `docs/DECISIONS.md`
 - `docs/RUNBOOK.md`
 - `docs/SECURITY.md`

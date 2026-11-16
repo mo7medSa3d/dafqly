@@ -34,7 +34,7 @@ export function computeSha256(bytes: Uint8Array): string {
 
 // ------------------------------------------------------------------ uploads
 /** §3 upload allowlist: images only, max 8 MB. */
-export const UPLOAD_MIMES = ["image/jpeg", "image/png", "image/webp", "image/heic"] as const;
+export const UPLOAD_MIMES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"] as const;
 export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
 export function validateUpload(input: { mime: string; size: number }): { ok: true } | { ok: false; code: "UNSUPPORTED_MIME" | "FILE_TOO_LARGE" | "EMPTY_FILE" } {
@@ -53,6 +53,7 @@ export interface S3StorageOptions {
   accessKey: string;
   secretKey: string;
   forcePathStyle?: boolean;
+  allowInsecureLocal?: boolean;
   fetchFn?: (url: string, init: RequestInit) => Promise<Response>;
   now?: () => Date;
 }
@@ -73,7 +74,12 @@ export class S3CompatibleStorageProvider implements StorageProvider {
       throw new Error("S3 storage is not fully configured (endpoint, region, bucket, access key and secret key are required)");
     }
     this.endpoint = new URL(options.endpoint);
-    if (this.endpoint.protocol !== "https:" && this.endpoint.hostname !== "localhost" && this.endpoint.hostname !== "127.0.0.1") {
+    if (
+      this.endpoint.protocol !== "https:" &&
+      !options.allowInsecureLocal &&
+      this.endpoint.hostname !== "localhost" &&
+      this.endpoint.hostname !== "127.0.0.1"
+    ) {
       throw new Error("S3 storage endpoints must use HTTPS outside localhost");
     }
     this.fetchFn = options.fetchFn ?? ((url, init) => fetch(url, init));
@@ -116,7 +122,12 @@ export class S3CompatibleStorageProvider implements StorageProvider {
     const names = Object.keys(headers).sort();
     const canonicalHeaders = names.map((name) => `${name}:${headers[name]!.trim()}\n`).join("");
     const signedHeaders = names.join(";");
-    const canonicalRequest = [method, url.pathname, url.searchParams.toString(), canonicalHeaders, signedHeaders, bodyHash].join("\n");
+    const canonicalQuery = [...url.searchParams.entries()]
+      .map(([k, v]) => [encodeRfc3986(k), encodeRfc3986(v)] as const)
+      .sort(([ak, av], [bk, bv]) => (ak === bk ? av.localeCompare(bv) : ak.localeCompare(bk)))
+      .map(([k, v]) => `${k}=${v}`)
+      .join("&");
+    const canonicalRequest = [method, url.pathname, canonicalQuery, canonicalHeaders, signedHeaders, bodyHash].join("\n");
     const scope = `${date}/${this.options.region}/s3/aws4_request`;
     const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${scope}\n${hashHex(canonicalRequest)}`;
     const signature = createHmac("sha256", this.signKey(date)).update(stringToSign).digest("hex");

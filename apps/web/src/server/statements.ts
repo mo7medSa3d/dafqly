@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
-  AppError, canTransition, outstandingFor,
+  AppError, canTransition, deriveStatusFromPaid, outstandingFor,
   statementLinkState, STATEMENT_DEFAULT_EXPIRY_DAYS, type StatementLinkState,
 } from "@tahseel/core";
 import { generateStatementToken, hashStatementToken } from "@tahseel/core/payments-crypto";
@@ -10,6 +10,7 @@ import {
 } from "@tahseel/db/schema";
 import { withTenant, type Db } from "@tahseel/db";
 import { replanLater } from "./engine";
+import { lockDebtor } from "./ledger";
 import { upsertNotificationInTx } from "./notifications";
 import { todayInTimezone } from "./services";
 
@@ -170,9 +171,7 @@ export async function getStatementData(
     const totalsByCurrency = [...totalsByCurrencyMap.entries()]
       .map(([currency, minor]) => ({ currency, minor: minor.toString() }))
       .sort((a, b) => (a.currency < b.currency ? -1 : 1));
-    const totalDue = totalsByCurrencyMap.size <= 1
-      ? [...totalsByCurrencyMap.values()].reduce((a, b) => a + b, 0n)
-      : (totalsByCurrencyMap.get(statementCurrency) ?? 0n);
+    const totalDue = totalsByCurrencyMap.get(statementCurrency) ?? 0n;
     const result: StatementData = {
       businessName: tenant.businessNameAr,
       debtorName: debtor.displayName,
@@ -235,8 +234,11 @@ export async function raiseStatementDispute(
   // reminders — one open dispute per invoice, three open per debtor.
   const actor = `statement:${link.id}`;
   const out = await withTenant(app, link.tenantId, async (tx) => {
+    // Lock debtor first to serialize concurrent dispute-limit checks across invoices.
+    await lockDebtor(tx, link.debtorId);
     const [invoice] = await tx.select().from(invoices)
-      .where(and(eq(invoices.id, input.invoiceId), eq(invoices.debtorId, link.debtorId)));
+      .where(and(eq(invoices.id, input.invoiceId), eq(invoices.debtorId, link.debtorId)))
+      .for("update");
     if (!invoice) throw new AppError("NOT_FOUND", "Not found", 404);
     if (!canTransition(invoice.status, "disputed")) {
       throw new AppError("INVALID_STATE", `Invoice is ${invoice.status} and cannot be disputed`, 409);
@@ -356,7 +358,7 @@ export async function resolveStatementDispute(
       if (input.resolution === "cancel_invoice") {
         nextInvoiceStatus = inv.paidMinor > 0n ? "written_off" : "cancelled";
       } else {
-        nextInvoiceStatus = inv.paidMinor > 0n ? "partially_paid" : "open";
+        nextInvoiceStatus = deriveStatusFromPaid(inv.amountMinor, inv.paidMinor);
       }
       if (canTransition(inv.status, nextInvoiceStatus)) {
         await tx

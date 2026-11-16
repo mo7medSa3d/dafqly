@@ -1,9 +1,12 @@
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import {
-  AppError, decodeCsvBuffer, dedupeImportRows, detectHeaderRow, parseCsvText, parseImportGrid,
-  readWorkbookGrid, resolveDueOn, type ColumnMapping, type Grid, type ParsedImportRow,
+  AppError, resolveDueOn,
 } from "@tahseel/core";
+import {
+  decodeCsvBuffer, dedupeImportRows, detectHeaderRow, parseCsvText, parseImportGrid,
+  readWorkbookGrid, type ColumnMapping, type Grid, type ParsedImportRow,
+} from "@tahseel/core/import";
 import { decodeBase64Upload, MAX_UPLOAD_BASE64_CHARS } from "@tahseel/core/files-crypto";
 import { auditLog, debtors, importJobs, importRows, invoices, paymentAllocations, reminders, tenants } from "@tahseel/db/schema";
 import { withTenant, type Db } from "@tahseel/db";
@@ -116,7 +119,7 @@ export async function createImportPreview(app: Db, tenantId: string, actor: stri
 
 export async function updateImportMapping(app: Db, tenantId: string, actor: string, jobId: string, mapping: ColumnMapping): Promise<ImportPreview> {
   return withTenant(app, tenantId, async (tx) => {
-    const [job] = await tx.select().from(importJobs).where(eq(importJobs.id, jobId));
+    const [job] = await tx.select().from(importJobs).where(eq(importJobs.id, jobId)).for("update");
     if (!job) throw new AppError("NOT_FOUND", "Import job not found", 404);
     if (job.status !== "pending_review") throw new AppError("ALREADY_COMMITTED", "Only a pending-review import can be re-mapped", 409);
     const grid = (job.sourceGrid ?? []) as Grid;
@@ -231,7 +234,7 @@ export async function commitImport(app: Db, tenantId: string, actor: string, job
       const reference = data.reference?.trim() || (await nextInvoiceReference(tx, tenantId, issuedOn.slice(0, 4)));
       const [invoice] = await tx.insert(invoices).values({
         tenantId, debtorId, reference, description: data.description,
-        amountMinor: BigInt(data.amountMinor), currency: "EGP", issuedOn,
+        amountMinor: BigInt(data.amountMinor), currency: tenant?.settings.currency ?? "EGP", issuedOn,
         dueOn: resolveDueOn(issuedOn, data.dueOn, terms),
         status: "open", source: "import", importJobId: jobId,
       }).returning();

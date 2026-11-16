@@ -1,8 +1,7 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
-import { AppError, assertChequeTransition, canTransitionCheque, dueAlertKind, formatMoney, groupChequesByWeek,
-  normalizeCurrencyCode, parseMoney, planReversalAllocations, suggestDebtorByName,
+import { AppError, canTransitionCheque, dueAlertKind, formatMoney, groupChequesByWeek, isTerminalStatus, normalizeCurrencyCode, parseMoney, planReversalAllocations, suggestDebtorByName,
   type ChequeAlertKind, type ChequeStatus, type ChequeExtraction,
 } from "@tahseel/core";
 import {
@@ -11,9 +10,9 @@ import {
 import { withTenant, type Db } from "@tahseel/db";
 import type { OcrLlmProvider, StorageProvider } from "@tahseel/providers";
 import { confirmClaimedPaymentInTx, rejectClaimedPaymentInTx } from "./gateway";
-import { lockInvoicesById, recomputeInvoicePaid } from "./ledger";
+import { lockDebtor, lockInvoicesById, recomputeInvoicePaid } from "./ledger";
 import { replanLater } from "./engine";
-import { storeUpload, getFileBytes } from "./files";
+import { storeUpload } from "./files";
 import { upsertNotificationInTx } from "./notifications";
 
 /**
@@ -81,6 +80,7 @@ export async function registerCheque(app: Db, tenantId: string, actor: string, i
     if (input.invoiceId) {
       const [inv] = await tx.select().from(invoices).where(eq(invoices.id, input.invoiceId));
       if (!inv || inv.debtorId !== input.debtorId) throw new AppError("NOT_FOUND", "Invoice not found for this debtor", 404);
+      if (isTerminalStatus(inv.status)) throw new AppError("INVALID_STATE", `Cannot link a cheque to a ${inv.status} invoice`, 409);
       currency = inv.currency;
     }
     if (!currency) {
@@ -119,12 +119,14 @@ export async function listCheques(app: Db, tenantId: string, opts: { status?: Ch
 
 export async function getChequeCalendar(app: Db, tenantId: string) {
   const all = await listCheques(app, tenantId);
-  return groupChequesByWeek(all.map((c) => ({ ...c, dueDate: c.dueDate })))
+  return groupChequesByWeek(all)
     .map((g) => ({ weekStart: g.weekStart, cheques: g.cheques }));
 }
 
 /** Reverse a CONFIRMED cheque payment with a negative payment (bounce after clear). Returns affected invoice ids. */
 async function reverseConfirmedPayment(tx: Db, tenantId: string, actor: string, payment: typeof payments.$inferSelect, reason: string): Promise<string[]> {
+  // Lock debtor before invoices to match recordPayment/confirmClaimedPaymentInTx order and avoid deadlocks.
+  await lockDebtor(tx, payment.debtorId);
   const allocs = await tx.select().from(paymentAllocations).where(eq(paymentAllocations.paymentId, payment.id));
   // F01: lock the affected invoices before planning the reversal.
   await lockInvoicesById(tx, allocs.map((a) => a.invoiceId));
@@ -159,13 +161,32 @@ export async function transitionCheque(
   // unconfirmed payment (or vice versa). The claim lifecycle now runs
   // inline (confirmClaimedPaymentInTx / rejectClaimedPaymentInTx).
   const prepared = await withTenant(app, tenantId, async (tx) => {
-    const [cheque] = await tx.select().from(cheques).where(eq(cheques.id, chequeId));
+    const [cheque] = await tx.select().from(cheques).where(eq(cheques.id, chequeId)).for("update");
     if (!cheque) throw new AppError("NOT_FOUND", "Cheque not found", 404);
     if (!canTransitionCheque(cheque.status, to)) {
-      try { assertChequeTransition(cheque.status, to); } catch {
-        throw new AppError("ILLEGAL_TRANSITION", `Cannot move cheque from ${cheque.status} to ${to}`, 409);
-      }
+      throw new AppError("ILLEGAL_TRANSITION", `Cannot move cheque from ${cheque.status} to ${to}`, 409);
     }
+
+    let linkedInvoiceCurrency: string | undefined;
+    let tenantCurrency: string | undefined;
+    const getTenantCurrency = async (): Promise<string> => {
+      if (tenantCurrency === undefined) {
+        const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+        tenantCurrency = tenant?.settings.currency ?? "EGP";
+      }
+      return tenantCurrency;
+    };
+    const getChequeCurrency = async (): Promise<string> => {
+      if (linkedInvoiceCurrency !== undefined) return linkedInvoiceCurrency;
+      if (cheque.invoiceId) {
+        const [inv] = await tx.select({ currency: invoices.currency }).from(invoices).where(eq(invoices.id, cheque.invoiceId)).limit(1);
+        if (inv) {
+          linkedInvoiceCurrency = inv.currency;
+          return inv.currency;
+        }
+      }
+      return getTenantCurrency();
+    };
 
     let action: "confirm" | "reject" | null = null;
     let affectedInvoices: string[] = [];
@@ -173,19 +194,23 @@ export async function transitionCheque(
     if (to === "deposited" && cheque.direction === "receivable") {
       // F9 acceptance: depositing creates a PENDING (claimed) payment.
       const paymentId = uuidv7();
-      let chequeCurrency = "EGP";
+      let chequeCurrency: string;
       let allocAmount = 0n;
       if (cheque.invoiceId) {
         // F01: lock the linked invoice before capping the allocation.
         const [inv] = await lockInvoicesById(tx, [cheque.invoiceId]);
         if (inv) {
+          linkedInvoiceCurrency = inv.currency;
           chequeCurrency = inv.currency;
-          const outstanding = inv.amountMinor - inv.paidMinor;
-          allocAmount = cheque.amountMinor < outstanding ? cheque.amountMinor : outstanding;
+          if (!isTerminalStatus(inv.status)) {
+            const outstanding = inv.amountMinor - inv.paidMinor;
+            allocAmount = cheque.amountMinor < outstanding ? cheque.amountMinor : outstanding;
+          }
+        } else {
+          chequeCurrency = await getTenantCurrency();
         }
       } else {
-        const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
-        chequeCurrency = tenant?.settings.currency ?? "EGP";
+        chequeCurrency = await getTenantCurrency();
       }
       await tx.insert(payments).values({
         id: paymentId, tenantId, debtorId: cheque.debtorId, invoiceId: cheque.invoiceId,
@@ -227,11 +252,7 @@ export async function transitionCheque(
       await tx.update(debtors).set({ riskFlag: true, updatedAt: new Date() }).where(eq(debtors.id, cheque.debtorId));
       await audit(tx, tenantId, actor, "cheque.bounced_notify", "cheque", chequeId, { debtorId: cheque.debtorId, riskFlag: true });
       // F-06: the bounced cheque's currency is its linked invoice's, else the tenant default.
-      const [bounceInv] = cheque.invoiceId
-        ? await tx.select({ currency: invoices.currency }).from(invoices).where(eq(invoices.id, cheque.invoiceId)).limit(1)
-        : [];
-      const [bounceTenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
-      const bounceCurrency = normalizeCurrencyCode(bounceInv?.currency ?? bounceTenant?.settings?.currency);
+      const bounceCurrency = normalizeCurrencyCode(await getChequeCurrency());
       await upsertNotificationInTx(tx, tenantId, {
         kind: "cheque_alert",
         severity: "urgent",
@@ -245,11 +266,7 @@ export async function transitionCheque(
         dedupeKey: `cheque_bounced:${chequeId}`,
       });
     }
-    const [linkedInvoice] = cheque.invoiceId
-      ? await tx.select({ currency: invoices.currency }).from(invoices).where(eq(invoices.id, cheque.invoiceId)).limit(1)
-      : [];
-    const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
-    const currency = linkedInvoice?.currency ?? tenant?.settings.currency ?? "EGP";
+    const currency = await getChequeCurrency();
     return { view: toView(row!, currency), action, paymentId: cheque.paymentId, affectedInvoices };
   });
 
@@ -335,8 +352,7 @@ export async function extractChequePhoto(
   input: { bytes: Uint8Array; mime: string },
 ): Promise<ExtractChequePhotoResult> {
   const stored = await storeUpload(app, deps.storage, tenantId, actor, { bytes: input.bytes, mime: input.mime, kind: "other" });
-  const got = await getFileBytes(app, deps.storage, tenantId, stored.id);
-  const result = await deps.llm.extractCheque(got.bytes, got.file.mime);
+  const result = await deps.llm.extractCheque(stored.bytes, stored.mime);
 
   let matchedDebtor: MatchedDebtorLite | null = null;
   let matchedInvoice: MatchedInvoiceLite | null = null;
@@ -368,12 +384,12 @@ export async function extractChequePhoto(
         }
       }
 
-      // 2. If no name match, attempt matching open invoices by amount
+      // 2. If no name match, attempt matching open/partially_paid invoices by amount
       if (!matchedDebtorId && result.data.amount_minor && result.data.amount_minor > 0) {
         const matchingInvs = await tx
           .select({ debtorId: invoices.debtorId, id: invoices.id, reference: invoices.reference, amountMinor: invoices.amountMinor, dueOn: invoices.dueOn, paidMinor: invoices.paidMinor })
           .from(invoices)
-          .where(and(eq(invoices.status, "open"), eq(invoices.currency, matchingCurrency)));
+          .where(and(inArray(invoices.status, ["open", "partially_paid"]), eq(invoices.currency, matchingCurrency)));
 
         const exactMatch = matchingInvs.find((inv) => (inv.amountMinor - inv.paidMinor) === BigInt(result.data!.amount_minor!));
         if (exactMatch) {
@@ -381,20 +397,20 @@ export async function extractChequePhoto(
           matchedInvoice = {
             id: exactMatch.id,
             reference: exactMatch.reference,
-            amountMinor: exactMatch.amountMinor.toString(),
+            amountMinor: (exactMatch.amountMinor - exactMatch.paidMinor).toString(),
             dueOn: exactMatch.dueOn,
           };
         }
       }
 
-      // 3. Populate matched debtor info and find debtor's open invoice if not already found
+      // 3. Populate matched debtor info and find debtor's open/partially_paid invoice if not already found
       if (matchedDebtorId) {
         const deb = allDebtors.find((d) => d.id === matchedDebtorId);
         if (deb) {
           const debInvs = await tx
             .select({ id: invoices.id, reference: invoices.reference, amountMinor: invoices.amountMinor, paidMinor: invoices.paidMinor, dueOn: invoices.dueOn })
             .from(invoices)
-            .where(and(eq(invoices.debtorId, deb.id), eq(invoices.status, "open"), eq(invoices.currency, matchingCurrency)));
+            .where(and(eq(invoices.debtorId, deb.id), inArray(invoices.status, ["open", "partially_paid"]), eq(invoices.currency, matchingCurrency)));
 
           const totalOutstanding = debInvs.reduce((acc, inv) => acc + (inv.amountMinor - inv.paidMinor), 0n);
 
@@ -415,7 +431,7 @@ export async function extractChequePhoto(
               matchedInvoice = {
                 id: chosen.id,
                 reference: chosen.reference,
-                amountMinor: chosen.amountMinor.toString(),
+                amountMinor: (chosen.amountMinor - chosen.paidMinor).toString(),
                 dueOn: chosen.dueOn,
               };
             }

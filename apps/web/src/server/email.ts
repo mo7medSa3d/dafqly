@@ -11,10 +11,38 @@ import { env } from "./env";
  * deploy that forgot to configure mail throws EMAIL_NOT_CONFIGURED instead
  * of silently dropping verification emails or sending them at localhost.
  */
+function safeEnv() {
+  try {
+    return env();
+  } catch {
+    return null;
+  }
+}
+
 export function resolveSmtpUrl(): string | undefined {
-  if (process.env.SMTP_URL) return process.env.SMTP_URL;
-  if (process.env.NODE_ENV === "production") return undefined;
-  return "smtp://localhost:1025";
+  const e = safeEnv();
+  const nodeEnv = e?.NODE_ENV ?? process.env.NODE_ENV;
+  const explicitSmtp = nodeEnv === "test"
+    ? process.env.SMTP_URL
+    : (process.env.SMTP_URL ? (e?.SMTP_URL ?? process.env.SMTP_URL) : undefined);
+  if (explicitSmtp) return explicitSmtp;
+  if (nodeEnv === "production") return undefined;
+  return e?.SMTP_URL ?? "smtp://localhost:1025";
+}
+
+const transportPool = new Map<string, nodemailer.Transporter>();
+
+function getPooledTransport(smtpUrl: string): nodemailer.Transporter {
+  let transport = transportPool.get(smtpUrl);
+  if (!transport) {
+    transport = nodemailer.createTransport(smtpUrl, {
+      pool: true,
+      connectionTimeout: 10_000,
+      socketTimeout: 15_000,
+    });
+    transportPool.set(smtpUrl, transport);
+  }
+  return transport;
 }
 
 export interface SendEmailInput {
@@ -32,17 +60,20 @@ export async function sendEmail(
   if (!smtpUrl) {
     throw new AppError("EMAIL_NOT_CONFIGURED", "SMTP is not configured: set SMTP_URL to send email", 500);
   }
-  const transport = nodemailer.createTransport(smtpUrl);
+  const isOverride = Boolean(overrides.smtpUrl);
+  const transport = isOverride
+    ? nodemailer.createTransport(smtpUrl, { connectionTimeout: 10_000, socketTimeout: 15_000 })
+    : getPooledTransport(smtpUrl);
   try {
     await transport.sendMail({
-      from: overrides.from ?? env().EMAIL_FROM,
+      from: overrides.from ?? safeEnv()?.EMAIL_FROM ?? "Dafqly <no-reply@localhost>",
       to: input.to,
       subject: input.subject,
       text: input.text,
       html: input.html,
     });
   } finally {
-    transport.close();
+    if (isOverride) transport.close();
   }
 }
 

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import {
   buildOperationalNotificationCandidates,
@@ -133,10 +133,12 @@ export async function syncWorkspaceNotifications(
           debtorId: payments.debtorId,
           debtorName: debtors.displayName,
           amountMinor: payments.amountMinor,
+          currency: payments.currency,
         })
         .from(payments)
         .innerJoin(debtors, eq(debtors.id, payments.debtorId))
         .where(eq(payments.status, "claimed"))
+        .orderBy(asc(payments.createdAt), asc(payments.id))
         .limit(11),
       tx
         .select({
@@ -149,6 +151,7 @@ export async function syncWorkspaceNotifications(
         .innerJoin(debtors, eq(debtors.id, disputes.debtorId))
         .innerJoin(invoices, eq(invoices.id, disputes.invoiceId))
         .where(eq(disputes.status, "open"))
+        .orderBy(asc(disputes.createdAt), asc(disputes.id))
         .limit(11),
       tx
         .select({
@@ -159,6 +162,7 @@ export async function syncWorkspaceNotifications(
         .from(messageIntents)
         .innerJoin(messages, eq(messages.id, messageIntents.messageId))
         .where(and(eq(messageIntents.resolvedBy, "human"), eq(messageIntents.actionTaken, "human_inbox")))
+        .orderBy(asc(messageIntents.createdAt), asc(messageIntents.id))
         .limit(11),
       tx
         .select({
@@ -168,17 +172,21 @@ export async function syncWorkspaceNotifications(
           dueDate: cheques.dueDate,
           amountMinor: cheques.amountMinor,
           status: cheques.status,
+          currency: invoices.currency,
         })
         .from(cheques)
         .innerJoin(debtors, eq(debtors.id, cheques.debtorId))
+        .leftJoin(invoices, eq(invoices.id, cheques.invoiceId))
         .where(
           sql`(${cheques.status} = 'bounced' OR (${cheques.status} IN ('held', 'deposited') AND ${cheques.dueDate} <= ${dueWindowEnd}))`,
         )
+        .orderBy(asc(cheques.dueDate), asc(cheques.id))
         .limit(11),
       tx
         .select({
           debtorId: debtors.id,
           displayName: debtors.displayName,
+          currency: invoices.currency,
           dueOn: invoices.dueOn,
           remainingMinor: sql<string>`(${invoices.amountMinor} - ${invoices.paidMinor})::text`,
         })
@@ -191,6 +199,7 @@ export async function syncWorkspaceNotifications(
             lte(invoices.dueOn, overdueCutoff),
           ),
         )
+        .orderBy(asc(invoices.dueOn), asc(invoices.id))
         .limit(31),
       // F-06: tenant display currency for the notification amounts.
       tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId)).limit(1),
@@ -210,21 +219,24 @@ export async function syncWorkspaceNotifications(
     const chequeRowsCapped = take(chequeRows, 10, "cheques");
     const overdueRowsCapped = take(overdueRows, 30, "overdue");
 
-    const overdueByDebtor = new Map<string, { debtorId: string; displayName: string; overdueMinor: bigint; maxDaysOverdue: number }>();
+    const tenantCurrency = normalizeCurrencyCode(tenantRow?.[0]?.settings?.currency);
+    const overdueByDebtor = new Map<string, { debtorId: string; displayName: string; currency: string; overdueMinor: bigint; maxDaysOverdue: number }>();
     const todayMs = Date.parse(`${todayIso}T00:00:00Z`);
     for (const r of overdueRowsCapped) {
       const rem = BigInt(r.remainingMinor || "0");
       if (rem <= 0n) continue;
       const dueMs = Date.parse(`${r.dueOn}T00:00:00Z`);
       const days = Math.max(0, Math.floor((todayMs - dueMs) / 86_400_000));
-      const cur = overdueByDebtor.get(r.debtorId);
+      const key = `${r.debtorId}|${r.currency}`;
+      const cur = overdueByDebtor.get(key);
       if (cur) {
         cur.overdueMinor += rem;
         if (days > cur.maxDaysOverdue) cur.maxDaysOverdue = days;
       } else {
-        overdueByDebtor.set(r.debtorId, {
+        overdueByDebtor.set(key, {
           debtorId: r.debtorId,
           displayName: r.displayName,
+          currency: r.currency,
           overdueMinor: rem,
           maxDaysOverdue: days,
         });
@@ -236,14 +248,14 @@ export async function syncWorkspaceNotifications(
       pendingClaims: claimRowsCapped,
       openDisputes: disputeRowsCapped,
       humanIntents: intentRowsCapped.map((i) => ({ id: i.id, intent: i.intent, bodySnippet: i.bodySnippet ?? "" })),
-      upcomingCheques: chequeRowsCapped,
+      upcomingCheques: chequeRowsCapped.map((c) => ({ ...c, currency: c.currency ?? tenantCurrency })),
       severeOverdueDebtors: [...overdueByDebtor.values()].sort((a, b) =>
         b.overdueMinor > a.overdueMinor ? 1 : b.overdueMinor < a.overdueMinor ? -1 : 0,
       ),
       quotaRatio,
       briefingSummaryAr: briefingSummary?.summaryAr,
       briefingSummaryEn: briefingSummary?.summaryEn,
-      currency: normalizeCurrencyCode(tenantRow?.[0]?.settings?.currency),
+      currency: tenantCurrency,
     });
 
     if (candidates.length === 0) return { created: 0, truncatedCategories };

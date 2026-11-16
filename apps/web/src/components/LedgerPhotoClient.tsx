@@ -2,10 +2,12 @@
 import { inputVariants } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
+import { formatCurrencyMinor, parseMoney } from "@tahseel/core";
 import { Camera, CheckCircle, Eye, Notebook, Trash, WarningCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
+import { useCurrency } from "./CurrencyContext";
 import { Panel, StatusPill, btnGhost, btnPrimary } from "./ui";
 
 /**
@@ -39,13 +41,17 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+type RowEdit = Partial<RowData> & { amount?: string };
+
 export function LedgerPhotoClient() {
   const t = useTranslations("ledgerPhoto");
   const locale = useLocale();
   const isAr = locale === "ar";
+  const { currency } = useCurrency();
   const [job, setJob] = useState<Job | null>(null);
   const [jobs, setJobs] = useState<JobLite[]>([]);
-  const [edits, setEdits] = useState<Record<string, Partial<RowData>>>({});
+  const [edits, setEdits] = useState<Record<string, RowEdit>>({});
+  const initialLoadedRef = useRef(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
@@ -71,13 +77,15 @@ export function LedgerPhotoClient() {
   }, []);
 
   useEffect(() => {
+    if (initialLoadedRef.current) return;
+    initialLoadedRef.current = true;
     void loadJobs().then((list) => {
       const pending = list?.find((j) => j.status === "pending_review");
-      if (pending && !job) {
+      if (pending) {
         void loadJob(pending.id);
       }
     });
-  }, [loadJobs, loadJob, job]);
+  }, [loadJobs, loadJob]);
 
   async function onDeleteJob(id: string) {
     setBusy(true); setMsg(null);
@@ -109,19 +117,26 @@ export function LedgerPhotoClient() {
     } catch { setMsg(t("failed")); setProgress(null); } finally { setBusy(false); }
   }
 
+  async function saveRowEdit(rowId: string, e: RowEdit) {
+    if (e.amount !== undefined) {
+      parseMoney(e.amount, currency);
+    }
+    await trpc.ledgerAi.updateRow.mutate({
+      rowId,
+      ...(e.name !== undefined ? { name: e.name } : {}),
+      ...(e.phone !== undefined ? { phone: e.phone } : {}),
+      ...(e.amount !== undefined ? { amount: e.amount.trim() } : {}),
+      ...(e.date !== undefined ? { date: e.date } : {}),
+      ...(e.debtorId !== undefined ? { debtorId: e.debtorId } : {}),
+    });
+  }
+
   async function onSaveRow(row: JobRow) {
     const e = edits[row.id];
     if (!e) return;
-    setBusy(true);
+    setBusy(true); setMsg(null);
     try {
-      await trpc.ledgerAi.updateRow.mutate({
-        rowId: row.id,
-        ...(e.name !== undefined ? { name: e.name } : {}),
-        ...(e.phone !== undefined ? { phone: e.phone } : {}),
-        ...(e.amountMinor !== undefined ? { amount: (Number(e.amountMinor) / 100).toFixed(2) } : {}),
-        ...(e.date !== undefined ? { date: e.date } : {}),
-        ...(e.debtorId !== undefined ? { debtorId: e.debtorId } : {}),
-      });
+      await saveRowEdit(row.id, e);
       if (job) await loadJob(job.id);
     } catch { setMsg(t("failed")); } finally { setBusy(false); }
   }
@@ -130,6 +145,13 @@ export function LedgerPhotoClient() {
     if (!job) return;
     setBusy(true); setMsg(null);
     try {
+      const pendingEdits = Object.entries(edits);
+      for (const [rowId, e] of pendingEdits) {
+        await saveRowEdit(rowId, e);
+      }
+      if (pendingEdits.length > 0) {
+        setEdits({});
+      }
       const r = await trpc.ledgerAi.commit.mutate({ jobId: job.id });
       setMsg(t("committed", { invoices: r.createdInvoices, debtors: r.createdDebtors, skipped: r.skippedInvalid }));
       await loadJob(job.id);
@@ -137,7 +159,7 @@ export function LedgerPhotoClient() {
     } catch { setMsg(t("failed")); } finally { setBusy(false); }
   }
 
-  const edit = (row: JobRow, patch: Partial<RowData>) =>
+  const edit = (row: JobRow, patch: RowEdit) =>
     setEdits((prev) => ({ ...prev, [row.id]: { ...prev[row.id], ...patch } }));
   const val = (row: JobRow, key: keyof RowData): string => {
     const e = edits[row.id];
@@ -175,7 +197,7 @@ export function LedgerPhotoClient() {
             multiple
             disabled={busy}
             className="sr-only"
-            onChange={(e) => { if (e.target.files?.length) void onFiles(e.target.files); }}
+            onChange={(e) => { const files = e.target.files; e.target.value = ""; if (files?.length) void onFiles(files); }}
           />
         </label>
 
@@ -274,8 +296,16 @@ export function LedgerPhotoClient() {
                     </td>
                     <td className={`px-2 py-1.5 ${row.cellConfidence && row.cellConfidence.amount < LOW ? lowCell : ""}`}>
                       <input aria-label={t("amount")} className={cellInput}
-                        value={edits[row.id]?.amountMinor !== undefined ? String(Number(edits[row.id]!.amountMinor) / 100) : row.data ? (Number(row.data.amountMinor) / 100).toFixed(2) : ""}
-                        onChange={(e) => edit(row, { amountMinor: String(Math.round(Number(e.target.value || "0") * 100)) })} />
+                        value={edits[row.id]?.amount !== undefined ? edits[row.id]!.amount! : row.data ? formatCurrencyMinor(BigInt(row.data.amountMinor), currency) : ""}
+                        onChange={(e) => edit(row, { amount: e.target.value })}
+                        onBlur={(e) => {
+                          try {
+                            const minor = parseMoney(e.target.value, currency);
+                            edit(row, { amount: formatCurrencyMinor(minor, currency), amountMinor: minor.toString() });
+                          } catch {
+                            // Keep raw string until user fixes or save surfaces validation error
+                          }
+                        }} />
                       {row.cellConfidence && row.cellConfidence.amount < LOW && lowNote}
                     </td>
                     <td className="px-2 py-1.5">

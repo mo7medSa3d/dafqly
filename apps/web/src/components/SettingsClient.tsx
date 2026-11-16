@@ -2,6 +2,7 @@
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Buildings, CheckCircle, Clock, CurrencyDollar, FloppyDisk, GearSix, ShieldCheck, WarningCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { signOut } from "@/lib/auth-client";
@@ -77,6 +78,7 @@ const TIMEZONES = [
 ] as const;
 
 export function SettingsClient({ locale }: { locale: string }) {
+  const router = useRouter();
   const isAr = locale === "ar";
   const [data, setData] = useState<SettingsData | null>(null);
   const [busy, setBusy] = useState(false);
@@ -169,10 +171,8 @@ export function SettingsClient({ locale }: { locale: string }) {
         exportLanguage,
       });
       setSaved(true);
-      setTimeout(() => {
-        window.location.reload();
-      }, 800);
       await load();
+      router.refresh();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : (isAr ? "تعذّر حفظ التعديلات" : "Failed to save settings"));
     } finally {

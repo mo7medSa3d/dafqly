@@ -21,7 +21,7 @@ describe("template registry", () => {
       invoice_due_today: { business: "B", amount: "1" },
       invoice_overdue: { business: "B", amount: "1", due_date: "2026-01-01" },
       payment_received: { amount: "1", remaining: "0" },
-      payment_received_pending: { amount: "1" },
+      payment_received_pending: {},
     };
     for (const key of Object.keys(TEMPLATES) as TemplateKey[]) {
       expect(renderTemplate(key, "ar", samples[key]).length).toBeGreaterThan(5);

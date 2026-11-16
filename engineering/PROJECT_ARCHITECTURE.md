@@ -1,7 +1,6 @@
 # DAFQLY / Tahseel — Project Architecture
 
-Status: written 2026-11-13 (Prompt 09) from the shipped tree at `3bf42a8`
-plus the verification evidence in `TESTING_EVIDENCE.md`. Internal name
+Status: written 2026-11-13 (Prompt 09) from the shipped tree at `3bf42a8`. Internal name
 **Tahseel (تحصيل)**; public brand **DAFQLY (دفّقلي)**; package `tahseel`
 v0.9.0. Multi-tenant, Arabic-first (RTL default, EN LTR) receivables and
 collections SaaS for Egyptian small businesses.

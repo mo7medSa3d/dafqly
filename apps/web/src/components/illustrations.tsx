@@ -5,7 +5,7 @@
  * --status-paid-fg) so Light and Dark modes render with crisp contrast.
  */
 
-export function HeroDashboardIllustration({ size = 480 }: { size?: number }) {
+function HeroDashboardIllustration({ size = 480 }: { size?: number }) {
   return (
     <svg width={size} height={Math.round(size * 0.625)} viewBox="0 0 800 500" fill="none" aria-hidden="true" focusable="false" className="h-auto w-full max-w-2xl">
       <rect width="800" height="500" rx="28" fill="var(--illus-stage)" />
@@ -77,29 +77,6 @@ export function ReceivablesIllustration({ size = 260 }: { size?: number }) {
   );
 }
 
-export function SecuritySignInIllustration({ size = 380 }: { size?: number }) {
-  return (
-    <svg width={size} height={Math.round(size * 0.625)} viewBox="0 0 800 500" fill="none" aria-hidden="true" focusable="false" className="h-auto w-full max-w-lg">
-      <rect width="800" height="500" rx="28" fill="var(--illus-stage)" />
-      <circle cx="650" cy="120" r="105" fill="var(--chart-2)" opacity="0.14" />
-      <circle cx="170" cy="400" r="88" fill="var(--chart-1)" opacity="0.14" />
-      <rect x="145" y="130" width="510" height="250" rx="20" fill="var(--card)" stroke="var(--border)" strokeWidth="2" />
-      <rect x="175" y="160" width="84" height="68" rx="12" fill="var(--muted)" />
-      <circle cx="217" cy="181" r="15" fill="var(--foreground)" />
-      <path d="M191 214C191 204.6 198.6 197 208 197H226C235.4 197 243 204.6 243 214V217H191V214Z" fill="var(--foreground)" />
-      <rect x="283" y="167" width="183" height="10" rx="5" fill="var(--muted-foreground)" opacity="0.5" />
-      <rect x="283" y="191" width="120" height="9" rx="4.5" fill="var(--chart-2)" opacity="0.7" />
-      <rect x="175" y="256" width="300" height="36" rx="8" fill="var(--muted)" stroke="var(--border)" strokeWidth="1.5" />
-      <rect x="175" y="308" width="300" height="36" rx="18" fill="var(--primary)" />
-      <rect x="279" y="323" width="92" height="6" rx="3" fill="var(--primary-foreground)" />
-      <path d="M534 194V243H610V194C610 173.013 592.987 156 572 156C551.013 156 534 173.013 534 194Z" fill="none" stroke="var(--foreground)" strokeWidth="13" strokeLinecap="round" />
-      <rect x="520" y="243" width="105" height="76" rx="16" fill="var(--chart-2)" />
-      <circle cx="572.5" cy="273.5" r="7.5" fill="var(--primary-foreground)" />
-      <path d="M572.5 281V296" stroke="var(--primary-foreground)" strokeWidth="4" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 export function SecurityLockBadge({ size = 44 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 140 160" fill="none" aria-hidden="true" focusable="false" className="shrink-0">
@@ -134,10 +111,6 @@ export function ConnectionErrorIllustration({ size = 130 }: { size?: number }) {
       <circle cx="100" cy="58" r="10" fill="var(--chart-1)" />
     </svg>
   );
-}
-
-export function HeroBandArt({ size = 320 }: { size?: number }) {
-  return <HeroDashboardIllustration size={size} />;
 }
 
 export function ForecastIllustration({ size = 130 }: { size?: number }) {

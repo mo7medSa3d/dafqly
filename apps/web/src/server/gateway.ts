@@ -1,8 +1,8 @@
-import { and, desc, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import {
-  AppError, allocatePayment, decideGatewayCallback, localDateOf, outstandingForLink,
+  AppError, allocatePayment, decideGatewayCallback, isTerminalStatus, localDateOf, outstandingForLink,
   parseMoney, parsePaymobCallback, planReversalAllocations, redactPaymobPayload,
   reconcileGateway, type PaymobCallback, type PaymobTxnLike,
 } from "@tahseel/core";
@@ -102,6 +102,16 @@ export async function createGatewayLink(
   deps: GatewayDeps, tenantId: string, actor: string,
   input: CreateGatewayLinkInput, opts: { redirectionUrl?: string } = {},
 ): Promise<PaymentLinkView> {
+  // M8: replay — check idempotency key BEFORE pricing so retries on paid links replay cleanly.
+  if (input.idempotencyKey) {
+    const replay = await withTenant(deps.app, tenantId, async (tx) => {
+      const [row] = await tx.select().from(paymentLinks)
+        .where(and(eq(paymentLinks.tenantId, tenantId), eq(paymentLinks.idempotencyKey, input.idempotencyKey!)));
+      return row ?? null;
+    });
+    if (replay) return toPaymentLinkView(replay);
+  }
+
   // Read + price inside RLS first: the amount comes from the ledger only.
   const priced = await withTenant(deps.app, tenantId, async (tx) => {
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
@@ -126,16 +136,6 @@ export async function createGatewayLink(
     if (amountMinor <= 0n) throw new AppError("NOTHING_DUE", "Nothing is due for this payment link", 400);
     return { debtor, amountMinor };
   });
-
-  // M8: replay — the same key returns the original link, no new intention.
-  if (input.idempotencyKey) {
-    const replay = await withTenant(deps.app, tenantId, async (tx) => {
-      const [row] = await tx.select().from(paymentLinks)
-        .where(and(eq(paymentLinks.tenantId, tenantId), eq(paymentLinks.idempotencyKey, input.idempotencyKey!)));
-      return row ?? null;
-    });
-    if (replay) return toPaymentLinkView(replay);
-  }
 
   const reference = `tahseel_${uuidv7()}`;
   // Safety: a production deploy without Paymob keys must fail loudly here
@@ -232,10 +232,16 @@ interface ReversalPlan {
  * reduce the net. The affected invoices are locked (F01) before planning.
  */
 async function loadReversalPlan(tx: Db, original: typeof payments.$inferSelect, refundMinor: bigint): Promise<ReversalPlan | null> {
+  if (refundMinor <= 0n) return null;
   const related = await tx.select().from(paymentAllocations)
     .where(eq(paymentAllocations.paymentId, original.id));
   const reversals = await tx.select().from(payments)
     .where(and(eq(payments.reversalOf, original.id), ne(payments.status, "rejected")));
+  const alreadyReversed = reversals.reduce((s, r) => s - r.amountMinor, 0n);
+  const maxReversible = original.amountMinor - alreadyReversed;
+  if (maxReversible <= 0n) return null;
+  const targetRefund = refundMinor < maxReversible ? refundMinor : maxReversible;
+
   const reversalAllocs = reversals.length === 0 ? [] : await tx.select().from(paymentAllocations)
     .where(inArray(paymentAllocations.paymentId, reversals.map((r) => r.id)));
   // Net still-reversible allocations per invoice (original minus prior reversals).
@@ -246,10 +252,10 @@ async function loadReversalPlan(tx: Db, original: typeof payments.$inferSelect, 
   const netAllocs = [...net.entries()]
     .filter(([, v]) => v > 0n)
     .map(([invoiceId, amountMinor]) => ({ invoiceId, amountMinor }));
+  await lockDebtor(tx, original.debtorId);
   await lockInvoicesById(tx, netAllocs.map((a) => a.invoiceId));
-  const plan = planReversalAllocations(netAllocs, refundMinor);
-  if (plan.reversedMinor <= 0n) return null;
-  return plan;
+  const plan = planReversalAllocations(netAllocs, targetRefund);
+  return { allocations: plan.allocations, reversedMinor: targetRefund };
 }
 
 async function insertReversal(
@@ -270,6 +276,9 @@ async function insertReversal(
   for (const a of plan.allocations) {
     await tx.insert(paymentAllocations).values({ tenantId, paymentId: id, invoiceId: a.invoiceId, amountMinor: a.amountMinor });
     await recomputeInvoicePaid(tx, tenantId, a.invoiceId);
+  }
+  if (plan.allocations.length === 0) {
+    await recomputeDebtorCredit(tx, tenantId, original.debtorId);
   }
   await audit(tx, tenantId, actor, "payment.reversed", "payment", id, {
     reversalOf: original.id, reversedMinor: plan.reversedMinor.toString(),
@@ -301,117 +310,186 @@ export async function handlePaymobCallback(
 
   // Inbox (platform-level, owner connection): identical redeliveries dedupe.
   // M3: store the redacted payload — source_data (masked PAN) never persists.
-  await deps.owner.insert(webhookEvents).values({
+  const dedupeKey = `paymob:${cb.transactionId}:${cb.success}:${cb.isRefunded}:${cb.isVoided}:${cb.pending}`;
+  const insertedWebhook = await deps.owner.insert(webhookEvents).values({
     provider: "paymob",
-    dedupeKey: `paymob:${cb.transactionId}:${cb.success}:${cb.isRefunded}:${cb.isVoided}:${cb.pending}`,
+    dedupeKey,
     payload: redactPaymobPayload(payload) as Record<string, unknown>,
-    processedAt: now,
-  }).onConflictDoNothing();
+    processedAt: null,
+  }).onConflictDoNothing().returning({ id: webhookEvents.id });
+  if (insertedWebhook.length === 0) {
+    const [existingWebhook] = await deps.owner.select({ processedAt: webhookEvents.processedAt })
+      .from(webhookEvents).where(eq(webhookEvents.dedupeKey, dedupeKey));
+    if (existingWebhook?.processedAt !== null && existingWebhook?.processedAt !== undefined) {
+      return { outcome: "duplicate" };
+    }
+  }
 
-  if (!cb.specialReference) return { outcome: "unmatched", reason: "no special_reference" };
+  if (!cb.specialReference) {
+    await deps.owner.update(webhookEvents).set({ processedAt: now, processError: null }).where(eq(webhookEvents.dedupeKey, dedupeKey));
+    return { outcome: "unmatched", reason: "no special_reference" };
+  }
   const [link] = await deps.owner.select().from(paymentLinks)
     .where(eq(paymentLinks.specialReference, cb.specialReference));
-  if (!link) return { outcome: "unmatched", reason: "unknown special_reference" };
+  if (!link) {
+    await deps.owner.update(webhookEvents).set({ processedAt: now, processError: null }).where(eq(webhookEvents.dedupeKey, dedupeKey));
+    return { outcome: "unmatched", reason: "unknown special_reference" };
+  }
   const tenantId = link.tenantId;
 
-  const result = await withTenant(deps.app, tenantId, async (tx): Promise<WebhookOutcome & { replan: string[] }> => {
-    const [existing] = await tx.select().from(payments)
-      .where(eq(payments.gatewayTransactionId, cb.transactionId));
-    const decision = decideGatewayCallback(cb, {
-      link: { amountMinor: link.amountMinor, status: link.status, expiresAt: link.expiresAt },
-      now, txnAlreadyProcessed: Boolean(existing),
-    });
-    if (decision.action === "duplicate") return { outcome: "duplicate", replan: [] };
+  let result: WebhookOutcome & { replan: string[] };
+  try {
+    result = await withTenant(deps.app, tenantId, async (tx): Promise<WebhookOutcome & { replan: string[] }> => {
+      const [lockedLink] = await tx.select().from(paymentLinks)
+        .where(eq(paymentLinks.id, link.id))
+        .for("update");
+      if (!lockedLink) return { outcome: "unmatched", reason: "unknown special_reference", replan: [] };
 
-    const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
-    const receivedOn = localDateOf(now, tenant?.timezone ?? "Africa/Cairo");
+      const isReversalCb = cb.isRefunded || cb.isVoided;
+      const reversalTxnId = `rev:${cb.transactionId}`;
+      const [existing] = await tx.select().from(payments)
+        .where(isReversalCb
+          ? or(and(eq(payments.gatewayTransactionId, cb.transactionId), isNotNull(payments.reversalOf)), eq(payments.gatewayTransactionId, reversalTxnId))
+          : eq(payments.gatewayTransactionId, cb.transactionId));
+      if (!existing && cb.currency !== lockedLink.currency) {
+        await audit(tx, tenantId, null, "payment_link.callback_ignored", "payment_link", lockedLink.id, {
+          reason: "currency_mismatch", expectedCurrency: lockedLink.currency, callbackCurrency: cb.currency, transactionId: cb.transactionId,
+        });
+        return { outcome: "ignored", reason: "currency_mismatch", replan: [] };
+      }
 
-    if (decision.action === "ignore") {
-      if (decision.reason === "amount_mismatch" && link.status === "pending") {
-        await tx.update(paymentLinks).set({ status: "amount_mismatch", updatedAt: now })
-          .where(eq(paymentLinks.id, link.id));
-      }
-      if (decision.reason === "link_expired" && link.status === "pending") {
-        await tx.update(paymentLinks).set({ status: "expired", updatedAt: now })
-          .where(eq(paymentLinks.id, link.id));
-      }
-      await audit(tx, tenantId, null, "payment_link.callback_ignored", "payment_link", link.id, {
-        reason: decision.reason, transactionId: cb.transactionId,
+      const decision = decideGatewayCallback(cb, {
+        link: { amountMinor: lockedLink.amountMinor, status: lockedLink.status, expiresAt: lockedLink.expiresAt },
+        now, txnAlreadyProcessed: Boolean(existing),
       });
-      return { outcome: "ignored", reason: decision.reason, replan: [] };
-    }
+      if (decision.action === "duplicate") return { outcome: "duplicate", replan: [] };
 
-    if (decision.action === "reverse") {
-      let original: typeof payments.$inferSelect | undefined;
-      if (link.paidPaymentId) {
-        [original] = await tx.select().from(payments).where(eq(payments.id, link.paidPaymentId));
-      }
-      if (!original) {
-        const byOrder = await tx.select().from(payments)
-          .where(and(eq(payments.gatewayOrderId, cb.orderId), eq(payments.status, "confirmed"), isNull(payments.reversalOf)))
-          .orderBy(desc(payments.createdAt));
-        original = byOrder[0];
-      }
-      if (!original) return { outcome: "unmatched", reason: "reversal without an original payment", replan: [] };
-      const reversal = await insertReversal(tx, tenantId, null, original, decision.amountMinor,
-        { transactionId: cb.transactionId, orderId: cb.orderId }, receivedOn);
-      if (!reversal) return { outcome: "duplicate", reason: "already fully reversed", replan: [] };
-      return { outcome: "reversed", paymentId: reversal.id, replan: reversal.invoiceIds };
-    }
+      const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
+      const receivedOn = localDateOf(now, tenant?.timezone ?? "Africa/Cairo");
 
-    // fulfil: allocate the verified amount. The linked invoice is served
-    // first; any remainder flows oldest-due-first over the debtor's other
-    // open EGP invoices. Lock the debtor before invoices, matching the
-    // manual-payment path, because the schema stores only ONE credit currency.
-    const lockedDebtor = await lockDebtor(tx, link.debtorId);
-    if (!lockedDebtor) return { outcome: "unmatched", reason: "debtor no longer exists", replan: [] };
-    const invs = (await lockDebtorInvoices(tx, link.debtorId)).filter((i) => i.currency === "EGP");
-    const targets = invs.map((i) => ({
-      invoiceId: i.id, amountMinor: i.amountMinor, paidMinor: i.paidMinor, dueOn: i.dueOn, status: i.status,
-    }));
-    const linked = link.invoiceId ? targets.filter((t) => t.invoiceId === link.invoiceId) : [];
-    const others = link.invoiceId ? targets.filter((t) => t.invoiceId !== link.invoiceId) : targets;
-    const first = allocatePayment(cb.amountMinor, linked);
-    const second = allocatePayment(first.creditMinor, others);
-    const allocations = [...first.allocations, ...second.allocations];
-    if (lockedDebtor.creditMinor !== 0n && lockedDebtor.creditCurrency !== "EGP" && second.creditMinor > 0n) {
-      // Paymob has already captured funds, but a second currency credit
-      // cannot be represented safely in this schema. Roll back the callback
-      // transaction so the provider can retry after a finance operator
-      // resolves the existing foreign-currency credit; never overwrite it.
-      throw new AppError("CURRENCY_CREDIT_CONFLICT", "Customer has an existing credit balance in another currency; reconcile it before booking this Paymob overpayment", 409);
-    }
-    if (lockedDebtor.creditMinor === 0n && lockedDebtor.creditCurrency !== "EGP") {
-      await tx.update(debtors).set({ creditCurrency: "EGP", updatedAt: now }).where(eq(debtors.id, link.debtorId));
-    }
-    const paymentId = uuidv7();
-    // H03: a concurrent duplicate callback can pass the txnAlreadyProcessed
-    // check above; the per-tenant unique index is the arbiter — a 0-row
-    // insert means the twin won, and this delivery is a duplicate, not a 500.
-    const inserted = await tx.insert(payments).values({
-      id: paymentId, tenantId, debtorId: link.debtorId,
-      invoiceId: allocations[0]?.invoiceId ?? link.invoiceId,
-      amountMinor: cb.amountMinor, currency: "EGP", method: "gateway", receivedOn,
-      referenceNo: cb.transactionId, status: "confirmed", source: "gateway_webhook",
-      gatewayTransactionId: cb.transactionId, gatewayOrderId: cb.orderId,
-    }).onConflictDoNothing({ target: [payments.tenantId, payments.gatewayTransactionId] })
-      .returning({ id: payments.id });
-    if (inserted.length === 0) return { outcome: "duplicate", replan: [] };
-    for (const a of allocations) {
-      await tx.insert(paymentAllocations).values({ tenantId, paymentId, invoiceId: a.invoiceId, amountMinor: a.amountMinor });
-    }
-    for (const a of allocations) await recomputeInvoicePaid(tx, tenantId, a.invoiceId);
-    // F05: a fulfilment with no open invoice left is pure credit — the
-    // per-invoice recompute above never runs, so recompute explicitly.
-    if (allocations.length === 0) await recomputeDebtorCredit(tx, tenantId, link.debtorId);
-    await tx.update(paymentLinks).set({ status: "paid", paidPaymentId: paymentId, updatedAt: now })
-      .where(eq(paymentLinks.id, link.id));
-    await audit(tx, tenantId, null, "payment.gateway_confirmed", "payment", paymentId, {
-      amountMinor: cb.amountMinor.toString(), transactionId: cb.transactionId,
-      allocations: allocations.length, creditMinor: second.creditMinor.toString(),
+      if (decision.action === "ignore") {
+        if (decision.reason === "amount_mismatch" && lockedLink.status === "pending") {
+          await tx.update(paymentLinks).set({ status: "amount_mismatch", updatedAt: now })
+            .where(eq(paymentLinks.id, lockedLink.id));
+        }
+        if (decision.reason === "link_expired" && lockedLink.status === "pending") {
+          await tx.update(paymentLinks).set({ status: "expired", updatedAt: now })
+            .where(eq(paymentLinks.id, lockedLink.id));
+        }
+        await audit(tx, tenantId, null, "payment_link.callback_ignored", "payment_link", lockedLink.id, {
+          reason: decision.reason, transactionId: cb.transactionId,
+        });
+        return { outcome: "ignored", reason: decision.reason, replan: [] };
+      }
+
+      if (decision.action === "reverse") {
+        let original: typeof payments.$inferSelect | undefined;
+        if (lockedLink.paidPaymentId) {
+          [original] = await tx.select().from(payments).where(eq(payments.id, lockedLink.paidPaymentId)).for("update");
+        }
+        if (!original) {
+          const byOrder = await tx.select().from(payments)
+            .where(and(eq(payments.gatewayOrderId, cb.orderId), eq(payments.status, "confirmed"), isNull(payments.reversalOf)))
+            .orderBy(desc(payments.createdAt))
+            .limit(1)
+            .for("update");
+          original = byOrder[0];
+        }
+        if (!original) return { outcome: "unmatched", reason: "reversal without an original payment", replan: [] };
+        if (cb.currency !== original.currency) {
+          await audit(tx, tenantId, null, "payment_link.callback_ignored", "payment_link", lockedLink.id, {
+            reason: "currency_mismatch", expectedCurrency: original.currency, callbackCurrency: cb.currency, transactionId: cb.transactionId,
+          });
+          return { outcome: "ignored", reason: "currency_mismatch", replan: [] };
+        }
+        const revGatewayTxnId = original.gatewayTransactionId === cb.transactionId ? reversalTxnId : cb.transactionId;
+        // If a merchant-initiated refund intent is currently in flight (status='claimed',
+        // gatewayTransactionId IS NULL), confirm it instead of inserting a second reversal.
+        const [claimedReversal] = await tx.select().from(payments)
+          .where(and(eq(payments.reversalOf, original.id), eq(payments.status, "claimed"), isNull(payments.gatewayTransactionId)))
+          .limit(1)
+          .for("update");
+        if (claimedReversal) {
+          await tx.update(payments).set({ status: "confirmed", gatewayTransactionId: revGatewayTxnId, updatedAt: now })
+            .where(eq(payments.id, claimedReversal.id));
+          const allocs = await tx.select({ invoiceId: paymentAllocations.invoiceId }).from(paymentAllocations)
+            .where(eq(paymentAllocations.paymentId, claimedReversal.id));
+          for (const a of allocs) await recomputeInvoicePaid(tx, tenantId, a.invoiceId);
+          if (allocs.length === 0) await recomputeDebtorCredit(tx, tenantId, original.debtorId);
+          await audit(tx, tenantId, null, "payment.refunded", "payment", claimedReversal.id, {
+            originalPaymentId: original.id, refundTransactionId: revGatewayTxnId, via: "webhook",
+          });
+          return { outcome: "reversed", paymentId: claimedReversal.id, replan: allocs.map((a) => a.invoiceId) };
+        }
+        const reversal = await insertReversal(tx, tenantId, null, original, decision.amountMinor,
+          { transactionId: revGatewayTxnId, orderId: cb.orderId }, receivedOn);
+        if (!reversal) return { outcome: "duplicate", reason: "already fully reversed", replan: [] };
+        return { outcome: "reversed", paymentId: reversal.id, replan: reversal.invoiceIds };
+      }
+
+      // fulfil: allocate the verified amount. The linked invoice is served
+      // first; any remainder flows oldest-due-first over the debtor's other
+      // open EGP invoices. Lock the debtor before invoices, matching the
+      // manual-payment path, because the schema stores only ONE credit currency.
+      const lockedDebtor = await lockDebtor(tx, lockedLink.debtorId);
+      if (!lockedDebtor) return { outcome: "unmatched", reason: "debtor no longer exists", replan: [] };
+      const invs = (await lockDebtorInvoices(tx, lockedLink.debtorId)).filter((i) => i.currency === "EGP");
+      const targets = invs.map((i) => ({
+        invoiceId: i.id, amountMinor: i.amountMinor, paidMinor: i.paidMinor, dueOn: i.dueOn, status: i.status,
+      }));
+      const linked = lockedLink.invoiceId ? targets.filter((t) => t.invoiceId === lockedLink.invoiceId) : [];
+      const others = lockedLink.invoiceId ? targets.filter((t) => t.invoiceId !== lockedLink.invoiceId) : targets;
+      const first = allocatePayment(cb.amountMinor, linked);
+      const second = allocatePayment(first.creditMinor, others);
+      const allocations = [...first.allocations, ...second.allocations];
+      if (lockedDebtor.creditMinor !== 0n && lockedDebtor.creditCurrency !== "EGP" && second.creditMinor > 0n) {
+        // Paymob has already captured funds, but a second currency credit
+        // cannot be represented safely in this schema. Roll back the callback
+        // transaction so the provider can retry after a finance operator
+        // resolves the existing foreign-currency credit; never overwrite it.
+        throw new AppError("CURRENCY_CREDIT_CONFLICT", "Customer has an existing credit balance in another currency; reconcile it before booking this Paymob overpayment", 409);
+      }
+      if (lockedDebtor.creditMinor === 0n && lockedDebtor.creditCurrency !== "EGP") {
+        await tx.update(debtors).set({ creditCurrency: "EGP", updatedAt: now }).where(eq(debtors.id, lockedLink.debtorId));
+      }
+      const paymentId = uuidv7();
+      // H03: a concurrent duplicate callback can pass the txnAlreadyProcessed
+      // check above; the per-tenant unique index is the arbiter — a 0-row
+      // insert means the twin won, and this delivery is a duplicate, not a 500.
+      const inserted = await tx.insert(payments).values({
+        id: paymentId, tenantId, debtorId: lockedLink.debtorId,
+        invoiceId: allocations[0]?.invoiceId ?? lockedLink.invoiceId,
+        amountMinor: cb.amountMinor, currency: "EGP", method: "gateway", receivedOn,
+        referenceNo: cb.transactionId, status: "confirmed", source: "gateway_webhook",
+        gatewayTransactionId: cb.transactionId, gatewayOrderId: cb.orderId,
+      }).onConflictDoNothing({ target: [payments.tenantId, payments.gatewayTransactionId] })
+        .returning({ id: payments.id });
+      if (inserted.length === 0) return { outcome: "duplicate", replan: [] };
+      for (const a of allocations) {
+        await tx.insert(paymentAllocations).values({ tenantId, paymentId, invoiceId: a.invoiceId, amountMinor: a.amountMinor });
+      }
+      for (const a of allocations) await recomputeInvoicePaid(tx, tenantId, a.invoiceId);
+      // F05: a fulfilment with no open invoice left is pure credit — the
+      // per-invoice recompute above never runs, so recompute explicitly.
+      if (allocations.length === 0) await recomputeDebtorCredit(tx, tenantId, lockedLink.debtorId);
+      await tx.update(paymentLinks).set({ status: "paid", paidPaymentId: paymentId, updatedAt: now })
+        .where(eq(paymentLinks.id, lockedLink.id));
+      await audit(tx, tenantId, null, "payment.gateway_confirmed", "payment", paymentId, {
+        amountMinor: cb.amountMinor.toString(), transactionId: cb.transactionId,
+        allocations: allocations.length, creditMinor: second.creditMinor.toString(),
+      });
+      return { outcome: "fulfilled", paymentId, replan: allocations.map((a) => a.invoiceId) };
     });
-    return { outcome: "fulfilled", paymentId, replan: allocations.map((a) => a.invoiceId) };
-  });
+    await deps.owner.update(webhookEvents)
+      .set({ processedAt: now, processError: null })
+      .where(eq(webhookEvents.dedupeKey, dedupeKey));
+  } catch (err) {
+    await deps.owner.update(webhookEvents)
+      .set({ processError: err instanceof Error ? err.message : String(err) })
+      .where(eq(webhookEvents.dedupeKey, dedupeKey))
+      .catch(() => undefined);
+    throw err;
+  }
 
   for (const invoiceId of result.replan) replanLater(tenantId, invoiceId);
   return { outcome: result.outcome, reason: result.reason, paymentId: result.paymentId };
@@ -435,12 +513,12 @@ export type RefundInputType = z.infer<typeof refundInput>;
  * 2. Provider refund with idempotency key `refund:<intent id>`.
  * 3. Tx2 — flip the row to CONFIRMED, store the provider transaction id,
  *    and recompute the invoices (balances move only now).
- * If the provider call fails, the intent is marked REJECTED (and its
- * allocations deleted) so the amount is refundable again. If the process
- * crashes between 2 and 3, the CLAIMED intent stays visible in
- * reconciliation; an owner confirms it with the provider's refund
- * transaction id (`confirmRefundIntent`) or rejects it only after
- * verifying with the provider that no refund went through.
+ * If the provider call throws, its outcome is treated as UNKNOWN: the
+ * CLAIMED intent and allocations remain reserved until an owner verifies
+ * the provider outcome. Network failures can happen after the provider has
+ * executed the refund. An owner confirms it with the provider transaction
+ * id (`confirmRefundIntent`) or rejects only after verifying no refund
+ * occurred (`rejectRefundIntent`).
  */
 export async function refundGatewayPayment(
   deps: GatewayDeps, tenantId: string, actor: string, input: RefundInputType,
@@ -488,24 +566,31 @@ export async function refundGatewayPayment(
       idempotencyKey: `refund:${intent.id}`,
     }));
   } catch (err) {
-    // Money never moved: release the claim so the amount is refundable again.
-    await withTenant(deps.app, tenantId, async (tx) => {
-      await tx.delete(paymentAllocations).where(eq(paymentAllocations.paymentId, intent.id));
-      await tx.update(payments).set({ status: "rejected", updatedAt: new Date() }).where(eq(payments.id, intent.id));
-      await audit(tx, tenantId, actor, "payment.refund_failed", "payment", intent.id, {
-        reversalOf: intent.payment.id, error: err instanceof Error ? err.message : "provider refund failed",
+    // A thrown network/provider error does not prove that the refund failed:
+    // Paymob may have executed it and the response may have been lost. Keep
+    // the reservation CLAIMED so another refund cannot be submitted. Only
+    // reject after an operator verifies that no refund reached the provider.
+    try {
+      await withTenant(deps.app, tenantId, async (tx) => {
+        await audit(tx, tenantId, actor, "payment.refund_outcome_unknown", "payment", intent.id, {
+          reversalOf: intent.payment.id,
+          errorClass: err instanceof Error ? err.name : "UnknownError",
+        });
       });
-    }).catch(() => { /* the claimed intent stays for reconciliation */ });
+    } catch (auditError) {
+      console.error("[gateway] failed to audit unknown Paymob refund outcome", auditError);
+    }
     throw err;
   }
 
   const written = await withTenant(deps.app, tenantId, async (tx) => {
-    const [row] = await tx.select().from(payments).where(eq(payments.id, intent.id));
+    const [row] = await tx.select().from(payments).where(eq(payments.id, intent.id)).for("update");
     if (!row || row.status !== "claimed") throw new AppError("INVALID_REFUND", "Refund intent is no longer pending", 409);
     await tx.update(payments).set({
       status: "confirmed", gatewayTransactionId: refundTransactionId, updatedAt: new Date(),
     }).where(eq(payments.id, intent.id));
     for (const a of intent.plan.allocations) await recomputeInvoicePaid(tx, tenantId, a.invoiceId);
+    if (intent.plan.allocations.length === 0) await recomputeDebtorCredit(tx, tenantId, intent.payment.debtorId);
     await audit(tx, tenantId, actor, "payment.refunded", "payment", intent.id, {
       originalPaymentId: intent.payment.id, refundTransactionId,
     });
@@ -525,14 +610,17 @@ export async function confirmRefundIntent(
   app: Db, tenantId: string, actor: string, reversalId: string, refundTransactionId: string,
 ): Promise<{ reversalId: string; reversedMinor: string }> {
   const result = await withTenant(app, tenantId, async (tx) => {
-    const [row] = await tx.select().from(payments).where(eq(payments.id, reversalId));
+    const [row] = await tx.select().from(payments).where(eq(payments.id, reversalId)).for("update");
     if (!row || row.reversalOf === null) throw new AppError("NOT_FOUND", "Refund intent not found", 404);
     if (row.status !== "claimed") throw new AppError("INVALID_REFUND", "Refund intent is no longer pending", 409);
+    await lockDebtor(tx, row.debtorId);
     const allocs = await tx.select().from(paymentAllocations).where(eq(paymentAllocations.paymentId, reversalId));
+    await lockInvoicesById(tx, allocs.map((a) => a.invoiceId));
     await tx.update(payments).set({
       status: "confirmed", gatewayTransactionId: refundTransactionId, updatedAt: new Date(),
     }).where(eq(payments.id, reversalId));
     for (const a of allocs) await recomputeInvoicePaid(tx, tenantId, a.invoiceId);
+    if (allocs.length === 0) await recomputeDebtorCredit(tx, tenantId, row.debtorId);
     await audit(tx, tenantId, actor, "payment.refunded", "payment", reversalId, {
       originalPaymentId: row.reversalOf, refundTransactionId, recovered: true,
     });
@@ -552,7 +640,7 @@ export async function rejectRefundIntent(
   app: Db, tenantId: string, actor: string, reversalId: string,
 ): Promise<void> {
   await withTenant(app, tenantId, async (tx) => {
-    const [row] = await tx.select().from(payments).where(eq(payments.id, reversalId));
+    const [row] = await tx.select().from(payments).where(eq(payments.id, reversalId)).for("update");
     if (!row || row.reversalOf === null) throw new AppError("NOT_FOUND", "Refund intent not found", 404);
     if (row.status !== "claimed") throw new AppError("INVALID_REFUND", "Refund intent is no longer pending", 409);
     await tx.delete(paymentAllocations).where(eq(paymentAllocations.paymentId, reversalId));
@@ -595,7 +683,7 @@ export async function confirmClaimedPaymentInTx(tx: Db, tenantId: string, actor:
       if (!inv || inv.currency !== payment.currency) {
         throw new AppError("CURRENCY_MISMATCH", "Claimed payment currency does not match its allocated invoice", 409);
       }
-      const outstanding = inv.amountMinor - inv.paidMinor;
+      const outstanding = isTerminalStatus(inv.status) ? 0n : inv.amountMinor - inv.paidMinor;
       const capped = a.amountMinor < outstanding ? a.amountMinor : outstanding;
       if (capped <= 0n) {
         await tx.delete(paymentAllocations).where(and(eq(paymentAllocations.paymentId, paymentId), eq(paymentAllocations.invoiceId, a.invoiceId)));
@@ -620,8 +708,9 @@ export async function confirmClaimedPaymentInTx(tx: Db, tenantId: string, actor:
     // F01: lock before auto-allocating; F05: consume same-currency credit.
     const invs = (await lockDebtorInvoices(tx, payment.debtorId)).filter((i) => i.currency === payment.currency);
     let effective = payment.amountMinor;
-    if (lockedDebtor.creditMinor > 0n && lockedDebtor.creditCurrency === payment.currency) {
+    if (lockedDebtor.creditMinor !== 0n && lockedDebtor.creditCurrency === payment.currency) {
       effective = payment.amountMinor + lockedDebtor.creditMinor;
+      if (effective < 0n) effective = 0n;
     }
     const plan = allocatePayment(effective, invs.map((i) => ({
       invoiceId: i.id, amountMinor: i.amountMinor, paidMinor: i.paidMinor, dueOn: i.dueOn, status: i.status,
@@ -653,7 +742,7 @@ export async function confirmClaimedPayment(app: Db, tenantId: string, actor: st
 
 /** Reject a claimed payment inside an existing transaction (see F06). */
 export async function rejectClaimedPaymentInTx(tx: Db, tenantId: string, actor: string, paymentId: string): Promise<void> {
-  const [payment] = await tx.select().from(payments).where(eq(payments.id, paymentId));
+  const [payment] = await tx.select().from(payments).where(eq(payments.id, paymentId)).for("update");
   if (!payment) throw new AppError("NOT_FOUND", "Payment not found", 404);
   if (payment.status !== "claimed") throw new AppError("INVALID_STATE", `Payment is ${payment.status}, not claimed`, 409);
   await tx.update(payments).set({ status: "rejected", confirmedBy: actor, updatedAt: new Date() })

@@ -137,16 +137,22 @@ export async function changePlan(
 
   // Free plans (trial, price 0) need no payment: effective immediately.
   if (plan.priceMinor > 0) {
-    const link = await deps.provider.createPaymentLink({
-      amountMinor: BigInt(plan.priceMinor), currency: "EGP",
-      reference: `sub_${created.id}`,
-      debtorName: "DAFQLY tenant", debtorEmail: "billing@tahseel.test", debtorPhone: "+201000000000",
-    }).catch(() => null);
+    let link: Awaited<ReturnType<typeof deps.provider.createPaymentLink>> | null = null;
+    try {
+      link = await deps.provider.createPaymentLink({
+        amountMinor: BigInt(plan.priceMinor), currency: "EGP",
+        reference: `sub_${created.id}`,
+        debtorName: "DAFQLY tenant", debtorEmail: "billing@tahseel.test", debtorPhone: "+201000000000",
+      });
+    } catch (err) {
+      console.error("[billing] subscription payment link creation failed", { tenantId, invoiceId: created.id, err });
+    }
+    if (!link) throw new AppError("PAYMENT_FAILED", "The payment provider rejected the subscription charge", 502);
     if (!deps.providerIsFake) {
       // Real provider: pending payment — record the intention, plan unchanged.
       const updated = await withTenant(deps.app, tenantId, async (tx) => {
         const [row] = await tx.update(subscriptionInvoices)
-          .set({ providerRef: link?.transactionId ?? null, updatedAt: new Date() })
+          .set({ providerRef: link.transactionId, updatedAt: new Date() })
           .where(eq(subscriptionInvoices.id, created.id)).returning();
         return row!;
       });

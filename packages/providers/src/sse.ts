@@ -18,8 +18,14 @@ export async function* readSseData(res: Response, signal?: AbortSignal): AsyncGe
     return lines.map((line) => line.slice(5).replace(/^ /, "")).join("\n");
   };
   try {
+    if (signal?.aborted) {
+      throw signal.reason ?? new DOMException("Aborted", "AbortError");
+    }
     while (true) {
       const { value, done } = await reader.read();
+      if (signal?.aborted) {
+        throw signal.reason ?? new DOMException("Aborted", "AbortError");
+      }
       if (done) break;
       buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, "\n");
       let boundary = buffer.indexOf("\n\n");

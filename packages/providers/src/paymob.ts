@@ -60,6 +60,7 @@ export class PaymobProvider implements PaymentProvider {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
     });
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) {
@@ -94,7 +95,7 @@ export class PaymobProvider implements PaymentProvider {
       ...(input.redirectionUrl ? { redirection_url: input.redirectionUrl } : {}),
     });
     const clientSecret = typeof data.client_secret === "string" ? data.client_secret : "";
-    const intentionId = typeof data.id === "string" ? data.id : "";
+    const intentionId = typeof data.id === "string" || typeof data.id === "number" ? String(data.id) : "";
     if (!clientSecret || !intentionId) throw new PaymobError(502, "intention response missing id/client_secret");
     return {
       url: `${this.base}/unifiedcheckout/?publicKey=${encodeURIComponent(this.config.publicKey)}&clientSecret=${encodeURIComponent(clientSecret)}`,
@@ -105,12 +106,22 @@ export class PaymobProvider implements PaymentProvider {
 
   async refundPayment(input: RefundInput): Promise<{ refundTransactionId: string }> {
     this.assertConfigured();
-    const transactionId = Number(input.transactionId);
-    if (!Number.isSafeInteger(transactionId)) throw new PaymobError(400, "transaction_id must be the numeric Paymob transaction id");
-    const data = await this.call("/api/acceptance/void_refund/refund", {
-      transaction_id: transactionId,
-      amount_cents: Number(input.amountMinor),
-    });
+    const rawTxnId = input.transactionId.trim();
+    const transactionId = Number(rawTxnId);
+    if (!rawTxnId || !Number.isSafeInteger(transactionId) || transactionId <= 0) {
+      throw new PaymobError(400, "transaction_id must be a positive numeric Paymob transaction id");
+    }
+    const amountCents = Number(input.amountMinor);
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+      throw new PaymobError(400, "amount_cents must be a positive safe integer");
+    }
+    const data = await this.call(
+      "/api/acceptance/void_refund/refund",
+      {
+        transaction_id: transactionId,
+        amount_cents: amountCents,
+      },
+    );
     const id = data.id;
     if (typeof id !== "number" && typeof id !== "string") throw new PaymobError(502, "refund response missing transaction id");
     return { refundTransactionId: String(id) };

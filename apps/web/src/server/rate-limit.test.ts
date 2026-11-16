@@ -59,8 +59,8 @@ describe("clientIp (H2)", () => {
   it("two trusted proxies take the entry two from the right", () => {
     expect(clientIp(headers("9.9.9.9, 10.0.0.1, 1.2.3.4"), 2)).toBe("10.0.0.1");
   });
-  it("zero trusted proxies ignore XFF entirely (fail-closed shared bucket)", () => {
-    expect(clientIp(headers("9.9.9.9, 1.2.3.4", "5.6.7.8"), 0)).toBe("5.6.7.8");
+  it("zero trusted proxies ignore XFF and x-real-ip entirely (fail-closed shared bucket)", () => {
+    expect(clientIp(headers("9.9.9.9, 1.2.3.4", "5.6.7.8"), 0)).toBe("local");
     expect(clientIp(headers("9.9.9.9, 1.2.3.4"), 0)).toBe("local");
   });
   it("no XFF falls back to x-real-ip, then local", () => {

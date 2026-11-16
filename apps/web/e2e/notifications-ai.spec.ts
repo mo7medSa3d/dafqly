@@ -17,7 +17,7 @@ async function signupAndOnboard(page: import("@playwright/test").Page, business:
   await expect(page).toHaveURL(/\/ar\/dashboard/);
 }
 
-test("Notifications Bell, Dashboard AI Briefing, Debtors Health & AI Copilot Drawer", async ({ page }) => {
+test("Notifications Bell, Dashboard KPIs, Debtors Health & AI Copilot Drawer", async ({ page }) => {
   await signupAndOnboard(page, "شركة التميز الذكية");
 
   // 1. Create an overdue customer and overdue invoice (> 14 days overdue)
@@ -36,12 +36,16 @@ test("Notifications Bell, Dashboard AI Briefing, Debtors Health & AI Copilot Dra
   await page.getByTestId("inv-create").click();
   await expect(page.getByTestId("invoice-row")).toHaveCount(1);
 
-  // 2. Dashboard: verify AI Executive Briefing & Top Suggested Follow-ups
+  // 2. Dashboard: the overdue invoice shows in the KPIs. NOTE 2026-11-15:
+  // this branch has NO dashboard AI briefing panel (the Quiet Ledger
+  // DashboardIntelligence component was deliberately not carried over —
+  // AI lives in the copilot drawer and the AI inbox). The old assertion on
+  // testid dashboard-ai-briefing was removed with the panel; the KPIs
+  // below prove the same overdue invoice reaches the dashboard.
   await clickNav(page, "nav-dashboard");
   await expect(page).toHaveURL(/\/ar\/dashboard/);
-  const briefing = page.getByTestId("dashboard-ai-briefing");
-  await expect(briefing).toBeVisible();
-  await expect(briefing).toContainText("شركة الساحل للمقاولات");
+  await expect(page.getByTestId("kpi-outstanding")).toContainText("8,500.00");
+  await expect(page.getByTestId("kpi-overdue")).toContainText("8,500.00");
 
   // 3. Notification Bell: trigger sync + open popover + mark all read
   const bellBtn = page.getByTestId("notification-bell-btn");

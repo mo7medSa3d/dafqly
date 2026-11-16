@@ -224,7 +224,7 @@ d("F5 gateway payments (service layer)", () => {
       .rejects.toMatchObject({ code: "INVALID_REFUND" });
   });
 
-  it("a refund callback (is_refunded) reverses idempotently", async () => {
+  it("does not book a refund callback until Paymob Transaction Inquiry verifies the cumulative amount", async () => {
     const debtor = await newDebtor("استرجاع كولباك");
     const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "450.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
     const link = await createGatewayLink(deps(), tenantId, user.id, { debtorId: debtor.id, invoiceId: inv.id });
@@ -237,9 +237,9 @@ d("F5 gateway payments (service layer)", () => {
       overrides: { is_refunded: true, has_parent_transaction: true, order: { id: (first.obj.order as { id: number }).id, merchant_order_id: row!.specialReference } },
     });
     const out = await handlePaymobCallback(deps(), refundCb.payload, refundCb.hmac, new Date());
-    expect(out.outcome).toBe("reversed");
+    expect(out).toMatchObject({ outcome: "ignored", reason: "refund_requires_inquiry" });
     const detail = await getDebtorDetail(app(), tenantId, debtor.id);
-    expect(detail.invoices[0]).toMatchObject({ paidMinor: "0", status: "open" });
+    expect(detail.invoices[0]).toMatchObject({ paidMinor: "45000", status: "paid" });
     const replay = await handlePaymobCallback(deps(), refundCb.payload, refundCb.hmac, new Date());
     expect(replay.outcome).toBe("duplicate");
   });
@@ -293,9 +293,9 @@ d("F5 gateway payments (service layer)", () => {
     expect(detail.invoices[0]).toMatchObject({ paidMinor: "0", status: "open" });
   });
 
-  // H3: a provider failure releases the claim — balances untouched, the
-  // amount is refundable again, and the failed intent is REJECTED.
-  it("H3: a failed provider refund rejects its intent and stays refundable", async () => {
+  // H3: a provider/network exception has an ambiguous outcome. The intent
+  // remains reserved until an owner verifies that no refund took place.
+  it("H3: an unknown provider refund outcome keeps its claim reserved", async () => {
     const debtor = await newDebtor("استرجاع فاشل");
     const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "500.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
     const link = await createGatewayLink(deps(), tenantId, user.id, { debtorId: debtor.id, invoiceId: inv.id });
@@ -310,13 +310,16 @@ d("F5 gateway payments (service layer)", () => {
     const failingDeps = (): GatewayDeps => ({ ...deps(), provider: throwing });
     await expect(refundGatewayPayment(failingDeps(), tenantId, user.id, { paymentId: paid.paymentId! }))
       .rejects.toThrow("provider down");
-    // The intent is REJECTED (not stuck CLAIMED) and the invoice is untouched.
+    // The intent stays CLAIMED and blocks a second provider submission.
     const intents = await ownerDb().select().from(payments).where(eq(payments.reversalOf, paid.paymentId!));
     expect(intents).toHaveLength(1);
-    expect(intents[0]!.status).toBe("rejected");
+    expect(intents[0]!.status).toBe("claimed");
+    await expect(refundGatewayPayment(deps(), tenantId, user.id, { paymentId: paid.paymentId! }))
+      .rejects.toMatchObject({ code: "INVALID_REFUND" });
     let detail = await getDebtorDetail(app(), tenantId, debtor.id);
     expect(detail.invoices[0]).toMatchObject({ paidMinor: "50000", status: "paid" });
-    // The same amount refunds fine afterwards.
+    // Only after provider-side verification may an owner release the claim.
+    await rejectRefundIntent(app(), tenantId, user.id, intents[0]!.id);
     const ok = await refundGatewayPayment(deps(), tenantId, user.id, { paymentId: paid.paymentId! });
     expect(ok.reversedMinor).toBe("50000");
     detail = await getDebtorDetail(app(), tenantId, debtor.id);

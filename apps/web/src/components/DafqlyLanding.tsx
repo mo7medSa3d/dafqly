@@ -6,1833 +6,381 @@ import { useRouter } from "next/navigation";
 import { useLocale } from "next-intl";
 import { ThemeToggle } from "./ThemeToggle";
 import { LocaleToggle } from "./LocaleToggle";
+import { BrandMark } from "./BrandMark";
+import {
+  ArrowLeft, ArrowRight, Bank, Bell, Camera, Check, Handshake,
+  List, LockKey, ShieldCheck, Sparkle, X, type LucideIcon,
+} from "@/components/ui/solid-icons";
+import { AiArt, ChequeArt, CtaArt, HeroBackdrop, OcrArt, PortalArt, RemindersArt, StepArt } from "./landing-art";
 
-/* ------------------------------------------------------------------ types */
+/* ------------------------------------------------------------------ copy */
 
-type NavLink = { label: string; target: string };
-type Palette = {
-  name: string;
-  accent: string;
-  frame: string;
-  colors: string[];
-};
-type ModuleItem = {
-  code: string;
-  title: string;
-  summary: string;
-  detail: string;
-  status: "open" | "ongoing" | "archived";
-  progress: number;
-  goal: string;
-  cta: string;
-};
-type CycleEvent = {
-  offsetDays: number;
-  time: string;
-  title: string;
-  place: string;
-  kind: string;
-  target: string;
-  stage: string;
-};
-type Tier = {
-  name: string;
-  price: string;
-  period?: string;
-  blurb: string;
-  perks: string[];
-  featured?: boolean;
+type FeatureId = "reminders" | "ai" | "ocr" | "cheques" | "portal";
+type Feature = { id: FeatureId; icon: LucideIcon; title: string; body: string };
+type Copy = {
+  nav: { features: string; how: string; start: string; login: string; menu: string };
+  hero: { title: string; sub: string; cta: string; secondary: string; note: string };
+  preview: { chipSent: string; chipPaid: string; title: string; sample: string; rows: { name: string; action: string; amount: string; tag: string; tone: "overdue" | "due" | "paid" }[]; total: string; totalLabel: string };
+  trust: string[];
+  featuresTitle: string;
+  featuresSub: string;
+  features: Feature[];
+  howTitle: string;
+  steps: { title: string; body: string }[];
+  cta: { title: string; sub: string; biz: string; email: string; button: string; errBiz: string; errEmail: string; perks: string[] };
+  footer: string;
 };
 
-/* ------------------------------------------------------------------ logic */
-
-function clamp(v: number, a: number, b: number): number {
-  return Math.min(b, Math.max(a, v));
-}
-
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function hashStr(s: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-function isEmail(s: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s.trim());
-}
-
-function easeOutCubic(t: number): number {
-  const c = clamp(t, 0, 1);
-  return 1 - Math.pow(1 - c, 3);
-}
-
-function lines(s: string): string[] {
-  return s.split(/\n|\\n/).filter((l) => l.length > 0);
-}
-
-type Bubble = { x: number; y: number; r: number; c: number; ph: number; amp: number; sp: number };
-
-function buildBubbles(seed: number, w: number, h: number, nColors: number, density = 1, scale = 1): Bubble[] {
-  const rnd = mulberry32(seed);
-  const unit = Math.max(6, Math.min(w, h) * 0.12 * scale);
-  const n = Math.round(clamp(((w * h) / (unit * unit * 1.35)) * density, 12, 260));
-  const out: Bubble[] = [];
-  for (let i = 0; i < n; i++) {
-    const r = Math.round(unit * (0.22 + 1.3 * Math.pow(rnd(), 2.3)) * 100) / 100;
-    out.push({
-      x: Math.round((rnd() * (w + r) - r / 2) * 100) / 100,
-      y: Math.round((rnd() * (h + r) - r / 2) * 100) / 100,
-      r,
-      c: 1 + Math.floor(rnd() * Math.max(1, nColors - 1)),
-      ph: rnd() * Math.PI * 2,
-      amp: 1 + rnd() * 3.5,
-      sp: 0.25 + rnd() * 0.6,
-    });
-  }
-  return out.sort((a, b) => b.r - a.r);
-}
-
-function bubbleCss(seed: number, colors: string[], n = 34, maxR = 46): string {
-  const rnd = mulberry32(seed);
-  const layers: string[] = [];
-  for (let i = 0; i < n; i++) {
-    const r = Math.round(6 + (maxR - 6) * Math.pow(rnd(), 1.8));
-    const x = Math.round(rnd() * 100);
-    const y = Math.round(rnd() * 100);
-    const c = colors[1 + Math.floor(rnd() * Math.max(1, colors.length - 1))] ?? colors[0];
-    layers.push(`radial-gradient(circle at ${x}% ${y}%, ${c} 0 ${r}px, transparent ${r + 0.6}px)`);
-  }
-  return `${layers.reverse().join(", ")}, ${colors[0] ?? "oklch(0.14 0 0)"}`;
-}
-
-const CYCLE_DAYS = 29.530588853;
-const REF_MS = Date.UTC(2000, 0, 6, 18, 14);
-
-function cyclePhase(at: Date | number) {
-  const ms = typeof at === "number" ? at : at.getTime();
-  const days = (ms - REF_MS) / 86400000;
-  const age = ((days % CYCLE_DAYS) + CYCLE_DAYS) % CYCLE_DAYS;
-  const fraction = age / CYCLE_DAYS;
-  const illumination = (1 - Math.cos(2 * Math.PI * fraction)) / 2;
-  return {
-    age,
-    fraction,
-    illumination,
-    waxing: fraction < 0.5,
-    daysToClose: (((0.5 - fraction) % 1) + 1) % 1 * CYCLE_DAYS,
-    daysToReset: ((1 - fraction) % 1) * CYCLE_DAYS,
-  };
-}
-
-function phasePath(fraction: number, r: number): string {
-  const f = ((fraction % 1) + 1) % 1;
-  const waxing = f < 0.5;
-  const c = Math.cos(2 * Math.PI * f);
-  const rx = Math.abs(c) * r;
-  const limb = waxing ? 1 : 0;
-  const term = waxing ? (c > 0 ? 0 : 1) : c < 0 ? 0 : 1;
-  const R = r.toFixed(2);
-  return `M0,-${R}A${R},${R} 0 0 ${limb} 0,${R}A${rx.toFixed(2)},${R} 0 0 ${term} 0,-${R}Z`;
-}
-
-function splitStat(s: string): { prefix: string; value: number; decimals: number; suffix: string } | null {
-  const m = s.match(/^(\D*?)(\d[\d,]*(?:\.\d+)?)(.*)$/);
-  if (!m) return null;
-  const num = m[2].replace(/,/g, "");
-  const dot = num.indexOf(".");
-  return { prefix: m[1], value: parseFloat(num), decimals: dot < 0 ? 0 : num.length - dot - 1, suffix: m[3] };
-}
-
-function formatStat(s: string, t: number): string {
-  const p = splitStat(s);
-  if (!p) return s;
-  const v = p.value * easeOutCubic(t);
-  const grouped = p.value >= 1000 && p.decimals === 0;
-  const body = grouped ? Math.round(v).toLocaleString("en-US") : v.toFixed(p.decimals);
-  return p.prefix + body + p.suffix;
-}
-
-function unwrapAngle(prev: number, next: number): number {
-  let d = (next - prev) % 360;
-  if (d > 180) d -= 360;
-  if (d < -180) d += 360;
-  return prev + d;
-}
-
-function workspaceNumber(name: string, email: string): string {
-  return "#" + String(100 + (hashStr(name.trim().toLowerCase() + "|" + email.trim().toLowerCase()) % 9900)).padStart(4, "0");
-}
-
-/* ---------------------------------------------------------------- palettes */
-/* Uses oklch() exclusively so no hardcoded hex values exist in app code. */
-
-const PALETTES: Palette[] = [
-  {
-    name: "Monochrome",
-    accent: "oklch(0.14 0 0)",
-    frame: "oklch(0.86 0 0)",
-    colors: [
-      "oklch(0.14 0 0)",
-      "oklch(0.24 0 0)",
-      "oklch(0.38 0 0)",
-      "oklch(0.55 0.22 264.53)",
-      "oklch(0.81 0.17 75.35)",
-      "oklch(0.72 0 0)",
-      "oklch(0.92 0 0)",
-      "oklch(0.44 0 0)",
+const COPY: Record<"ar" | "en", Copy> = {
+  ar: {
+    nav: { features: "المميزات", how: "كيف يعمل", start: "ابدأ مجاناً", login: "دخول", menu: "القائمة" },
+    hero: {
+      title: "حصّل فلوسك في ميعادها، من غير إحراج ولا مطاردة.",
+      sub: "دفقلي بيتابع المستحقات عنك: تذكيرات واتساب مهذبة، شيكات ومواعيد استحقاق، وكشف حساب يشوفه العميل بنفسه.",
+      cta: "ابدأ مجاناً",
+      secondary: "شوف المميزات",
+      note: "من غير بطاقة بنكية. كل رسالة بتتبعت بعد موافقتك.",
+    },
+    preview: {
+      chipSent: "تذكير أُرسل", chipPaid: "تم السداد",
+      title: "قائمة التحصيل اليوم",
+      sample: "بيانات توضيحية",
+      rows: [
+        { name: "مؤسسة النور للتجارة", action: "تذكير واتساب اليوم 10:00", amount: "48,500 ج.م", tag: "متأخر", tone: "overdue" },
+        { name: "مخازن الدلتا", action: "شيك يستحق بعد يومين", amount: "120,000 ج.م", tag: "قريب", tone: "due" },
+        { name: "شركة الأفق", action: "تحويل بانتظار التأكيد", amount: "17,250 ج.م", tag: "تعهد", tone: "paid" },
+      ],
+      totalLabel: "إجمالي المستحق",
+      total: "185,750 ج.م",
+    },
+    trust: ["لا تذكير مكرر لنفس الفاتورة", "احترام ساعات الهدوء", "موافقتك قبل أي إجراء ذكي", "بيانات كل منشأة معزولة"],
+    featuresTitle: "كل اللي تحتاجه للتحصيل، في مكان واحد",
+    featuresSub: "أدوات عملية بتقلل المتابعة اليدوية وتحافظ على علاقتك بعملائك.",
+    features: [
+      { id: "reminders", icon: Bell, title: "تذكيرات واتساب مجدولة", body: "من الودّي للحازم، في الأوقات المسموحة فقط. لا تتكرر، ولا تُرسل لعميل أوقف الإشعارات، وكل رسالة ليها سجل بحالتها." },
+      { id: "ai", icon: Sparkle, title: "مساعد ذكي", body: "اسأله بالعربي عن أي عميل أو فاتورة، ويقترح الخطوة التالية. لا ينفذ إلا بموافقتك." },
+      { id: "ocr", icon: Camera, title: "تصوير الدفتر", body: "صوّر صفحة الدفتر الورقي وتتحول لفواتير. أي قراءة غير مؤكدة تروح للمراجعة." },
+      { id: "cheques", icon: Bank, title: "متابعة الشيكات", body: "مواعيد الاستحقاق والشيكات المرتدة قدامك، مع تنبيه قبل الإيداع." },
+      { id: "portal", icon: Handshake, title: "بوابة العميل", body: "رابط آمن يشوف فيه العميل كشف حسابه ويحدد ميعاد السداد. التحويل ادّعاء لحد ما تؤكده." },
     ],
-  },
-  {
-    name: "Cobalt",
-    accent: "oklch(0.55 0.22 264.53)",
-    frame: "oklch(0.76 0.10 264.53)",
-    colors: [
-      "oklch(0.45 0.22 264.53)",
-      "oklch(0.55 0.22 264.53)",
-      "oklch(0.65 0.19 258)",
-      "oklch(0.78 0.14 230)",
-      "oklch(0.88 0.08 250)",
-      "oklch(0.28 0.16 264)",
-      "oklch(0.81 0.17 75.35)",
+    howTitle: "ابدأ في ٣ خطوات",
+    steps: [
+      { title: "ضيف عملاءك", body: "استورد من ملف أو صوّر دفترك الورقي." },
+      { title: "حدد سياسة التذكير", body: "اختار الأسلوب وساعات الهدوء، والباقي أوتوماتيك." },
+      { title: "تابع التحصيل", body: "راجع القائمة اليومية وأغلق الفواتير أول ما تتسدد." },
     ],
+    cta: {
+      title: "جاهز تبدأ؟",
+      sub: "اعمل حسابك في دقيقة وجرّب بنفسك.",
+      biz: "اسم المنشأة", email: "البريد الإلكتروني", button: "إنشاء حساب مجاني",
+      errBiz: "اكتب اسم منشأتك.", errEmail: "أدخل بريداً إلكترونياً صحيحاً.",
+      perks: ["حتى 50 عميل مجاناً", "كشف حساب للعميل", "متابعة الفواتير والشيكات"],
+    },
+    footer: "دفقلي. كل الحقوق محفوظة.",
   },
-  {
-    name: "Amber",
-    accent: "oklch(0.65 0.18 65)",
-    frame: "oklch(0.88 0.08 75.35)",
-    colors: [
-      "oklch(0.58 0.17 55)",
-      "oklch(0.81 0.17 75.35)",
-      "oklch(0.72 0.19 65)",
-      "oklch(0.88 0.14 85)",
-      "oklch(0.46 0.15 40)",
-      "oklch(0.95 0.06 85)",
-      "oklch(0.22 0 0)",
+  en: {
+    nav: { features: "Features", how: "How it works", start: "Start free", login: "Log in", menu: "Menu" },
+    hero: {
+      title: "Get paid on time, without the awkward chasing.",
+      sub: "Dafqly follows up for you: polite WhatsApp reminders, cheque due dates, and a statement link your customers can open themselves.",
+      cta: "Start free",
+      secondary: "See features",
+      note: "No credit card. Every message goes out only after your approval.",
+    },
+    preview: {
+      chipSent: "Reminder sent", chipPaid: "Paid",
+      title: "Today's collection queue",
+      sample: "Sample data",
+      rows: [
+        { name: "Al-Nour Trading", action: "WhatsApp reminder today 10:00", amount: "EGP 48,500", tag: "Overdue", tone: "overdue" },
+        { name: "Delta Warehouses", action: "Cheque due in 2 days", amount: "EGP 120,000", tag: "Due soon", tone: "due" },
+        { name: "Horizon Co.", action: "Transfer awaiting confirmation", amount: "EGP 17,250", tag: "Promise", tone: "paid" },
+      ],
+      totalLabel: "Total outstanding",
+      total: "EGP 185,750",
+    },
+    trust: ["Never a duplicate reminder", "Quiet hours respected", "AI acts only with your approval", "Tenant data fully isolated"],
+    featuresTitle: "Everything collections needs, in one place",
+    featuresSub: "Practical tools that cut manual follow-up and protect your customer relationships.",
+    features: [
+      { id: "reminders", icon: Bell, title: "Scheduled WhatsApp reminders", body: "Polite to firm, only at allowed times. Never repeated, never sent to opted-out customers, and every message has a logged status." },
+      { id: "ai", icon: Sparkle, title: "AI copilot", body: "Ask about any customer or invoice and get a suggested next step. It acts only once you approve." },
+      { id: "ocr", icon: Camera, title: "Ledger photo import", body: "Snap a paper ledger page and turn it into invoices. Uncertain readings go to review." },
+      { id: "cheques", icon: Bank, title: "Cheque tracking", body: "Due dates and bounced cheques at a glance, with alerts before deposit day." },
+      { id: "portal", icon: Handshake, title: "Customer portal", body: "A secure link where customers see their balance and promise a payment date. A transfer stays a claim until you confirm." },
     ],
-  },
-  {
-    name: "Graphite",
-    accent: "oklch(0.32 0 0)",
-    frame: "oklch(0.80 0 0)",
-    colors: [
-      "oklch(0.22 0 0)",
-      "oklch(0.36 0 0)",
-      "oklch(0.52 0 0)",
-      "oklch(0.68 0 0)",
-      "oklch(0.84 0 0)",
-      "oklch(0.94 0 0)",
-      "oklch(0.12 0 0)",
+    howTitle: "Start in 3 steps",
+    steps: [
+      { title: "Add your customers", body: "Import a file or photograph your paper ledger." },
+      { title: "Set your reminder policy", body: "Pick the tone and quiet hours. The rest runs itself." },
+      { title: "Track collections", body: "Review the daily queue and close invoices as they're paid." },
     ],
+    cta: {
+      title: "Ready to start?",
+      sub: "Create your account in a minute and try it yourself.",
+      biz: "Business name", email: "Email address", button: "Create free account",
+      errBiz: "Enter your business name.", errEmail: "Enter a valid email address.",
+      perks: ["Up to 50 debtors free", "Customer statement links", "Invoices & cheques"],
+    },
+    footer: "Dafqly. All rights reserved.",
   },
-];
-
-/* -------------------------------------------------------------------- css */
-
-const DF_CSS = `
-.df-root{--df-accent:var(--primary);--df-frame:var(--border);--df-paper:var(--background);--df-ink:var(--foreground);--df-soft:var(--muted-foreground);--df-muted:var(--text-subtle);--df-card:var(--card);--df-moon:var(--muted);--df-blue:var(--df-accent);--df-line:var(--border);--df-line-strong:var(--border-strong);--df-display:var(--font-brand);--df-body:var(--font-brand);--df-mono:var(--font-mono);position:relative;width:100%;box-sizing:border-box;background:var(--df-paper);color:var(--df-ink);font-family:var(--df-body);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;border:clamp(6px,1.1vw,12px) solid var(--df-frame);transition:background-color .4s ease,color .4s ease,border-color .4s ease;overflow:clip}
-.dark .df-root,:root[data-theme="dark"] .df-root{--df-blue:var(--primary);border-color:var(--border)}
-.df-root :where(*){box-sizing:border-box}
-.df-shell{width:100%;container-type:inline-size;position:relative}
-.df-in{width:100%;max-width:1240px;margin:0 auto;padding:0 clamp(16px,4cqi,48px)}
-
-.df-disp{font-family:var(--df-display);font-weight:800;letter-spacing:-.02em;line-height:.92}
-[dir="rtl"] .df-disp{letter-spacing:0;line-height:1.15}
-.df-mono{font-family:var(--df-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
-.df-label{font-family:var(--df-display);font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--df-blue)}
-[dir="rtl"] .df-label,[dir="rtl"] .df-mono{letter-spacing:0}
-.df-echo{display:inline-block;white-space:nowrap}
-@container (max-width:480px){.df-echo{white-space:normal}}
-.df-title{display:flex;flex-direction:column;font-family:var(--df-display);font-weight:800;letter-spacing:-.01em;line-height:.95}
-[dir="rtl"] .df-title{letter-spacing:0;line-height:1.28}
-.df-title>span{padding-block:.05em}
-.df-title>span:last-child{padding-bottom:.34em}
-
-/* nav */
-.df-nav{position:sticky;top:0;z-index:40;background:color-mix(in srgb,var(--df-paper) 86%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--df-line)}
-.df-nav .df-in{display:flex;align-items:center;gap:12px;height:64px}
-.df-brand{display:inline-flex;align-items:center;gap:10px;font-family:var(--df-display);font-weight:800;font-size:17px;white-space:nowrap}
-.df-issue{display:none;padding:3px 9px;border:1.5px solid currentColor;border-radius:999px;font-family:var(--df-mono);font-weight:700;font-size:11px;color:var(--df-ink)}
-.df-links{display:none;align-items:center;gap:2px;margin:0 auto}
-.df-link{position:relative;padding:8px 12px;font-weight:700;font-size:13px;color:var(--df-soft);transition:color .2s}
-.df-link::after{content:"";position:absolute;inset-inline:12px;bottom:3px;height:2px;border-radius:2px;background:var(--df-ink);transform:scaleX(0);transform-origin:start;transition:transform .35s cubic-bezier(.2,.8,.2,1)}
-.df-link:hover,.df-link[aria-current="true"]{color:var(--df-ink)}
-.df-link[aria-current="true"]::after,.df-link:hover::after{transform:scaleX(1)}
-.df-nav-end{display:flex;align-items:center;gap:8px;margin-inline-start:auto}
-.df-swatches{display:none;align-items:center;gap:5px;padding:4px;border:1px solid var(--df-line);border-radius:999px}
-.df-sw{position:relative;width:18px;height:18px;border-radius:999px;transition:transform .25s cubic-bezier(.2,.8,.2,1)}
-.df-sw:hover{transform:scale(1.15)}
-.df-sw[aria-checked="true"]{box-shadow:0 0 0 2px var(--df-paper),0 0 0 3.5px var(--df-ink)}
-.df-icon{display:inline-grid;place-items:center;width:36px;height:36px;border-radius:999px;color:var(--df-soft);border:1px solid var(--df-line);transition:color .2s,border-color .2s}
-.df-icon:hover{color:var(--df-ink);border-color:var(--df-ink)}
-.df-menu-btn{display:inline-grid}
-.df-mobile{position:absolute;left:0;right:0;top:100%;display:grid;gap:4px;padding:12px clamp(16px,4cqi,48px) 18px;background:var(--df-paper);border-bottom:1px solid var(--df-line);animation:df-drop .3s cubic-bezier(.2,.8,.2,1) both}
-.df-mobile .df-link{padding:10px 0;font-size:16px}
-.df-mobile .df-swatches{display:inline-flex;justify-self:start;margin-top:8px}
-@container (min-width:900px){.df-links{display:flex}.df-menu-btn{display:none}.df-mobile{display:none}.df-nav-end{margin-inline-start:0}.df-issue{display:inline-block}.df-nav-end .df-swatches{display:inline-flex}}
-
-/* buttons */
-.df-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 20px;border-radius:999px;font-weight:800;font-size:13px;line-height:1;white-space:nowrap;transition:background-color .2s,color .2s,box-shadow .25s,transform .25s cubic-bezier(.2,.8,.2,1)}
-.df-btn-solid{background:var(--primary);color:var(--primary-foreground);box-shadow:0 10px 24px -14px var(--foreground)}
-.df-btn-solid:hover{transform:translateY(-2px)}
-.df-btn-line{color:var(--df-ink);box-shadow:inset 0 0 0 1.5px var(--df-ink)}
-.df-btn-line:hover{background:var(--df-ink);color:var(--df-paper)}
-.df-btn-ink{background:var(--df-ink);color:var(--df-paper)}
-.df-btn-ink:hover{transform:translateY(-2px)}
-.df-btn:active{transform:scale(.97)}
-.df-btn[disabled]{opacity:.55;cursor:default;transform:none}
-.df-nav .df-btn{padding:9px 14px;font-size:12px}
-@container (max-width:480px){.df-nav .df-in{gap:6px}.df-brand{font-size:15px;gap:7px}.df-nav .df-btn{padding:8px 11px;font-size:11px}}
-
-/* bubbles */
-.df-bub{position:absolute;inset:0}
-.df-bub canvas{position:absolute;left:0;top:0;width:100%;height:100%}
-
-/* hero */
-.df-hero{position:relative;display:flex;flex-direction:column;justify-content:center;min-height:calc(100svh - 76px);padding:clamp(14px,2.4cqi,30px) 0 clamp(24px,4cqi,48px);scroll-margin-top:64px;overflow:hidden}
-.df-orbits{position:absolute;inset:0;pointer-events:none;color:var(--df-line-strong);opacity:.55}
-.df-orbits svg{position:absolute}
-.df-orbit-spin{transform-box:view-box;transform-origin:50% 50%;animation:df-spin 60s linear infinite}
-.df-orbit-spin-r{animation-duration:90s;animation-direction:reverse}
-.df-wm{position:relative;height:clamp(165px,26cqi,340px);margin:clamp(8px,2cqi,18px) 0;cursor:crosshair;touch-action:pan-y}
-.df-hero-mark{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:8px}
-.df-hero-mark .df-logo{color:var(--df-ink);width:clamp(56px,9cqi,110px);height:auto}
-.df-hero-title{font-size:clamp(22px,4.2cqi,54px);color:var(--df-ink);text-align:start}
-.df-hero-title>span{background:var(--df-paper);padding:.06em .14em;box-decoration-break:clone;-webkit-box-decoration-break:clone}
-.df-hero-row{position:relative;display:grid;gap:clamp(18px,3cqi,32px);align-items:end;margin-top:clamp(14px,2.5cqi,28px);z-index:3}
-.df-issue-big{font-family:var(--df-mono);font-weight:800;font-size:clamp(46px,9.5cqi,130px);line-height:.85;letter-spacing:-.04em;color:var(--df-ink);background:var(--df-paper);justify-self:start;padding:.06em .12em 0 0}
-.df-hero-copy{display:flex;flex-direction:column;gap:16px;max-width:520px}
-.df-hero-copy p{font-size:clamp(14px,1.4cqi,16.5px);color:var(--df-soft);line-height:1.65}
-.df-ctas{display:flex;flex-wrap:wrap;gap:10px}
-.df-credit{display:flex;align-items:center;gap:12px;padding-top:10px;border-top:1.5px solid var(--df-ink);font-family:var(--df-mono);font-weight:700;font-size:11px}
-.df-hint{display:inline-flex;align-items:center;gap:8px;color:var(--df-muted)}
-.df-hint b{color:var(--df-ink);font-weight:800}
-.df-pop-dot{width:7px;height:7px;border-radius:99px;background:var(--chart-2);animation:df-blink 1.6s ease-in-out infinite}
-@container (min-width:760px){.df-hero-row{grid-template-columns:auto 1fr;column-gap:clamp(24px,5cqi,80px)}.df-hero-copy{justify-self:end}}
-
-/* asterisk & logo */
-.df-ast{display:inline-grid;place-items:center;color:var(--df-ink);transition:transform .8s cubic-bezier(.2,.8,.2,1)}
-.df-ast:hover{transform:rotate(60deg) scale(1.15)}
-.df-logo{overflow:visible}
-.df-logo-spin{transform-box:view-box;transform-origin:50% 50%;transition:transform .9s cubic-bezier(.2,.8,.2,1)}
-.df-brand:hover .df-logo-spin{transform:rotate(-360deg)}
-
-/* band */
-.df-band{position:relative;height:clamp(190px,28cqi,340px);color:var(--primary-foreground);overflow:hidden}
-.df-band-title{position:absolute;inset-inline-start:clamp(16px,3cqi,40px);top:50%;transform:translateY(-54%);max-width:60%;font-size:clamp(20px,4cqi,52px);z-index:1;pointer-events:none;color:oklch(0.99 0 0);text-shadow:0 2px 18px oklch(0 0 0 / 0.25)}
-@container (max-width:540px){.df-band-title{max-width:85%}}
-.df-band .df-ast{position:absolute;inset-inline-start:clamp(16px,3cqi,40px);bottom:clamp(14px,2.6cqi,30px);color:oklch(0.99 0 0);z-index:1}
-
-/* sections */
-.df-sec{position:relative;scroll-margin-top:64px}
-.df-pad{padding:clamp(48px,8cqi,100px) 0}
-.df-reveal{opacity:0;transform:translateY(22px);transition:opacity .85s cubic-bezier(.2,.7,.2,1),transform .85s cubic-bezier(.2,.7,.2,1)}
-.df-reveal[data-in="true"]{opacity:1;transform:none}
-.df-kicker{display:flex;flex-direction:column;align-items:center;gap:14px;padding:clamp(18px,3cqi,30px) 0 clamp(26px,4cqi,44px)}
-.df-meta{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 20px;padding:10px 0;border-top:1px solid var(--df-line-strong)}
-.df-h2{font-family:var(--df-display);font-weight:800;font-size:clamp(28px,4.6cqi,56px);line-height:1.05;letter-spacing:-.02em}
-[dir="rtl"] .df-h2{letter-spacing:0;line-height:1.18}
-.df-lede{font-size:clamp(15px,1.5cqi,17px);color:var(--df-soft);line-height:1.7;max-width:56ch}
-.df-mission{display:grid;gap:clamp(28px,5cqi,64px);padding-top:clamp(32px,5cqi,64px)}
-.df-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;border-top:1.5px solid var(--df-ink)}
-.df-stat{padding:18px 0;padding-inline-end:12px;border-bottom:1px solid var(--df-line-strong)}
-.df-stat dt{font-family:var(--df-mono);font-weight:800;font-size:clamp(32px,4.4cqi,54px);line-height:1;letter-spacing:-.03em;color:var(--df-ink);font-variant-numeric:tabular-nums}
-.df-stat dd{margin-top:6px}
-@container (min-width:860px){.df-mission{grid-template-columns:1.1fr 1fr;align-items:start}}
-
-/* ribbons */
-.df-stage{position:relative;height:clamp(400px,64cqi,720px);overflow:hidden;margin-top:clamp(20px,3cqi,40px);--mx:0;--my:0}
-.df-stage-type{position:absolute;inset-inline-start:clamp(8px,2cqi,24px);top:10%;font-size:clamp(36px,11cqi,160px);color:var(--df-ink);line-height:.92;letter-spacing:-.03em;pointer-events:none;opacity:.9}
-[dir="rtl"] .df-stage-type{letter-spacing:0;line-height:1.24;font-size:clamp(32px,9.5cqi,136px)}
-.df-stage-type sup{position:relative;top:-.85em;margin-inline-start:.06em;font-size:.4em;color:var(--chart-2);vertical-align:baseline}
-.df-rib{position:absolute;left:var(--x);top:var(--y);width:var(--w);height:clamp(48px,8cqi,100px);transform:translate(-50%,-50%) translate(calc(var(--mx) * var(--k) * 1px),calc(var(--my) * var(--k) * 1px)) rotate(var(--r));transition:transform .7s cubic-bezier(.2,.8,.2,1),box-shadow .4s;overflow:hidden;box-shadow:0 18px 40px -26px oklch(0 0 0 / 0.5)}
-.df-rib:hover{box-shadow:0 26px 60px -24px oklch(0 0 0 / 0.65);z-index:4}
-.df-rib-ink{background:var(--df-ink);color:var(--df-paper);display:flex;align-items:center}
-.df-marq{display:flex;width:max-content;animation:df-marq var(--d,26s) linear infinite}
-.df-rib:hover .df-marq{animation-play-state:paused}
-.df-marq-r{animation-direction:reverse}
-.df-marq-item{display:inline-flex;align-items:center;gap:clamp(10px,1.6cqi,22px);padding-right:clamp(16px,2.6cqi,36px);font-weight:800;font-size:clamp(17px,2.8cqi,38px);white-space:nowrap}
-.df-stage-foot{position:absolute;inset-inline:clamp(16px,3cqi,40px);bottom:clamp(16px,3cqi,36px);display:grid;gap:16px;align-items:end;z-index:5;pointer-events:none}
-.df-stage-foot>*{pointer-events:auto}
-.df-stage-body{max-width:44ch;font-weight:700;font-size:clamp(12px,1.2cqi,14px);line-height:1.6;color:var(--df-ink);background:color-mix(in srgb,var(--df-paper) 90%,transparent);padding:10px 12px;border:1px solid var(--df-line);border-radius:var(--radius);justify-self:end}
-.df-stage-sign{display:flex;align-items:center;gap:12px}
-.df-stage-sign b{font-weight:800;font-size:clamp(22px,3.2cqi,42px);background:var(--df-paper);padding:0 .12em}
-
-/* modules grid */
-.df-proj-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:16px;margin-bottom:clamp(22px,3.4cqi,40px)}
-.df-proj-grid{display:grid;gap:14px}
-@container (min-width:760px){.df-proj-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.df-stage-foot{grid-template-columns:1fr auto}}
-.df-card{position:relative;display:flex;flex-direction:column;border:1.5px solid var(--df-line);border-radius:20px;background:var(--df-card);overflow:hidden;transition:border-color .3s,transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .4s}
-.df-card:hover{border-color:var(--df-ink);transform:translateY(-3px);box-shadow:0 24px 50px -32px oklch(0 0 0 / 0.3)}
-.df-card-top{position:relative;height:clamp(112px,14cqi,156px);overflow:hidden;--px:50%;--py:50%;border-bottom:1px solid var(--df-line)}
-.df-card-fill{position:absolute;inset:0;clip-path:circle(0% at var(--px) var(--py));transition:clip-path .8s cubic-bezier(.2,.8,.2,1)}
-.df-card:hover .df-card-fill,.df-card[data-open="true"] .df-card-fill{clip-path:circle(150% at var(--px) var(--py))}
-.df-card-code{position:absolute;inset-inline-start:18px;bottom:8px;font-family:var(--df-mono);font-weight:800;font-size:clamp(48px,7.5cqi,86px);line-height:.9;letter-spacing:-.04em;color:var(--df-ink);transition:color .5s}
-.df-card:hover .df-card-code,.df-card[data-open="true"] .df-card-code{color:oklch(0.99 0 0)}
-.df-card-top .df-logo{position:absolute;inset-inline-end:16px;top:14px;width:40px;height:auto;color:var(--df-ink);transition:color .5s}
-.df-card:hover .df-card-top .df-logo,.df-card[data-open="true"] .df-card-top .df-logo{color:oklch(0.99 0 0)}
-.df-card-body{display:flex;flex-direction:column;gap:10px;padding:18px 20px 20px}
-.df-chip{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;padding:4px 10px;border-radius:999px;font-family:var(--df-mono);font-weight:800;font-size:10.5px;border:1.5px solid currentColor;color:var(--df-ink)}
-.df-chip i{width:6px;height:6px;border-radius:9px;background:var(--chart-2)}
-.df-chip[data-s="ongoing"] i{animation:df-blink 1.6s ease-in-out infinite}
-.df-card h3{font-weight:800;font-size:clamp(19px,2.2cqi,24px);line-height:1.2}
-.df-card p{color:var(--df-soft);font-size:14.5px;line-height:1.6}
-.df-bar{height:8px;border-radius:9px;background:var(--df-line);overflow:hidden}
-.df-bar i{display:block;height:100%;border-radius:9px;background:var(--df-ink);transform-origin:left;transition:transform 1.4s cubic-bezier(.2,.8,.2,1)}
-[dir="rtl"] .df-bar i{transform-origin:right}
-.df-more{display:grid;grid-template-rows:0fr;transition:grid-template-rows .5s cubic-bezier(.2,.8,.2,1)}
-.df-card[data-open="true"] .df-more{grid-template-rows:1fr}
-.df-more>div{overflow:hidden}
-.df-more-in{display:flex;flex-direction:column;gap:14px;padding-top:6px}
-.df-card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:4px}
-.df-toggle{display:inline-flex;align-items:center;gap:8px;font-weight:800;font-size:12px;color:var(--df-ink)}
-.df-toggle svg{transition:transform .4s cubic-bezier(.2,.8,.2,1)}
-.df-toggle[aria-expanded="true"] svg{transform:rotate(45deg)}
-
-/* interactive cycle + schedule */
-.df-nights{display:grid;gap:clamp(18px,3cqi,28px);margin-top:clamp(24px,4cqi,44px)}
-@container (min-width:900px){.df-nights{grid-template-columns:minmax(300px,.8fr) 1.4fr;align-items:start}}
-.df-sky{position:relative;display:flex;flex-direction:column;align-items:center;gap:16px;padding:24px 22px 22px;border-radius:24px;background:var(--df-card);border:1.5px solid var(--df-line);overflow:hidden}
-.df-sky-moon{position:relative;width:min(210px,60cqi);height:auto}
-.df-sky-moon .df-orbit-spin{animation-duration:40s}
-.df-sky h3{font-weight:800;font-size:24px;line-height:1.1}
-.df-sky-row{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%}
-.df-sky-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;border-top:1px solid var(--df-line)}
-.df-sky-facts div{padding:12px 4px 0;text-align:center}
-.df-sky-facts b{display:block;font-family:var(--df-mono);font-weight:800;font-size:20px;color:var(--df-ink);font-variant-numeric:tabular-nums}
-.df-step{display:inline-grid;place-items:center;width:36px;height:36px;border-radius:999px;border:1.5px solid var(--df-line-strong);color:var(--df-ink);transition:background-color .2s,color .2s,border-color .2s}
-.df-step:hover{background:var(--df-ink);color:var(--df-paper);border-color:var(--df-ink)}
-.df-today{font-family:var(--df-mono);font-weight:800;font-size:11px;color:var(--df-muted)}
-.df-today[data-on="true"]{color:var(--df-ink);text-decoration:underline;text-underline-offset:3px}
-.df-filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
-.df-filter{padding:8px 14px;border-radius:999px;border:1.5px solid var(--df-line);font-weight:800;font-size:12px;color:var(--df-soft);transition:background-color .2s,color .2s,border-color .2s}
-.df-filter:hover{border-color:var(--df-ink);color:var(--df-ink)}
-.df-filter[aria-pressed="true"]{background:var(--df-ink);border-color:var(--df-ink);color:var(--df-paper)}
-.df-events{display:flex;flex-direction:column;border-top:1.5px solid var(--df-ink)}
-.df-event{display:grid;grid-template-columns:auto 1fr;gap:8px 16px;align-items:center;padding:16px 0;border-bottom:1px solid var(--df-line);animation:df-rise .5s cubic-bezier(.2,.8,.2,1) both}
-.df-date{display:flex;flex-direction:column;align-items:center;justify-content:center;width:62px;height:66px;border-radius:14px;background:var(--df-ink);color:var(--df-paper);font-family:var(--df-mono);font-weight:800;line-height:1}
-.df-date b{font-size:24px}
-.df-date span{font-size:10px;margin-top:4px}
-.df-event h3{font-weight:800;font-size:17px;line-height:1.25}
-.df-event-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:4px;color:var(--df-muted);font-size:13px}
-.df-event-act{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px}
-.df-going{font-size:12px;color:var(--df-muted);font-variant-numeric:tabular-nums}
-.df-rsvp{min-width:112px;padding:10px 14px;font-size:11.5px}
-.df-rsvp[aria-pressed="true"]{background:var(--df-ink);color:var(--df-paper)}
-@container (min-width:620px){.df-event{grid-template-columns:auto 1fr auto}.df-event-act{grid-column:auto;flex-direction:column;align-items:flex-end}}
-
-/* join + 3d card */
-.df-join{display:grid;gap:clamp(28px,5cqi,64px);margin-top:clamp(24px,4cqi,44px)}
-@container (min-width:900px){.df-join{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);align-items:center}}
-.df-tiers{display:grid;gap:10px}
-@container (min-width:620px){.df-tiers{grid-template-columns:repeat(3,minmax(0,1fr))}}
-.df-tier{position:relative;display:flex;flex-direction:column;gap:8px;padding:16px;border-radius:16px;border:1.5px solid var(--df-line);background:var(--df-card);transition:border-color .25s,background-color .25s,transform .3s cubic-bezier(.2,.8,.2,1);text-align:start}
-.df-tier:hover{border-color:var(--df-ink);transform:translateY(-2px)}
-.df-tier[aria-checked="true"]{border-color:var(--df-ink);background:var(--muted);box-shadow:inset 0 0 0 1px var(--df-ink)}
-.df-tier-name{display:flex;align-items:center;justify-content:space-between;font-weight:800;font-size:14px}
-.df-radio{width:18px;height:18px;border-radius:99px;border:2px solid var(--df-line-strong);display:grid;place-items:center}
-.df-tier[aria-checked="true"] .df-radio{border-color:var(--df-ink)}
-.df-tier[aria-checked="true"] .df-radio::after{content:"";width:8px;height:8px;border-radius:9px;background:var(--df-ink)}
-.df-price{font-family:var(--df-mono);font-weight:800;font-size:26px;color:var(--df-ink);line-height:1.1}
-.df-price small{font-size:12px;color:var(--df-muted)}
-.df-tier ul{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--df-soft)}
-.df-tier li{display:flex;gap:7px;align-items:flex-start}
-.df-badge{position:absolute;top:-10px;inset-inline-end:14px;padding:3px 9px;border-radius:999px;background:var(--df-ink);color:var(--df-paper);font-family:var(--df-mono);font-weight:800;font-size:9.5px}
-.df-form{display:grid;gap:10px;margin-top:18px}
-@container (min-width:620px){.df-form{grid-template-columns:1fr 1fr auto}}
-.df-field{height:48px;padding:0 16px;border-radius:999px;border:1.5px solid var(--df-line);background:var(--df-card);outline:none;transition:border-color .2s,box-shadow .2s}
-.df-field:focus{border-color:var(--df-ink);box-shadow:0 0 0 4px var(--df-line)}
-.df-field[aria-invalid="true"]{border-color:var(--destructive)}
-.df-msg{min-height:22px;margin-top:10px;font-size:13.5px;color:var(--df-muted)}
-.df-msg[data-s="error"]{color:var(--destructive)}
-.df-msg[data-s="done"]{color:var(--df-ink);font-weight:700}
-.df-card-wrap{perspective:1100px;display:flex;flex-direction:column;align-items:center;gap:14px}
-.df-member{position:relative;width:min(100%,460px);aspect-ratio:1.586;border-radius:22px;overflow:hidden;color:oklch(0.99 0 0);transform:rotateX(var(--ry,0deg)) rotateY(var(--rx,0deg));transform-style:preserve-3d;transition:transform .5s cubic-bezier(.2,.8,.2,1),box-shadow .5s;box-shadow:0 34px 70px -34px oklch(0 0 0 / 0.55);cursor:grab}
-.df-member-bg{position:absolute;inset:0;transition:opacity .5s}
-.df-member-rib{position:absolute;left:-12%;top:38%;width:130%;height:19%;background:oklch(0.08 0 0);color:oklch(0.99 0 0);transform:rotate(-14deg);display:flex;align-items:center;overflow:hidden}
-.df-member-rib .df-marq-item{font-size:clamp(13px,2.2cqi,18px)}
-.df-member-in{position:absolute;inset:0;background:linear-gradient(to top,oklch(0 0 0 / 0.48),transparent 45%);display:flex;flex-direction:column;justify-content:space-between;padding:clamp(14px,2.4cqi,22px)}
-.df-member-top{display:flex;align-items:flex-start;justify-content:space-between}
-.df-member-bottom{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;font-weight:800}
-.df-member-name{font-size:clamp(16px,2.5cqi,24px);line-height:1.1;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.df-member-bottom small{display:block;font-size:10px;opacity:.85;margin-bottom:3px}
-.df-member-no{text-align:end;font-family:var(--df-mono);font-size:clamp(14px,2cqi,18px)}
-.df-member-shine{position:absolute;inset:0;background:linear-gradient(115deg,transparent 30%,oklch(1 0 0 / 0.25) 46%,transparent 60%);background-size:250% 100%;background-position:var(--sx,100%) 0;mix-blend-mode:soft-light;pointer-events:none;transition:background-position .5s}
-.df-printed{animation:df-print .9s cubic-bezier(.2,.8,.2,1)}
-
-/* footer */
-.df-foot-band{position:relative;height:clamp(120px,16cqi,190px);color:oklch(0.99 0 0);overflow:hidden;margin-top:clamp(40px,7cqi,84px)}
-.df-foot-band .df-title{position:absolute;inset-inline-start:clamp(16px,3cqi,40px);top:50%;transform:translateY(-54%);font-size:clamp(18px,3.6cqi,44px);z-index:1;pointer-events:none;color:oklch(0.99 0 0)}
-.df-foot{display:flex;flex-direction:column;align-items:center;gap:14px;padding:clamp(18px,3cqi,30px) 0 clamp(24px,4cqi,40px);text-align:center}
-.df-tagline{font-weight:800;font-size:clamp(15px,2.1cqi,24px);color:var(--df-ink)}
-.df-foot-links{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 18px}
-.df-foot-links a{font-weight:700;font-size:12.5px;color:var(--df-soft);transition:color .2s}
-.df-foot-links a:hover{color:var(--df-ink)}
-.df-foot-end{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px 16px;color:var(--df-muted)}
-
-@keyframes df-spin{to{transform:rotate(360deg)}}
-@keyframes df-marq{to{transform:translateX(-50%)}}
-@keyframes df-blink{0%,100%{opacity:1}50%{opacity:.25}}
-@keyframes df-drop{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
-@keyframes df-rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-@keyframes df-print{0%{transform:translateY(16px) scale(.96);filter:brightness(1.4)}100%{transform:none;filter:none}}
-`;
-
-/* ------------------------------------------------------------------ svg */
-
-const DAFQLY_PATHS = {
-  outer: "M118 142c0-49 40-89 89-89h101c104 0 188 84 188 188s-84 188-188 188H199c-50 0-90-40-90-90",
-  flow: "M72 252c0-50 40-90 90-90h105c32 0 61 12 84 34",
-  check: "m236 258 44 43 86-93",
 };
 
-function DafqlyLogo({ size = 40, follow = false, className = "" }: { size?: number; follow?: boolean; className?: string }) {
-  const svg = React.useRef<SVGSVGElement | null>(null);
-  const gRef = React.useRef<SVGGElement | null>(null);
-  React.useEffect(() => {
-    if (!follow) return;
-    let raf = 0;
-    let deg = 0;
-    let px = 0;
-    let py = 0;
-    const apply = () => {
-      raf = 0;
-      const el = svg.current;
-      const g = gRef.current;
-      if (!el || !g) return;
-      const r = el.getBoundingClientRect();
-      const cx = r.left + r.width / 2;
-      const cy = r.top + r.height / 2;
-      if (Math.hypot(px - cx, py - cy) < r.width * 0.4) return;
-      const target = clamp(((Math.atan2(py - cy, px - cx) * 180) / Math.PI) * 0.12, -14, 14);
-      deg = unwrapAngle(deg, target);
-      g.style.transform = `rotate(${deg.toFixed(1)}deg)`;
-    };
-    const move = (e: PointerEvent) => {
-      px = e.clientX;
-      py = e.clientY;
-      if (!raf) raf = requestAnimationFrame(apply);
-    };
-    window.addEventListener("pointermove", move, { passive: true });
-    return () => {
-      window.removeEventListener("pointermove", move);
-      cancelAnimationFrame(raf);
-    };
-  }, [follow]);
-  return (
-    <svg ref={svg} className={`df-logo ${className}`} width={size} height={size} viewBox="0 0 540 512" fill="none" stroke="currentColor" aria-hidden="true">
-      <g ref={gRef} className="df-logo-spin" style={{ transition: "transform 0.5s cubic-bezier(.2,.8,.2,1)" }}>
-        <path d={DAFQLY_PATHS.outer} strokeWidth="66" strokeLinecap="round" />
-        <path d={DAFQLY_PATHS.flow} stroke="var(--chart-2)" strokeWidth="66" strokeLinecap="round" />
-        <path d={DAFQLY_PATHS.check} stroke="var(--chart-1)" strokeWidth="44" strokeLinecap="round" strokeLinejoin="round" />
-      </g>
-    </svg>
-  );
-}
+const ART: Record<FeatureId, () => React.JSX.Element> = { reminders: RemindersArt, ai: AiArt, ocr: OcrArt, cheques: ChequeArt, portal: PortalArt };
+const SPAN: Record<FeatureId, string> = {
+  reminders: "lg:col-span-4", ai: "lg:col-span-2", ocr: "lg:col-span-2", cheques: "lg:col-span-2", portal: "lg:col-span-2",
+};
+const TINT: Record<FeatureId, string> = {
+  reminders: "bg-muted", ai: "bg-chart-2/10", ocr: "bg-muted", cheques: "bg-chart-1/10", portal: "bg-chart-2/10",
+};
 
-function Asterisk({ size = 22, className = "" }: { size?: number; className?: string }) {
-  const [turn, setTurn] = React.useState(0);
-  return (
-    <button
-      type="button"
-      className={`df-ast ${className}`}
-      style={{ transform: turn ? `rotate(${turn * 120}deg)` : undefined }}
-      onClick={() => setTurn((t) => t + 1)}
-      aria-label="Spin"
-      tabIndex={-1}
-    >
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" aria-hidden="true">
-        <path d="M12 2.5v19M3.8 7.25l16.4 9.5M3.8 16.75l16.4-9.5" />
-      </svg>
-    </button>
-  );
-}
+const TONE: Record<"overdue" | "due" | "paid", string> = {
+  overdue: "bg-status-overdue-bg text-status-overdue-fg",
+  due: "bg-status-due-bg text-status-due-fg",
+  paid: "bg-status-paid-bg text-status-paid-fg",
+};
 
-function Title({ text, className = "", as = "div" }: { text: string; className?: string; as?: "div" | "h1" | "h2" }) {
-  const ls = lines(text);
-  const Tag = as;
-  return (
-    <Tag className={`df-title ${className}`}>
-      {ls.map((l, i) => (
-        <span key={i}>{i === ls.length - 1 ? <span className="df-echo">{l}</span> : l}</span>
-      ))}
-    </Tag>
-  );
-}
+const isEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s.trim());
 
-function Arrow({ size = 14, rtl = false }: { size?: number; rtl?: boolean }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={rtl ? { transform: "scaleX(-1)" } : undefined} aria-hidden="true">
-      <path d="M3 8h10M9 4l4 4-4 4" />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
-      <path d="M8 2.5v11M2.5 8h11" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2 6.5l2.6 2.5L10 3.5" />
-    </svg>
-  );
-}
-
-/* ---------------------------------------------------------------- bubbles */
-
-type BubbleMask =
-  | { kind: "text"; text: string; font: string; fit: number; x: number; baseline: number }
-  | { kind: "logo"; cx: number; cy: number; size: number }
-  | null;
-
-type Spark = { x: number; y: number; vx: number; vy: number; r: number; c: number; life: number };
-
-function Bubbles({
-  seed,
-  colors,
-  density = 1,
-  scale = 1,
-  mask = null,
-  interactive = true,
-  onPop,
-}: {
-  seed: number;
-  colors: string[];
-  density?: number;
-  scale?: number;
-  mask?: BubbleMask;
-  interactive?: boolean;
-  onPop?: () => void;
-}) {
-  const ref = React.useRef<HTMLCanvasElement | null>(null);
-  const live = React.useRef({ colors, mask, onPop });
-  live.current = { colors, mask, onPop };
-  const redraw = React.useRef(() => {});
-  const maskKey = mask ? JSON.stringify(mask) : "";
-
-  React.useEffect(() => {
-    const cv = ref.current;
-    const ctx = cv?.getContext("2d");
-    if (!cv || !ctx) return;
-    const host = (cv.parentElement?.parentElement ?? cv.parentElement) as HTMLElement;
-    const rand = mulberry32(seed ^ 0x5bd1e995);
-    const reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let w = 0;
-    let h = 0;
-    let dpr = 1;
-    let list: (Bubble & { ox: number; oy: number; s: number })[] = [];
-    let sparks: Spark[] = [];
-    let raf = 0;
-    let running = false;
-    let visible = true;
-    let knock: HTMLCanvasElement | null = null;
-    const ptr = { x: -1e4, y: -1e4, on: false, dx: 0, dy: 0 };
-
-    const buildKnock = () => {
-      const m = live.current.mask;
-      knock = null;
-      if (!m || m.kind !== "logo" || typeof Path2D !== "function" || !w || !h) return;
-      const off = document.createElement("canvas");
-      off.width = Math.round(w * dpr);
-      off.height = Math.round(h * dpr);
-      const o = off.getContext("2d");
-      if (!o) return;
-      const s = (h * m.size) / 512;
-      o.setTransform(dpr, 0, 0, dpr, 0, 0);
-      o.translate(m.cx * w - s * 270, m.cy * h - s * 256);
-      o.scale(s, s);
-      o.lineCap = "round";
-      o.lineJoin = "round";
-      o.strokeStyle = "oklch(0 0 0)";
-      o.lineWidth = 66;
-      o.stroke(new Path2D(DAFQLY_PATHS.outer));
-      o.stroke(new Path2D(DAFQLY_PATHS.flow));
-      o.lineWidth = 44;
-      o.stroke(new Path2D(DAFQLY_PATHS.check));
-      knock = off;
-    };
-
-    let textSize = 0;
-    let textFor = "";
-    const draw = (t: number) => {
-      const { colors: cols, mask: m } = live.current;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.globalCompositeOperation = "source-over";
-      ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = cols[0] ?? "oklch(0.14 0 0)";
-      ctx.fillRect(0, 0, w, h);
-      const ts = t / 1000;
-      const R = Math.max(70, Math.min(h, w) * 0.34);
-      for (const b of list) {
-        let tx = 0;
-        let ty = 0;
-        if (ptr.on) {
-          const dx = b.x + b.ox - ptr.x;
-          const dy = b.y + b.oy - ptr.y;
-          const d = Math.hypot(dx, dy) || 1;
-          const reach = R + b.r;
-          if (d < reach) {
-            const f = 1 - d / reach;
-            const push = f * f * R * 0.6;
-            tx = (dx / d) * push + ptr.dx * f * 0.6;
-            ty = (dy / d) * push + ptr.dy * f * 0.6;
-          }
-        }
-        if (reduced) {
-          b.ox = tx;
-          b.oy = ty;
-          b.s = 1;
-        } else {
-          b.ox += (tx - b.ox) * 0.09;
-          b.oy += (ty - b.oy) * 0.09;
-          b.s += (1 - b.s) * 0.07;
-        }
-        const wx = reduced ? 0 : Math.sin(ts * b.sp + b.ph) * b.amp;
-        const wy = reduced ? 0 : Math.cos(ts * b.sp * 0.8 + b.ph) * b.amp;
-        ctx.fillStyle = cols[b.c % cols.length];
-        ctx.beginPath();
-        ctx.arc(b.x + b.ox + wx, b.y + b.oy + wy, Math.max(0.1, b.r * b.s), 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ptr.dx *= 0.85;
-      ptr.dy *= 0.85;
-      if (sparks.length) {
-        for (const s of sparks) {
-          s.x += s.vx;
-          s.y += s.vy;
-          s.vx *= 0.94;
-          s.vy = s.vy * 0.94 - 0.05;
-          s.life -= 0.022;
-          if (s.life <= 0) continue;
-          ctx.fillStyle = cols[s.c % cols.length];
-          ctx.beginPath();
-          ctx.arc(s.x, s.y, s.r * s.life, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        sparks = sparks.filter((s) => s.life > 0);
-      }
-      if (m && m.kind === "text") {
-        const isArText = /[\u0600-\u06FF]/.test(m.text);
-        const resolvedBodyFont = getComputedStyle(document.body).fontFamily.replace(/var\([^)]+\),?\s*/g, "").trim();
-        const fontStack = resolvedBodyFont
-          ? `${resolvedBodyFont}, system-ui, -apple-system, sans-serif`
-          : "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
-        const key = `${fontStack}|${m.text}|${w}|${h}|${m.fit}`;
-        if (key !== textFor) {
-          ctx.font = `800 100px ${fontStack}`;
-          const mw = ctx.measureText(m.text).width || 1;
-          const fit = isArText ? Math.min(m.fit, 0.74) : m.fit;
-          const maxH = isArText ? h * 0.60 : h * 0.85;
-          textSize = Math.min((100 * w * fit) / mw, maxH);
-          textFor = key;
-        }
-        ctx.globalCompositeOperation = "destination-in";
-        ctx.fillStyle = "oklch(0 0 0)";
-        ctx.font = `800 ${textSize.toFixed(1)}px ${fontStack}`;
-        ctx.direction = isArText ? "rtl" : "ltr";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(m.text, w * 0.5, isArText ? h * 0.50 : h * 0.53);
-      } else if (knock) {
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.globalCompositeOperation = "destination-out";
-        ctx.drawImage(knock, 0, 0);
-      }
-    };
-
-    const loop = (t: number) => {
-      draw(t);
-      raf = requestAnimationFrame(loop);
-    };
-    const start = () => {
-      if (running || reduced || !visible || !w) return;
-      running = true;
-      raf = requestAnimationFrame(loop);
-    };
-    const stop = () => {
-      running = false;
-      cancelAnimationFrame(raf);
-    };
-    redraw.current = () => {
-      buildKnock();
-      if (!running) draw(performance.now());
-    };
-
-    const resize = () => {
-      if (!cv.clientWidth || !cv.clientHeight) return;
-      w = cv.clientWidth;
-      h = cv.clientHeight;
-      dpr = Math.min(2, devicePixelRatio || 1);
-      cv.width = Math.round(w * dpr);
-      cv.height = Math.round(h * dpr);
-      list = buildBubbles(seed, w, h, live.current.colors.length, density, scale).map((b) => ({ ...b, ox: 0, oy: 0, s: 1 }));
-      textFor = "";
-      buildKnock();
-      draw(performance.now());
-      start();
-    };
-
-    const local = (e: PointerEvent) => {
-      const r = cv.getBoundingClientRect();
-      return [e.clientX - r.left, e.clientY - r.top] as const;
-    };
-    const onMove = (e: PointerEvent) => {
-      const [x, y] = local(e);
-      if (ptr.on) {
-        ptr.dx = clamp(x - ptr.x, -40, 40);
-        ptr.dy = clamp(y - ptr.y, -40, 40);
-      }
-      ptr.x = x;
-      ptr.y = y;
-      ptr.on = x >= -40 && y >= -40 && x <= w + 40 && y <= h + 40;
-      if (!running) draw(performance.now());
-    };
-    const onLeave = () => {
-      ptr.on = false;
-      if (!running) draw(performance.now());
-    };
-    let downAt = [0, 0];
-    const onDown = (e: PointerEvent) => {
-      downAt = [e.clientX, e.clientY];
-    };
-    const onUp = (e: PointerEvent) => {
-      if (Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
-      if ((e.target as HTMLElement | null)?.closest?.("a,button,input,label,select,textarea")) return;
-      const [x, y] = local(e);
-      if (x < 0 || y < 0 || x > w || y > h) return;
-      const px = ctx.getImageData(Math.round(x * dpr), Math.round(y * dpr), 1, 1).data;
-      if (px[3] < 10) return;
-      for (let i = list.length - 1; i >= 0; i--) {
-        const b = list[i];
-        if (Math.hypot(b.x + b.ox - x, b.y + b.oy - y) > b.r * b.s + 2) continue;
-        const n = live.current.colors.length;
-        const old = b.c;
-        b.c = 1 + ((b.c + Math.floor(rand() * (n - 2))) % Math.max(1, n - 1));
-        b.s = reduced ? 1 : 0;
-        if (!reduced) {
-          for (let k = 0; k < 9; k++) {
-            const a = (k / 9) * Math.PI * 2 + rand() * 0.5;
-            const sp = 2 + rand() * 4;
-            sparks.push({ x: b.x + b.ox, y: b.y + b.oy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: b.r * (0.18 + rand() * 0.22), c: old, life: 1 });
-          }
-        }
-        live.current.onPop?.();
-        if (!running) draw(performance.now());
-        break;
-      }
-    };
-
-    resize();
-    if (typeof document !== "undefined" && "fonts" in document) {
-      document.fonts.ready.then(() => {
-        textFor = "";
-        redraw.current();
-      }).catch(() => {});
-    }
-    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : null;
-    ro?.observe(cv);
-    const io = typeof IntersectionObserver === "function"
-      ? new IntersectionObserver((es) => {
-          visible = es.some((e) => e.isIntersecting);
-          if (visible) start();
-          else stop();
-        })
-      : null;
-    io?.observe(cv);
-    const vis = () => (document.hidden ? stop() : start());
-    document.addEventListener("visibilitychange", vis);
-    if (interactive) {
-      host.addEventListener("pointermove", onMove, { passive: true });
-      host.addEventListener("pointerleave", onLeave);
-      host.addEventListener("pointerdown", onDown);
-      host.addEventListener("pointerup", onUp);
-    }
-    return () => {
-      stop();
-      ro?.disconnect();
-      io?.disconnect();
-      document.removeEventListener("visibilitychange", vis);
-      host.removeEventListener("pointermove", onMove);
-      host.removeEventListener("pointerleave", onLeave);
-      host.removeEventListener("pointerdown", onDown);
-      host.removeEventListener("pointerup", onUp);
-    };
-  }, [seed, density, scale, interactive]);
-
-  React.useEffect(() => {
-    redraw.current();
-  }, [colors, maskKey]);
-
-  return (
-    <div className="df-bub" aria-hidden="true">
-      <canvas ref={ref} />
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------- phase */
-
-function CycleGauge({ fraction, colors, uid, size = 210 }: { fraction: number; colors: string[]; uid: string; size?: number }) {
-  const dots = React.useMemo(() => buildBubbles(31, 100, 100, colors.length, 1.4, 1.1), [colors.length]);
-  const id = `${uid}-phase`;
-  return (
-    <svg className="df-sky-moon" width={size} height={size} viewBox="-70 -70 140 140" aria-hidden="true">
-      <defs>
-        <clipPath id={id}>
-          <path d={phasePath(fraction, 50)} />
-        </clipPath>
-      </defs>
-      <g className="df-orbit-spin">
-        <circle r="64" fill="none" stroke="var(--df-line-strong)" strokeWidth="1" strokeDasharray="1 5" strokeLinecap="round" />
-        <circle cx="64" r="3.5" fill="var(--chart-2)" />
-      </g>
-      <circle r="50" fill="var(--df-moon)" />
-      <g clipPath={`url(#${id})`}>
-        <rect x="-50" y="-50" width="100" height="100" fill={colors[0]} />
-        {dots.map((b, i) => (
-          <circle key={i} cx={b.x - 50} cy={b.y - 50} r={b.r} fill={colors[b.c % colors.length]} />
-        ))}
-      </g>
-      <circle r="50" fill="none" stroke="var(--df-line-strong)" strokeWidth="1" />
-    </svg>
-  );
-}
-
-function MiniPhase({ fraction }: { fraction: number }) {
-  return (
-    <svg width="14" height="14" viewBox="-7 -7 14 14" aria-hidden="true">
-      <circle r="6" fill="var(--df-moon)" stroke="var(--df-line-strong)" strokeWidth=".8" />
-      <path d={phasePath(fraction, 6)} fill="currentColor" />
-    </svg>
-  );
-}
-
-function StatValue({ value, run }: { value: string; run: boolean }) {
-  const [t, setT] = React.useState(0);
-  React.useEffect(() => {
-    if (!run) return;
-    let raf = 0;
-    const t0 = performance.now();
-    const tick = (now: number) => {
-      const p = clamp((now - t0) / 1400, 0, 1);
-      setT(p);
-      if (p < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [run]);
-  return <>{formatStat(value, t)}</>;
-}
-
-function Marquee({ text, reverse, duration = 26, big }: { text: string; reverse?: boolean; duration?: number; big?: boolean }) {
-  const REPS = 10;
-  const items = Array.from({ length: REPS });
-  const isArText = /[\u0600-\u06FF]/.test(text);
-  const run = (key: string) => (
-    <div key={key} style={{ display: "flex" }} aria-hidden={key === "b" ? true : undefined}>
-      {items.map((_, i) => (
-        <span className="df-marq-item" dir={isArText ? "rtl" : "ltr"} key={i}>
-          {text}
-          <DafqlyLogo size={big ? 44 : 28} />
-        </span>
-      ))}
-    </div>
-  );
-  return (
-    <div dir="ltr" className={`df-marq${reverse ? " df-marq-r" : ""}`} style={{ ["--d" as string]: `${(duration * REPS) / 4}s` } as React.CSSProperties}>
-      {run("a")}
-      {run("b")}
-    </div>
-  );
-}
-
-function useInView(threshold = 0.01) {
-  const ref = React.useRef<HTMLDivElement | null>(null);
-  const [inView, setInView] = React.useState(false);
-  React.useEffect(() => {
-    const el = ref.current;
-    if (!el || inView) return;
-    if (typeof IntersectionObserver !== "function") {
-      setInView(true);
-      return;
-    }
-    const io = new IntersectionObserver(
-      (es) => {
-        if (es.some((e) => e.isIntersecting)) {
-          setInView(true);
-          io.disconnect();
-        }
-      },
-      { threshold, rootMargin: "0px 0px -24px 0px" },
-    );
-    io.observe(el);
-    const fallback = window.setTimeout(() => setInView(true), 700);
-    return () => {
-      io.disconnect();
-      window.clearTimeout(fallback);
-    };
-  }, [inView, threshold]);
-  return [ref, inView] as const;
-}
-
-/* ----------------------------------------------------------------- landing */
+/* ------------------------------------------------------------------ page */
 
 export function DafqlyLanding() {
   const locale = useLocale();
   const router = useRouter();
   const ar = locale === "ar";
-  const uid = "df" + React.useId().replace(/[^a-zA-Z0-9]/g, "");
+  const c = COPY[ar ? "ar" : "en"];
+  const Arrow = ar ? ArrowLeft : ArrowRight;
 
-  const [pal, setPal] = React.useState<Palette>(PALETTES[0]);
   const [menu, setMenu] = React.useState(false);
-  const [active, setActive] = React.useState("");
-  const [pops, setPops] = React.useState(0);
-  const [openCard, setOpenCard] = React.useState(-1);
-  const [dayOffset, setDayOffset] = React.useState(0);
-  const [kind, setKind] = React.useState(ar ? "الكل" : "All");
-  const [simulated, setSimulated] = React.useState<Record<string, boolean>>({});
-  const [tierIdx, setTierIdx] = React.useState(1);
-  const [bizName, setBizName] = React.useState("");
+  const [biz, setBiz] = React.useState("");
   const [email, setEmail] = React.useState("");
-  const [status, setStatus] = React.useState<"idle" | "error" | "done">("idle");
-  const [msg, setMsg] = React.useState("");
-  const [printed, setPrinted] = React.useState(0);
+  const [error, setError] = React.useState("");
 
-  const sections = React.useRef<Record<string, HTMLElement | null>>({});
-  const stageRef = React.useRef<HTMLDivElement | null>(null);
-  const cardRef = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenu(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menu]);
 
-  const [missionRef, missionIn] = useInView(0.01);
-  const [projRef, projIn] = useInView(0.01);
-  const [nightsRef, nightsIn] = useInView(0.01);
-  const [joinRef, joinIn] = useInView(0.01);
-
-  const navLinks: NavLink[] = [
-    { label: ar ? "الرؤية" : "Overview", target: "mission" },
-    { label: ar ? "الوحدات" : "Modules", target: "projects" },
-    { label: ar ? "التوقعات" : "Schedule", target: "nights" },
-    { label: ar ? "الباقات" : "Plans", target: "join" },
+  const links = [
+    { href: "#features", label: c.nav.features },
+    { href: "#how", label: c.nav.how },
   ];
 
-  const stats = [
-    { value: "3×", label: ar ? "تدفق نقدي أسرع بمتابعة منتظمة" : "Faster cashflow cadence" },
-    { value: "24/7", label: ar ? "تذكيرات مجدولة بدون تدخل" : "Scheduled reminders, hands-off" },
-    { value: "100%", label: ar ? "إجراءات AI بموافقتك" : "AI actions require approval" },
-    { value: "0", label: ar ? "إشعارات خارج ساعات الهدوء" : "Alerts outside quiet hours" },
-  ];
-
-  const modules: ModuleItem[] = [
-    {
-      code: "#01",
-      title: ar ? "جدولة التذكيرات الذكية" : "Smart Reminder Scheduling",
-      summary: ar ? "تذكيرات سداد ودّية أو حازمة تتجدول تلقائياً في الأوقات المسموحة خارج ساعات الهدوء." : "Polite-to-firm payment reminders scheduled outside quiet hours automatically.",
-      detail: ar ? "لا تتكرر لنفس الفاتورة ولا تُرسل لعميل أوقف الإشعارات. كل تذكير مسجل ومربوط بحالة الفاتورة." : "Never sent twice or to opted-out customers. Every reminder is audited and linked to invoice status.",
-      status: "ongoing",
-      progress: 0.92,
-      goal: ar ? "التزام 100% بسياسات ساعات الهدوء" : "100% quiet-hours policy compliance",
-      cta: ar ? "ابدأ الجدولة" : "Start scheduling",
-    },
-    {
-      code: "#02",
-      title: ar ? "مساعد دفقلي الذكي" : "Dafqly AI Copilot",
-      summary: ar ? "اسأله بالعربي أو الإنجليزي عن أي عميل أو فاتورة ويقترح الخطوة التالية فوراً." : "Ask about any customer or invoice; it reads your real ledger and proposes actions.",
-      detail: ar ? "يقرأ بياناتك الحقيقية، يرتب أولويات المتابعة، ويجهز التذاكر والمسودات — ولا ينفذ أي إجراء إلا بموافقتك." : "Reads your real ledger, ranks priority accounts, and drafts tasks awaiting your approval.",
-      status: "open",
-      progress: 0.85,
-      goal: ar ? "موافقة بشرية إلزامية قبل التنفيذ" : "Mandatory human-in-the-loop approval",
-      cta: ar ? "جرّب المساعد" : "Try the copilot",
-    },
-    {
-      code: "#03",
-      title: ar ? "تصوير الدفتر والشيكات" : "Ledger OCR & Cheques",
-      summary: ar ? "حوّل صفحة الدفتر الورقي لفواتير رقمية، وتابع الشيكات القريبة والمرتدة." : "Turn ledger photos into invoices and track upcoming or bounced cheques.",
-      detail: ar ? "أي قراءة غير مؤكدة تذهب للمراجعة البشرية فوراً، مع تنبيهات استباقية لمواعيد استحقاق الشيكات." : "Uncertain OCR readings route to review, with proactive alerts before cheque due dates.",
-      status: "ongoing",
-      progress: 0.78,
-      goal: ar ? "استخراج فوري + مراجعة ذكية" : "Instant extraction + smart review",
-      cta: ar ? "ارفع دفترك" : "Upload your ledger",
-    },
-    {
-      code: "#04",
-      title: ar ? "بوابة العميل والتعهدات" : "Customer Portal & Promises",
-      summary: ar ? "رابط آمن يرى فيه العميل كشف حسابه ويطلب ميعاد سداد." : "A secure statement link where customers view balances and promise to pay.",
-      detail: ar ? "إيصالات التحويل تُعامل كادّعاء حتى تؤكدها، وتعهدات السداد يتم تتبعها تلقائياً حتى إغلاق الفاتورة." : "Transfer screenshots stay claims until confirmed, and promises are tracked until settled.",
-      status: "archived",
-      progress: 1,
-      goal: ar ? "عزل كامل للبيانات لكل منشأة" : "Full tenant isolation & audit trail",
-      cta: ar ? "فعّل البوابة" : "Enable portal",
-    },
-  ];
-
-  const cycleEvents: CycleEvent[] = [
-    { offsetDays: 2, time: "10:00", title: ar ? "تذكير قبل موعد الاستحقاق" : "Pre-due payment reminder", place: ar ? "ساعات العمل" : "Quiet-hours safe", kind: ar ? "تذكيرات" : "Reminders", target: ar ? "رسالة تلقائية ودّية" : "Polite auto-notice", stage: ar ? "قبل الاستحقاق بـ 48 ساعة" : "48h before due" },
-    { offsetDays: 5, time: "13:30", title: ar ? "تنبيه استحقاق الشيكات" : "Cheque maturity & deposit alert", place: ar ? "إدارة الشيكات" : "Cheques", kind: ar ? "شيكات" : "Cheques", target: ar ? "تحضير للإيداع" : "Deposit & clear", stage: ar ? "يوم الاستحقاق" : "On maturity date" },
-    { offsetDays: 9, time: "11:00", title: ar ? "متابعة تعهدات السداد" : "Promise-to-pay verification", place: ar ? "بوابة العميل" : "Portal", kind: ar ? "تعهدات" : "Promises", target: ar ? "تأكيد التحويل" : "Confirm transfer", stage: ar ? "مراجعة التحويل" : "Claim review" },
-    { offsetDays: 14, time: "16:00", title: ar ? "تقرير السيولة وتدفق 8 أسابيع" : "8-week cashflow & aging review", place: "AI Copilot", kind: ar ? "تذكيرات" : "Reminders", target: ar ? "ترتيب الأولويات" : "Priority ranking", stage: ar ? "مراجعة أسبوعية" : "Weekly digest" },
-  ];
-
-  const tiers: Tier[] = [
-    {
-      name: ar ? "البداية" : "Starter",
-      price: ar ? "مجاني" : "Free",
-      blurb: ar ? "للمشاريع الصغيرة وبداية التنظيم." : "For small teams getting organized.",
-      perks: ar ? ["حتى 50 عميل", "كشف حساب للعميل", "متابعة الفواتير والشيكات"] : ["Up to 50 debtors", "Customer statement links", "Invoices & cheques"],
-    },
-    {
-      name: ar ? "النمو" : "Growth",
-      price: ar ? "490 ج.م" : "$19",
-      period: ar ? "/شهر" : "/mo",
-      blurb: ar ? "للشركات النشطة في إدارة التدفق اليومي." : "For active daily cashflow management.",
-      perks: ar ? ["جدولة تذكيرات ذكية آلية", "مساعد دفقلي الذكي", "تصوير الدفتر OCR", "ساعات الهدوء المخصصة"] : ["Automated smart reminders", "Dafqly AI Copilot", "Ledger photo OCR", "Custom quiet hours"],
-      featured: true,
-    },
-    {
-      name: ar ? "الشركات" : "Enterprise",
-      price: ar ? "مخصص" : "Custom",
-      blurb: ar ? "للفرق متعددة الفروع والحجم الكبير." : "Multi-branch & high-volume teams.",
-      perks: ar ? ["عملاء وفواتير غير محدودة", "عزل بيانات كامل RLS", "تقارير تدفق متقدمة", "دعم وتكامل مخصص"] : ["Unlimited records", "Full RLS isolation", "Advanced forecasting", "Dedicated onboarding"],
-    },
-  ];
-
-  const kinds = React.useMemo(() => [ar ? "الكل" : "All", ...Array.from(new Set(cycleEvents.map((e) => e.kind)))], [ar]);
-  const shownEvents = cycleEvents.filter((e) => kind === (ar ? "الكل" : "All") || e.kind === kind);
-
-  const skyDay = new Date(Date.now() + dayOffset * 86400000);
-  const phase = cyclePhase(skyDay);
-  const healthLabel = phase.illumination < 0.3 ? (ar ? "بداية الدورة" : "Cycle Start") : phase.illumination < 0.7 ? (ar ? "ذروة التدفق" : "Peak Flow") : (ar ? "إقفال الشهر" : "Month Close");
-
-  const scrollTo = (target: string) => {
-    const el = sections.current[target];
-    setMenu(false);
-    if (!el) return false;
-    el.scrollIntoView({ behavior: "smooth", block: "start" });
-    setActive(target);
-    return true;
-  };
-
-  const wordMask = React.useMemo(
-    () => ({
-      kind: "text" as const,
-      text: ar ? "دفقلي" : "DAFQLY",
-      font: "Geist, system-ui, sans-serif",
-      fit: 0.86,
-      x: 0,
-      baseline: 0.8,
-    }),
-    [ar],
-  );
-  const bandMask = React.useMemo(() => ({ kind: "logo" as const, cx: 0.65, cy: 0.5, size: 0.78 }), []);
-  const footMask = React.useMemo(() => ({ kind: "logo" as const, cx: 0.72, cy: 0.55, size: 1.25 }), []);
-
-  const aimFill = (e: React.PointerEvent) => {
-    const el = e.currentTarget as HTMLElement;
-    const r = el.getBoundingClientRect();
-    el.style.setProperty("--px", `${(((e.clientX - r.left) / r.width) * 100).toFixed(1)}%`);
-    el.style.setProperty("--py", `${(((e.clientY - r.top) / r.height) * 100).toFixed(1)}%`);
-  };
-
-  const tilt = (e: React.PointerEvent) => {
-    const el = cardRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width - 0.5;
-    const y = (e.clientY - r.top) / r.height - 0.5;
-    el.style.setProperty("--rx", `${(x * 16).toFixed(2)}deg`);
-    el.style.setProperty("--ry", `${(-y * 12).toFixed(2)}deg`);
-    el.style.setProperty("--sx", `${((1 - (x + 0.5)) * 100).toFixed(1)}%`);
-  };
-
-  const untilt = () => {
-    const el = cardRef.current;
-    if (!el) return;
-    el.style.setProperty("--rx", "0deg");
-    el.style.setProperty("--ry", "0deg");
-    el.style.setProperty("--sx", "100%");
-  };
-
-  const handlePrintCard = (e: React.FormEvent) => {
+  const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bizName.trim()) {
-      setStatus("error");
-      setMsg(ar ? "اكتب اسم منشأتك لإصدار البطاقة." : "Enter your business name first.");
-      return;
-    }
-    if (!isEmail(email)) {
-      setStatus("error");
-      setMsg(ar ? "أدخل بريداً إلكترونياً صحيحاً." : "Enter a valid email address.");
-      return;
-    }
-    try {
-      window.localStorage.setItem(
-        "dafqly:workspace-card",
-        JSON.stringify({
-          businessName: bizName.trim(),
-          email: email.trim(),
-          plan: chosenTier.name,
-          workspaceId: wsNum,
-        }),
-      );
-    } catch {}
-    setStatus("done");
-    setPrinted((p) => p + 1);
-    setMsg(
-      ar
-        ? `تم إصدار وحفظ بطاقة "${bizName.trim()}" (${wsNum}) — يمكنك تحميل البطاقة أو بدء حسابك مباشرة.`
-        : `Workspace card ${wsNum} issued for "${bizName.trim()}" — download the card or launch your workspace.`,
-    );
+    if (!biz.trim()) return setError(c.cta.errBiz);
+    if (!isEmail(email)) return setError(c.cta.errEmail);
+    try { window.localStorage.setItem("dafqly:workspace-card", JSON.stringify({ businessName: biz.trim(), email: email.trim() })); } catch (err) { console.warn("[DafqlyLanding] workspace card could not be saved, continuing to signup", err); }
+    const q = new URLSearchParams({ business: biz.trim(), email: email.trim() });
+    router.push(`/${locale}/signup?${q.toString()}`);
   };
 
-  const downloadCardSvg = () => {
-    const title = (bizName.trim() || (ar ? "منشأة دفقلي" : "Dafqly Workspace")).replace(/[<>&"]/g, "");
-    const planLabel = chosenTier.name.replace(/[<>&"]/g, "");
-    const svgDoc = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 454" width="720" height="454" fill="none">
-      <rect width="720" height="454" rx="32" fill="oklch(0.14 0 0)"/>
-      <circle cx="590" cy="96" r="110" fill="oklch(0.55 0.22 264.53)" opacity="0.22"/>
-      <circle cx="150" cy="360" r="130" fill="oklch(0.81 0.17 75.35)" opacity="0.18"/>
-      <g transform="translate(570 38) scale(0.18)">
-        <path d="${DAFQLY_PATHS.outer}" stroke="oklch(0.99 0 0)" stroke-width="66" stroke-linecap="round"/>
-        <path d="${DAFQLY_PATHS.flow}" stroke="oklch(0.55 0.22 264.53)" stroke-width="66" stroke-linecap="round"/>
-        <path d="${DAFQLY_PATHS.check}" stroke="oklch(0.81 0.17 75.35)" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
-      </g>
-      <text x="48" y="84" fill="oklch(0.99 0 0)" font-family="system-ui, sans-serif" font-size="30" font-weight="800">DAFQLY · دفقلي</text>
-      <text x="48" y="118" fill="oklch(0.72 0 0)" font-family="monospace" font-size="14" font-weight="700">WORKSPACE PASS · ${planLabel}</text>
-      <line x1="48" y1="296" x2="672" y2="296" stroke="oklch(0.28 0 0)" stroke-width="1.5"/>
-      <text x="48" y="346" fill="oklch(0.72 0 0)" font-family="monospace" font-size="13" font-weight="700">WORKSPACE NAME</text>
-      <text x="48" y="388" fill="oklch(0.99 0 0)" font-family="system-ui, sans-serif" font-size="32" font-weight="800">${title}</text>
-      <text x="672" y="346" text-anchor="end" fill="oklch(0.72 0 0)" font-family="monospace" font-size="13" font-weight="700">ID</text>
-      <text x="672" y="388" text-anchor="end" fill="oklch(0.81 0.17 75.35)" font-family="monospace" font-size="28" font-weight="800">${wsNum}</text>
-    </svg>`;
-    const blob = new Blob([svgDoc], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `dafqly-card-${wsNum.replace("#", "")}.svg`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  const applyCyclePolicyToWorkspace = () => {
-    const selectedStages = shownEvents
-      .filter((ev, row) => simulated[`${ev.title}-${row}`] ?? true)
-      .map((ev) => ({ title: ev.title, offsetDays: ev.offsetDays + dayOffset, time: ev.time, kind: ev.kind }));
-    try {
-      window.localStorage.setItem(
-        "dafqly:cycle-policy",
-        JSON.stringify({
-          dayOffset,
-          defaultTermsDays: Math.max(7, Math.min(60, 14 + dayOffset)),
-          stages: selectedStages,
-        }),
-      );
-    } catch {}
-    router.push(signupWithCardHref);
-  };
-
-  const wsNum = workspaceNumber(bizName || "dafqly", email);
-  const chosenTier = tiers[tierIdx] ?? tiers[0];
-  const signupWithCardHref = React.useMemo(() => {
-    const q = new URLSearchParams();
-    if (bizName.trim()) q.set("business", bizName.trim());
-    if (email.trim()) q.set("email", email.trim());
-    q.set("plan", chosenTier.name);
-    const qs = q.toString();
-    return qs ? `/${locale}/signup?${qs}` : `/${locale}/signup`;
-  }, [bizName, email, chosenTier.name, locale]);
-
-  const swatchRow = (
-    <div className="df-swatches" role="radiogroup" aria-label={ar ? "لوحة الألوان" : "Bubble palette"}>
-      {PALETTES.map((p) => (
-        <button
-          key={p.name}
-          type="button"
-          role="radio"
-          aria-checked={p.name === pal.name}
-          aria-label={p.name}
-          title={p.name}
-          className="df-sw"
-          style={{ background: `conic-gradient(${[p.colors[1], p.colors[3], p.colors[4], p.colors[1]].join(",")})` }}
-          onClick={() => setPal(p)}
-        />
-      ))}
-    </div>
-  );
+  const btnSolid = "inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-5 text-sm font-bold text-primary-foreground hover:bg-primary-hover";
+  const btnLine = "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border-strong px-5 text-sm font-bold text-foreground hover:bg-muted";
+  const field = "min-h-11 w-full rounded-md border border-border-strong bg-background px-3 text-sm text-foreground placeholder:text-text-subtle";
 
   return (
-    <div
-      className="df-root"
-      dir={ar ? "rtl" : "ltr"}
-      style={{
-        ["--df-accent" as string]: pal.accent,
-        ["--df-frame" as string]: pal.frame,
-      } as React.CSSProperties}
-    >
-      <style>{DF_CSS}</style>
-      <div className="df-shell">
-        {/* NAV */}
-        <header className="df-nav">
-          <div className="df-in">
-            <a className="df-brand" href="#home" onClick={(e) => { e.preventDefault(); scrollTo("home"); }}>
-              <DafqlyLogo size={32} follow />
-              <span>{ar ? "دفقلي" : "DAFQLY"}</span>
-            </a>
-            <span className="df-issue">v3.0</span>
-            <nav className="df-links" aria-label="Primary">
-              {navLinks.map((l) => (
-                <a
-                  key={l.target}
-                  className="df-link"
-                  href={`#${l.target}`}
-                  aria-current={active === l.target ? "true" : undefined}
-                  onClick={(e) => { e.preventDefault(); scrollTo(l.target); }}
-                >
-                  {l.label}
-                </a>
-              ))}
-            </nav>
-            <div className="df-nav-end">
-              {swatchRow}
-              <ThemeToggle size="sm" />
-              <LocaleToggle currentLocale={locale} className="min-h-[36px] rounded-full px-3 text-xs" />
-              <Link data-testid="landing-cta-login" href={`/${locale}/login`} className="hidden text-xs font-bold text-muted-foreground hover:text-foreground sm:inline-block px-2">
-                {ar ? "دخول" : "Login"}
-              </Link>
-              <Link data-testid="landing-cta-signup" href={`/${locale}/signup`} className="df-btn df-btn-solid">
-                {ar ? "ابدأ الآن" : "Start free"}
-                <Arrow size={12} rtl={ar} />
-              </Link>
-              <button type="button" className="df-icon df-menu-btn" aria-expanded={menu} aria-label="Menu" onClick={() => setMenu((m) => !m)}>
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                  {menu ? <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" /> : <path d="M2.5 5h11M2.5 11h11" />}
-                </svg>
-              </button>
-            </div>
-          </div>
-          {menu && (
-            <nav className="df-mobile" aria-label="Mobile">
-              {navLinks.map((l) => (
-                <a key={l.target} className="df-link" href={`#${l.target}`} onClick={(e) => { e.preventDefault(); scrollTo(l.target); }}>
-                  {l.label}
-                </a>
-              ))}
-              <Link href={`/${locale}/login`} className="df-link">{ar ? "تسجيل الدخول" : "Login"}</Link>
-              {swatchRow}
-            </nav>
-          )}
-        </header>
-
-        {/* HERO */}
-        <section className="df-hero df-sec" ref={(el) => { sections.current.home = el; }} data-section="home">
-          <div className="df-orbits" aria-hidden="true">
-            <svg style={{ left: "38%", top: "-28%", width: "86cqi", height: "86cqi" }} viewBox="0 0 100 100" fill="none">
-              <g className="df-orbit-spin">
-                <circle cx="50" cy="50" r="49" stroke="currentColor" strokeWidth=".18" />
-                <circle cx="99" cy="50" r=".9" fill="var(--chart-2)" />
-              </g>
-            </svg>
-            <svg style={{ left: "-20%", top: "30%", width: "58cqi", height: "58cqi" }} viewBox="0 0 100 100" fill="none">
-              <g className="df-orbit-spin df-orbit-spin-r">
-                <circle cx="50" cy="50" r="49" stroke="currentColor" strokeWidth=".2" />
-                <circle cx="50" cy="1" r="1.4" fill="var(--chart-1)" />
-              </g>
-            </svg>
-          </div>
-
-          <h1 className="sr-only">{ar ? "دفقلي — تتبّع. تابع. وحصّل." : "DAFQLY — Track. Follow. Get Paid."}</h1>
-          <div className="df-in">
-            <div className="df-hero-mark">
-              <Title text={ar ? "دفقلي.\nتدفق نقدي ذكي" : "DAFQLY.\nCASHFLOW"} className="df-hero-title" />
-              <DafqlyLogo size={104} follow />
-            </div>
-          </div>
-          <div className="df-wm">
-            <Bubbles seed={102} colors={pal.colors} density={2} scale={0.4} mask={wordMask} onPop={() => setPops((p) => p + 1)} />
-          </div>
-
-          <div className="df-in">
-            <div className="df-hero-row">
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <span className="df-issue-big">24/7</span>
-                <span className="df-hint df-mono" aria-live="polite">
-                  <i className="df-pop-dot" />
-                  {ar ? "اضغط على الفقاعات. بتفرقع." : "Click the bubbles. They pop."}
-                  {pops > 0 && <b>{pops} {ar ? "فرقعات" : "popped"}</b>}
-                </span>
-              </div>
-              <div className="df-hero-copy">
-                <Asterisk size={20} className="self-start" />
-                <p>
-                  {ar
-                    ? "منصة دفقلي لإدارة المستحقات والتدفق النقدي: جدولة تذكيرات ذكية، تصوير الدفتر بالذكاء الاصطناعي، متابعة الشيكات والتذاكر، وبوابة عملاء معزولة وآمنة."
-                    : "Dafqly smart receivables & cashflow platform: automated reminder scheduling, AI ledger OCR, cheque & ticket tracking, and a tenant-isolated customer portal."}
-                </p>
-                <div className="df-ctas">
-                  <Link data-testid="landing-hero-signup" href={`/${locale}/signup`} className="df-btn df-btn-solid">
-                    {ar ? "ابدأ مجاناً" : "Start free"}
-                    <Arrow rtl={ar} />
-                  </Link>
-                  <button type="button" className="df-btn df-btn-line" onClick={() => scrollTo("nights")}>
-                    {ar ? "استكشف دورة المتابعة" : "Explore schedule"}
-                  </button>
-                </div>
-                <div className="df-credit">
-                  {ar ? "دفقلي · بيانات معزولة ومشفّرة وكل إجراء بموافقتك" : "DAFQLY · Tenant-isolated, encrypted & human-approved"}
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* MISSION BAND + STATS */}
-        <section className="df-sec" ref={(el) => { sections.current.mission = el; }} data-section="mission">
-          <div className="df-band">
-            <Bubbles seed={103} colors={pal.colors} density={2} scale={0.42} mask={bandMask} onPop={() => setPops((p) => p + 1)} />
-            <Title text={ar ? "دفقلي.\nدفتر التدفق النقدي" : "DAFQLY.\nQUIET LEDGER"} className="df-band-title" />
-            <Asterisk size={18} />
-          </div>
-          <div className="df-in">
-            <div className="df-kicker">
-              <span className="df-label">{ar ? "نظام إدارة المستحقات والتدفق النقدي" : "ACCOUNTS RECEIVABLE & CASHFLOW ENGINE"}</span>
-              <Asterisk size={24} />
-            </div>
-            <div className="df-meta">
-              <span className="df-label">{ar ? "جدولة التذكيرات الذكية" : "Smart Reminder Engine"}</span>
-              <span className="df-label">{ar ? "مساعد AI بموافقتك" : "Human-approved AI"}</span>
-              <span className="df-label">{ar ? "عزل بيانات RLS" : "Full RLS Isolation"}</span>
-            </div>
-            <div className="df-mission df-reveal" ref={missionRef} data-in={missionIn}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-                <h2 className="df-h2">{ar ? "كل اللي محتاجه عشان فلوسك ترجع أسرع." : "Everything you need to get paid faster."}</h2>
-                <p className="df-lede">
-                  {ar
-                    ? "من أول ما تصوّر الدفتر الورقي لحد ما العميل يدفع أو يبعت تعهد سداد — كل خطوة واضحة، مسجلة، ومحكومة بسياسات أمان تمنع الإرسال العشوائي أو الخطأ."
-                    : "From photographing a paper ledger to confirming a customer payment or promise-to-pay — every step is tracked, audited, and governed by clear safety policies."}
-                </p>
-              </div>
-              <dl className="df-stats">
-                {stats.map((s) => (
-                  <div className="df-stat" key={s.label}>
-                    <dt dir="ltr">
-                      <StatValue value={s.value} run={missionIn} />
-                    </dt>
-                    <dd className="df-mono" style={{ color: "var(--df-muted)" }}>{s.label}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          </div>
-        </section>
-
-        {/* CROSSING RIBBONS + EXPANDABLE MODULES */}
-        <section className="df-sec df-pad" ref={(el) => { sections.current.projects = el; }} data-section="projects" style={{ paddingTop: 0 }}>
-          <div
-            className="df-stage"
-            ref={stageRef}
-            onPointerMove={(e) => {
-              const el = stageRef.current;
-              if (!el) return;
-              const r = el.getBoundingClientRect();
-              el.style.setProperty("--mx", (((e.clientX - r.left) / r.width - 0.5) * 2).toFixed(3));
-              el.style.setProperty("--my", (((e.clientY - r.top) / r.height - 0.5) * 2).toFixed(3));
-            }}
-            onPointerLeave={() => {
-              stageRef.current?.style.setProperty("--mx", "0");
-              stageRef.current?.style.setProperty("--my", "0");
-            }}
-          >
-            <div className="df-stage-type df-title" aria-hidden="true">
-              <span>{ar ? "دفقلي" : "DAFQLY"}</span>
-              <span>
-                <span className="df-echo">{ar ? "دفتر ذكي" : "LEDGER"}</span>
-                <sup>v3</sup>
-              </span>
-            </div>
-            <div className="df-rib" style={{ ["--x" as string]: "26%", ["--y" as string]: "62%", ["--w" as string]: "190%", ["--r" as string]: "-32deg", ["--k" as string]: "10" } as React.CSSProperties}>
-              <Bubbles seed={104} colors={pal.colors} density={1.8} scale={0.7} interactive={false} />
-            </div>
-            <div className="df-rib df-rib-ink" style={{ ["--x" as string]: "33%", ["--y" as string]: "56%", ["--w" as string]: "190%", ["--r" as string]: "68deg", ["--k" as string]: "-14" } as React.CSSProperties}>
-              <Marquee text={ar ? "تتبّع · تابع · وحصّل" : "TRACK · FOLLOW · GET PAID"} duration={28} big />
-            </div>
-            <div className="df-rib" style={{ ["--x" as string]: "56%", ["--y" as string]: "62%", ["--w" as string]: "190%", ["--r" as string]: "16deg", ["--k" as string]: "8" } as React.CSSProperties}>
-              <Bubbles seed={105} colors={pal.colors} density={1.8} scale={0.7} interactive={false} />
-            </div>
-            <div className="df-rib df-rib-ink" style={{ ["--x" as string]: "84%", ["--y" as string]: "64%", ["--w" as string]: "190%", ["--r" as string]: "36deg", ["--k" as string]: "-18" } as React.CSSProperties}>
-              <Marquee text={ar ? "دفقلي · ذكاء اصطناعي وتدفق نقدي" : "DAFQLY · AI CASHFLOW ENGINE"} reverse duration={22} />
-            </div>
-            <div className="df-stage-foot">
-              <div className="df-stage-sign">
-                <b>{ar ? "دفقلي" : "DAFQLY"}</b>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
-                <p className="df-stage-body">
-                  {ar
-                    ? "أربع وحدات متكاملة في دفقلي: جدولة التذكيرات والتذاكر، مساعد ذكي، قراءة الدفاتر والشيكات، وبوابة كشف حساب للعملاء."
-                    : "Four integrated Dafqly modules: smart reminder & ticket scheduling, AI copilot, ledger OCR & cheques, and a customer statement portal."}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="df-in df-reveal" ref={projRef} data-in={projIn} style={{ marginTop: "clamp(36px,6cqi,72px)" }}>
-            <div className="df-proj-head">
-              <h2 className="df-h2">{ar ? "وحدات النظام الأساسية." : "Core platform modules."}</h2>
-              <span className="df-label">{ar ? "4 وحدات متكاملة" : "4 active modules"}</span>
-            </div>
-            <div className="df-proj-grid">
-              {modules.map((p, i) => {
-                const isOpen = openCard === i;
-                return (
-                  <article key={p.code} className="df-card" data-open={isOpen}>
-                    <div className="df-card-top" onPointerMove={aimFill} onPointerEnter={aimFill}>
-                      <div className="df-card-fill" style={{ background: bubbleCss(102 * 31 + i * 7, pal.colors, 28, 50) }} />
-                      <span className="df-card-code">{p.code}</span>
-                      <DafqlyLogo size={40} />
-                    </div>
-                    <div className="df-card-body">
-                      <span className="df-chip" data-s={p.status}>
-                        <i />
-                        {p.status === "open" ? (ar ? "ذكاء اصطناعي" : "AI Copilot") : p.status === "ongoing" ? (ar ? "تلقائي" : "Automated") : (ar ? "جاهز" : "Live")}
-                      </span>
-                      <h3>{p.title}</h3>
-                      <p>{p.summary}</p>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        <div className="df-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(p.progress * 100)}>
-                          <i style={{ transform: `scaleX(${projIn ? p.progress : 0})` }} />
-                        </div>
-                        <span className="df-mono" style={{ color: "var(--df-muted)" }} suppressHydrationWarning>{p.goal}</span>
-                      </div>
-                      <div className="df-more" id={`${uid}-m${i}`}>
-                        <div>
-                          <div className="df-more-in">
-                            <p>{p.detail}</p>
-                            <Link href={`/${locale}/signup`} className="df-btn df-btn-ink self-start" tabIndex={isOpen ? 0 : -1}>
-                              {p.cta}
-                              <Arrow rtl={ar} />
-                            </Link>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="df-card-foot">
-                        <button type="button" className="df-toggle" aria-expanded={isOpen} aria-controls={`${uid}-m${i}`} onClick={() => setOpenCard(isOpen ? -1 : i)}>
-                          <PlusIcon />
-                          {isOpen ? (ar ? "إغلاق التفاصيل" : "Close dossier") : (ar ? "عرض التفاصيل" : "Open dossier")}
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        {/* INTERACTIVE COLLECTION CYCLE & SCHEDULE */}
-        <section className="df-sec df-pad" ref={(el) => { sections.current.nights = el; }} data-section="nights" style={{ paddingTop: 0 }}>
-          <div className="df-in df-reveal" ref={nightsRef} data-in={nightsIn}>
-            <div className="df-meta">
-              <span className="df-label">{ar ? "جدولة المتابعة والتدفق النقدي" : "Collection Cycle & Timeline"}</span>
-              <span className="df-label">{ar ? "محاكاة تفاعلية" : "Interactive Preview"}</span>
-            </div>
-            <div className="df-proj-head" style={{ marginTop: "clamp(22px,3cqi,36px)", marginBottom: 0 }}>
-              <h2 className="df-h2">{ar ? "تحكّم في دورة التدفق والمتابعة يوم بيوم." : "Control your cashflow cycle day by day."}</h2>
-              <Asterisk size={28} />
-            </div>
-            <div className="df-nights">
-              <div className="df-sky">
-                <div className="df-sky-row">
-                  <span className="df-label">{ar ? "مؤشر الدورة" : "Cycle Phase"}</span>
-                  <button type="button" className="df-today" data-on={dayOffset !== 0} onClick={() => setDayOffset(0)} disabled={dayOffset === 0}>
-                    {dayOffset === 0 ? (ar ? "اليوم" : "Today") : (ar ? "الرجوع لليوم" : "Back to today")}
-                  </button>
-                </div>
-                <CycleGauge fraction={phase.fraction} colors={pal.colors} uid={uid} />
-                <div style={{ textAlign: "center" }}>
-                  <h3>{healthLabel}</h3>
-                  <span className="df-mono" style={{ color: "var(--df-muted)" }} suppressHydrationWarning>
-                    {skyDay.toLocaleDateString(ar ? "ar-EG" : "en-US", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })}
-                  </span>
-                </div>
-                <div className="df-sky-row" style={{ justifyContent: "center", gap: 14 }}>
-                  <button type="button" className="df-step" aria-label={ar ? "اليوم السابق" : "Previous day"} onClick={() => setDayOffset((d) => d - 1)}>
-                    <Arrow size={14} rtl={!ar} />
-                  </button>
-                  <input
-                    type="range"
-                    min={-15}
-                    max={30}
-                    value={dayOffset}
-                    onChange={(e) => setDayOffset(+e.target.value)}
-                    aria-label={ar ? "تحريك الأيام" : "Scrub days"}
-                    style={{ accentColor: "var(--df-ink)", width: "min(160px,40cqi)" }}
-                  />
-                  <button type="button" className="df-step" aria-label={ar ? "اليوم التالي" : "Next day"} onClick={() => setDayOffset((d) => d + 1)}>
-                    <Arrow size={14} rtl={ar} />
-                  </button>
-                </div>
-                <div className="df-sky-facts">
-                  <div>
-                    <b>{Math.round(phase.illumination * 100)}%</b>
-                    <span className="df-mono" style={{ color: "var(--df-muted)" }} suppressHydrationWarning>{ar ? "مؤشر السيولة" : "Cashflow"}</span>
-                  </div>
-                  <div>
-                    <b>{Math.round(phase.waxing ? phase.daysToClose : phase.daysToReset)}d</b>
-                    <span className="df-mono" style={{ color: "var(--df-muted)" }} suppressHydrationWarning>{ar ? "للإقفال" : "To close"}</span>
-                  </div>
-                  <div>
-                    <b>{dayOffset >= 0 ? `+${dayOffset}d` : `${dayOffset}d`}</b>
-                    <span className="df-mono" style={{ color: "var(--df-muted)" }} suppressHydrationWarning>{ar ? "الإزاحة" : "Offset"}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <div className="df-filters" role="group" aria-label={ar ? "تصفية المهام" : "Filter schedule"}>
-                  {kinds.map((k) => (
-                    <button key={k} type="button" className="df-filter" aria-pressed={kind === k} onClick={() => setKind(k)}>
-                      {k}
-                    </button>
-                  ))}
-                </div>
-                <ul className="df-events">
-                  {shownEvents.map((ev, row) => {
-                    const effectiveOffset = ev.offsetDays + dayOffset;
-                    const evDate = new Date(Date.now() + effectiveOffset * 86400000);
-                    const key = `${ev.title}-${row}`;
-                    const activeSim = simulated[key] ?? true;
-                    const stageLabel = ev.stage;
-                    return (
-                      <li key={key} className="df-event">
-                        <div className="df-date" suppressHydrationWarning>
-                          <b>{String(evDate.getDate()).padStart(2, "0")}</b>
-                          <span>{evDate.toLocaleDateString(ar ? "ar-EG" : "en-US", { month: "short" })}</span>
-                        </div>
-                        <div>
-                          <span className="df-label" style={{ fontSize: 10 }}>
-                            {ev.kind} · {ev.time} ({effectiveOffset >= 0 ? `+${effectiveOffset}d` : `${effectiveOffset}d`})
-                          </span>
-                          <h3>{ev.title}</h3>
-                          <div className="df-event-meta">
-                            <span>{ev.place}</span>
-                            <span>·</span>
-                            <span>{ev.target}</span>
-                            <span>·</span>
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                              <MiniPhase fraction={cyclePhase(evDate).fraction} />
-                              {Math.round(cyclePhase(evDate).illumination * 100)}%
-                            </span>
-                          </div>
-                        </div>
-                        <div className="df-event-act">
-                          <button
-                            type="button"
-                            className="df-btn df-btn-line df-rsvp"
-                            aria-pressed={activeSim}
-                            onClick={() => setSimulated((s) => ({ ...s, [key]: !(s[key] ?? true) }))}
-                          >
-                            {activeSim ? (
-                              <>
-                                <CheckIcon /> {ar ? "مُفعّل" : "Active"}
-                              </>
-                            ) : (
-                              ar ? "تفعيل" : "Enable"
-                            )}
-                          </button>
-                          <span className="df-going">{stageLabel}</span>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 16 }}>
-                  <span className="df-mono" style={{ color: "var(--df-muted)" }}>
-                    {ar
-                      ? `مهلة السداد المحسوبة: ${Math.max(7, Math.min(60, 14 + dayOffset))} يوم`
-                      : `Calculated payment terms: ${Math.max(7, Math.min(60, 14 + dayOffset))} days`}
-                  </span>
-                  <button type="button" onClick={applyCyclePolicyToWorkspace} className="df-btn df-btn-solid">
-                    {ar ? "حفظ وتطبيق هذه الدورة في حسابك" : "Apply this cycle to workspace"}
-                    <Arrow size={12} rtl={ar} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* JOIN + 3D WORKSPACE CARD */}
-        <section className="df-sec df-pad" ref={(el) => { sections.current.join = el; }} data-section="join" style={{ paddingTop: 0 }}>
-          <div className="df-in df-reveal" ref={joinRef} data-in={joinIn}>
-            <div className="df-meta">
-              <span className="df-label">{ar ? "الباقات ومساحة العمل" : "Plans & Workspace"}</span>
-              <span className="df-label">{wsNum}</span>
-              <span className="df-label">{chosenTier.name}</span>
-            </div>
-            <div className="df-join">
-              <div>
-                <h2 className="df-h2" style={{ marginTop: "clamp(18px,3cqi,30px)" }}>
-                  {ar ? "اطبع بطاقة منشأتك وابدأ." : "Print your workspace card."}
-                </h2>
-                <p className="df-lede" style={{ margin: "14px 0 22px" }}>
-                  {ar
-                    ? "اختر الباقة المناسبة واكتب اسم منشأتك لمعاينة بطاقة مساحة العمل الخاصة بك قبل التسجيل."
-                    : "Select a tier and enter your business name to preview your DAFQLY workspace card."}
-                </p>
-                <div className="df-tiers" role="radiogroup" aria-label={ar ? "الباقات" : "Plans"}>
-                  {tiers.map((t, i) => (
-                    <button
-                      key={t.name}
-                      type="button"
-                      role="radio"
-                      aria-checked={tierIdx === i}
-                      className="df-tier"
-                      onClick={() => setTierIdx(i)}
-                    >
-                      {t.featured && <span className="df-badge">{ar ? "الأكثر طلباً" : "Popular"}</span>}
-                      <span className="df-tier-name">
-                        {t.name}
-                        <span className="df-radio" />
-                      </span>
-                      <span className="df-price">
-                        {t.price}
-                        {t.period && <small>{t.period}</small>}
-                      </span>
-                      <span style={{ fontSize: 12.5, color: "var(--df-muted)" }}>{t.blurb}</span>
-                      <ul>
-                        {t.perks.map((pk) => (
-                          <li key={pk}>
-                            <CheckIcon />
-                            <span>{pk}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </button>
-                  ))}
-                </div>
-                <form className="df-form" onSubmit={handlePrintCard} noValidate>
-                  <input
-                    className="df-field"
-                    value={bizName}
-                    maxLength={40}
-                    placeholder={ar ? "اسم المنشأة" : "Business name"}
-                    aria-invalid={status === "error" && !bizName.trim() ? true : undefined}
-                    onChange={(e) => {
-                      setBizName(e.target.value);
-                      if (status !== "idle") setStatus("idle");
-                    }}
-                  />
-                  <input
-                    className="df-field"
-                    type="email"
-                    dir="ltr"
-                    value={email}
-                    placeholder="name@company.com"
-                    aria-invalid={status === "error" && !!bizName.trim() && !isEmail(email) ? true : undefined}
-                    onChange={(e) => {
-                      setEmail(e.target.value);
-                      if (status !== "idle") setStatus("idle");
-                    }}
-                  />
-                  <button type="submit" className="df-btn df-btn-solid">
-                    {ar ? "إصدار بطاقة المنشأة" : "Issue workspace card"}
-                  </button>
-                </form>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
-                  <Link href={signupWithCardHref} className="df-btn df-btn-ink">
-                    {ar ? "إنشاء مساحة العمل بهذه البيانات" : "Create workspace with this card"}
-                    <Arrow size={12} rtl={ar} />
-                  </Link>
-                  <button type="button" onClick={downloadCardSvg} className="df-btn df-btn-line">
-                    {ar ? "تحميل البطاقة (SVG)" : "Download card (SVG)"}
-                  </button>
-                </div>
-                <div className="df-msg" data-s={status} role="status" aria-live="polite">
-                  {status !== "idle" && <span>{msg}</span>}
-                </div>
-              </div>
-
-              <div className="df-card-wrap">
-                <div
-                  key={printed}
-                  ref={cardRef}
-                  className={`df-member${printed ? " df-printed" : ""}`}
-                  onPointerMove={tilt}
-                  onPointerLeave={untilt}
-                  aria-label={ar ? "معاينة بطاقة دفقلي" : "DAFQLY workspace card preview"}
-                  role="img"
-                >
-                  <div className="df-member-bg" style={{ background: bubbleCss(hashStr(bizName + chosenTier.name) || 102, pal.colors, 42, 56) }} />
-                  <div className="df-member-rib">
-                    <Marquee text={ar ? "دفقلي · مساحة العمل" : "DAFQLY · WORKSPACE"} duration={18} />
-                  </div>
-                  <div className="df-member-in">
-                    <div className="df-member-top">
-                      <Title text={ar ? "دفقلي.\nمساحة العمل" : "DAFQLY.\nWORKSPACE"} />
-                      <DafqlyLogo size={46} />
-                    </div>
-                    <div className="df-member-bottom">
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <small>{chosenTier.name}</small>
-                        <div className="df-member-name">{bizName.trim() || (ar ? "اسم منشأتك" : "Your Business")}</div>
-                      </div>
-                      <div className="df-member-no">
-                        <small>ID</small>
-                        {wsNum}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="df-member-shine" />
-                </div>
-                <span className="df-mono" style={{ color: "var(--df-muted)" }}>
-                  {ar ? "مرّر المؤشر على البطاقة" : "Hover over the card · it tilts"}
-                </span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* FOOTER */}
-        <footer className="df-sec">
-          <div className="df-foot-band">
-            <Bubbles seed={106} colors={pal.colors} density={2} scale={0.5} mask={footMask} onPop={() => setPops((p) => p + 1)} />
-            <Title text={ar ? "دفقلي.\nتتبّع وحصّل" : "DAFQLY.\nGET PAID"} />
-          </div>
-          <div className="df-in df-foot">
-            <p className="df-tagline">{ar ? "تتبّع. تابع. وحصّل." : "TRACK. FOLLOW. GET PAID."}</p>
-            <nav className="df-foot-links" aria-label="Footer">
-              <Link href={`/${locale}/login`}>{ar ? "تسجيل الدخول" : "Login"}</Link>
-              <Link href={`/${locale}/signup`}>{ar ? "إنشاء حساب" : "Sign up"}</Link>
-              <a href="#mission" onClick={(e) => { e.preventDefault(); scrollTo("mission"); }}>{ar ? "الرؤية" : "Overview"}</a>
-              <a href="#projects" onClick={(e) => { e.preventDefault(); scrollTo("projects"); }}>{ar ? "الوحدات" : "Modules"}</a>
-            </nav>
-            <div className="df-foot-end">
-              <ThemeToggle size="sm" />
-              <a href="#home" className="df-toggle" onClick={(e) => { e.preventDefault(); scrollTo("home"); }}>
-                {ar ? "العودة للأعلى ↑" : "Back to top ↑"}
+    <div dir={ar ? "rtl" : "ltr"} className="min-h-screen bg-background text-foreground">
+      {/* NAV */}
+      <header className="glass sticky top-0 z-40 border-b border-border">
+        <div className="mx-auto flex h-16 max-w-6xl items-center gap-4 px-4 sm:px-6">
+          <a href="#top" className="flex items-center gap-2 font-extrabold">
+            <BrandMark size={30} />
+            <span>{ar ? "دفقلي" : "DAFQLY"}</span>
+          </a>
+          <nav className="ms-6 hidden items-center gap-1 md:flex" aria-label="Primary">
+            {links.map((l) => (
+              <a key={l.href} href={l.href} className="rounded-md px-3 py-2 text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground">
+                {l.label}
               </a>
-              <span className="df-mono">© {new Date().getFullYear()} {ar ? "دفقلي" : "DAFQLY"}</span>
+            ))}
+          </nav>
+          <div className="ms-auto flex items-center gap-2">
+            <ThemeToggle size="sm" />
+            <LocaleToggle currentLocale={locale} className="min-h-[36px] rounded-md px-3 text-xs" />
+            <Link data-testid="landing-cta-login" href={`/${locale}/login`} className="hidden px-2 text-sm font-bold text-muted-foreground hover:text-foreground sm:inline-block">
+              {c.nav.login}
+            </Link>
+            <Link data-testid="landing-cta-signup" href={`/${locale}/signup`} className={`${btnSolid} !min-h-9 hidden sm:inline-flex`}>
+              {c.nav.start}
+            </Link>
+            <button
+              type="button"
+              className="grid size-9 place-items-center rounded-md border border-border md:hidden"
+              aria-expanded={menu}
+              aria-controls="mobile-nav"
+              aria-label={c.nav.menu}
+              onClick={() => setMenu((m) => !m)}
+            >
+              {menu ? <X size={18} /> : <List size={18} />}
+            </button>
+          </div>
+        </div>
+        {menu && (
+          <nav id="mobile-nav" className="border-t border-border bg-background px-4 py-3 md:hidden" aria-label="Mobile">
+            {[...links, { href: `/${locale}/login`, label: c.nav.login }].map((l) => (
+              <a key={l.href} href={l.href} onClick={() => setMenu(false)} className="block rounded-md px-3 py-3 text-sm font-semibold hover:bg-muted">
+                {l.label}
+              </a>
+            ))}
+            <Link href={`/${locale}/signup`} className={`${btnSolid} mt-2 w-full`}>{c.nav.start}</Link>
+          </nav>
+        )}
+      </header>
+
+      <main id="top">
+        {/* HERO */}
+        <section className="relative overflow-hidden border-b border-border">
+          <div className="hero-glow pointer-events-none absolute inset-0" aria-hidden="true" />
+          <div className="relative mx-auto grid max-w-6xl items-center gap-10 px-4 py-14 sm:px-6 lg:grid-cols-2 lg:py-24">
+            <div>
+              <h1 className="text-3xl font-extrabold leading-[1.25] sm:text-5xl">{c.hero.title}</h1>
+              <p className="mt-5 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">{c.hero.sub}</p>
+              <div className="mt-8 flex flex-wrap gap-3">
+                <Link data-testid="landing-hero-signup" href={`/${locale}/signup`} className={btnSolid}>
+                  {c.hero.cta}
+                  <Arrow size={16} />
+                </Link>
+                <a href="#features" className={btnLine}>{c.hero.secondary}</a>
+              </div>
+              <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+                <ShieldCheck size={16} />
+                {c.hero.note}
+              </p>
+            </div>
+
+            {/* product preview */}
+            <div className="relative">
+            <HeroBackdrop />
+            <div className="panel-shadow absolute -top-3 end-3 z-10 hidden items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-bold sm:flex" aria-hidden="true">
+              <span className="grid size-5 place-items-center rounded-full bg-status-paid-bg text-status-paid-fg"><Check size={12} /></span>{c.preview.chipPaid}
+            </div>
+            <div className="panel-shadow absolute -bottom-4 start-3 z-10 hidden items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-bold sm:flex" aria-hidden="true">
+              <span className="grid size-5 place-items-center rounded-full bg-chart-2 text-white"><Bell size={12} /></span>{c.preview.chipSent}
+            </div>
+            <div className="relative rounded-xl border border-border bg-card" role="img" aria-label={c.preview.title}>
+              <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                <span className="text-sm font-bold">{c.preview.title}</span>
+                <span className="rounded bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground">{c.preview.sample}</span>
+              </div>
+              <ul className="divide-y divide-border" aria-hidden="true">
+                {c.preview.rows.map((r) => (
+                  <li key={r.name} className="flex items-center gap-3 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold">{r.name}</p>
+                      <p className="truncate text-xs text-muted-foreground">{r.action}</p>
+                    </div>
+                    <span className={`rounded px-2 py-0.5 text-xs font-bold ${TONE[r.tone]}`}>{r.tag}</span>
+                    <span className="tnum w-28 text-end text-sm font-bold">{r.amount}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex items-baseline justify-between border-t border-border bg-muted px-4 py-3 rounded-b-xl">
+                <span className="text-xs font-semibold uppercase text-muted-foreground">{c.preview.totalLabel}</span>
+                <span className="tnum text-lg font-extrabold">{c.preview.total}</span>
+              </div>
+            </div>
             </div>
           </div>
-        </footer>
-      </div>
+        </section>
+
+        {/* TRUST */}
+        <section aria-label="Principles" className="border-b border-border bg-muted">
+          <ul className="mx-auto grid max-w-6xl gap-3 px-4 py-5 sm:grid-cols-2 sm:px-6 lg:grid-cols-4">
+            {c.trust.map((t) => (
+              <li key={t} className="flex items-center gap-2 text-sm font-semibold">
+                <span className="grid size-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"><Check size={12} /></span>
+                {t}
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        {/* FEATURES */}
+        <section id="features" className="mx-auto max-w-6xl scroll-mt-20 px-4 py-16 sm:px-6 lg:py-24">
+          <div className="max-w-2xl">
+            <h2 className="text-2xl font-extrabold sm:text-4xl">{c.featuresTitle}</h2>
+            <p className="mt-3 text-muted-foreground">{c.featuresSub}</p>
+          </div>
+          <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+            {c.features.map((f) => {
+              const Art = ART[f.id];
+              return (
+                <article key={f.id} className={`${SPAN[f.id]} group overflow-hidden rounded-xl border border-border bg-card hover:border-border-strong`}>
+                  <div className={`h-44 border-b border-border px-4 pt-3 ${TINT[f.id]}`}><Art /></div>
+                  <div className="p-5">
+                    <h3 className="flex items-center gap-2 text-base font-bold">
+                      <span className="grid size-8 place-items-center rounded-md bg-muted"><f.icon size={18} /></span>
+                      {f.title}
+                    </h3>
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{f.body}</p>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* HOW */}
+        <section id="how" className="scroll-mt-20 border-y border-border bg-muted">
+          <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-20">
+            <h2 className="text-2xl font-extrabold sm:text-4xl">{c.howTitle}</h2>
+            <ol className="mt-10 grid gap-4 md:grid-cols-3">
+              {c.steps.map((s, i) => (
+                <li key={s.title} className="rounded-xl border border-border bg-card p-5">
+                  <div className="h-24 rounded-lg border border-border bg-muted p-2"><StepArt step={(i + 1) as 1 | 2 | 3} /></div>
+                  <span className="tnum mt-4 grid size-8 place-items-center rounded-full bg-primary text-sm font-extrabold text-primary-foreground">{i + 1}</span>
+                  <h3 className="mt-3 font-bold">{s.title}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{s.body}</p>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
+        {/* CTA */}
+        <section id="start" className="mx-auto max-w-6xl scroll-mt-20 px-4 py-16 sm:px-6 lg:py-24">
+          <div className="grid gap-8 rounded-2xl border border-border bg-card p-6 sm:p-10 lg:grid-cols-2">
+            <div>
+              <h2 className="text-2xl font-extrabold sm:text-4xl">{c.cta.title}</h2>
+              <p className="mt-3 text-muted-foreground">{c.cta.sub}</p>
+              <div className="mt-4 hidden h-48 max-w-xs lg:block"><CtaArt /></div>
+              <ul className="mt-4 space-y-3">
+                {c.cta.perks.map((p) => (
+                  <li key={p} className="flex items-center gap-2 text-sm font-semibold">
+                    <Check size={16} /> {p}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <form onSubmit={submit} noValidate className="space-y-3 self-center">
+              <label className="block text-sm font-bold">
+                {c.cta.biz}
+                <input className={`${field} mt-1`} value={biz} onChange={(e) => { setBiz(e.target.value); setError(""); }} autoComplete="organization" />
+              </label>
+              <label className="block text-sm font-bold">
+                {c.cta.email}
+                <input className={`${field} mt-1`} type="email" dir="ltr" value={email} onChange={(e) => { setEmail(e.target.value); setError(""); }} autoComplete="email" />
+              </label>
+              <p role="alert" className="min-h-5 text-sm font-semibold text-danger">{error}</p>
+              <button type="submit" className={`${btnSolid} w-full`}>
+                {c.cta.button}
+                <Arrow size={16} />
+              </button>
+              <p className="flex items-center gap-2 text-xs text-muted-foreground"><LockKey size={14} />{c.hero.note}</p>
+            </form>
+          </div>
+        </section>
+      </main>
+
+      <footer className="border-t border-border">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-6 text-sm text-muted-foreground sm:px-6">
+          <span className="flex items-center gap-2"><BrandMark size={20} />© {new Date().getFullYear()} {c.footer}</span>
+          <Link href={`/${locale}/login`} className="font-semibold hover:text-foreground">{c.nav.login}</Link>
+        </div>
+      </footer>
     </div>
   );
 }

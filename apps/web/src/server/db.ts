@@ -24,12 +24,14 @@ export function ownerDb(): Db {
 }
 export function appDb(): Db {
   if (!globalForDb.app) {
-    globalForDb.app = createAppDb(appDatabaseUrl());
-    globalForDb.appRoleCheck = assertAppRole(globalForDb.app.client).catch((err: unknown) => {
+    const app = createAppDb(appDatabaseUrl());
+    globalForDb.app = app;
+    globalForDb.appRoleCheck = assertAppRole(app.client).catch((err: unknown) => {
       // Fail closed: drop the mis-roled connection so the next call retries
       // (and fails again) instead of serving tenant traffic as the owner.
       globalForDb.app = undefined;
       globalForDb.appRoleCheck = undefined;
+      void app.client.end({ timeout: 1 }).catch(() => {});
       console.error("[db] APP_DATABASE_URL role check failed:", err instanceof Error ? err.message : err);
       throw err;
     });

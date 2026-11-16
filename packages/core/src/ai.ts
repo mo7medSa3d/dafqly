@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { normalizeDigits } from "./digits";
-import { parseEgp, formatMoney, formatCurrencyMinor, normalizeCurrencyCode } from "./money";
+import { currencyMinorExponent, parseMoney, formatMoney, formatCurrencyMinor, normalizeCurrencyCode } from "./money";
 import { allocatePayment, addDaysIso, type AllocationTarget } from "./invoices";
 
 /**
@@ -31,15 +31,17 @@ export const MAX_LEDGER_PAGES = 10;
  * integer is already minor units; a non-integer number is EGP major units.
  * Returns null when the value cannot be read as money.
  */
-export function coerceAmountMinor(value: unknown): number | null {
+export function coerceAmountMinor(value: unknown, currency: string = "EGP"): number | null {
+  const exponent = currencyMinorExponent(currency);
   if (typeof value === "number") {
     if (!Number.isFinite(value) || value < 0) return null;
-    const minor = Number.isInteger(value) ? value : Math.round(value * 100);
+    const scale = 10 ** exponent;
+    const minor = Number.isInteger(value) ? value : Math.round(value * scale);
     return Number.isSafeInteger(minor) ? minor : null;
   }
   if (typeof value === "string") {
     try {
-      const minor = Number(parseEgp(value));
+      const minor = Number(parseMoney(value, currency));
       return Number.isSafeInteger(minor) && minor >= 0 ? minor : null;
     } catch {
       return null;
@@ -48,14 +50,19 @@ export function coerceAmountMinor(value: unknown): number | null {
   return null;
 }
 
-const amountMinorField = z.union([z.number(), z.string()]).transform((v, ctx) => {
-  const minor = coerceAmountMinor(v);
-  if (minor === null) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "amount is not a readable EGP amount" });
-    return z.NEVER;
-  }
-  return minor;
-});
+function amountMinorFieldForCurrency(currency: string) {
+  const code = normalizeCurrencyCode(currency);
+  return z.union([z.number(), z.string()]).transform((v, ctx) => {
+    const minor = coerceAmountMinor(v, code);
+    if (minor === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `amount is not a readable ${code} amount` });
+      return z.NEVER;
+    }
+    return minor;
+  });
+}
+
+const amountMinorField = amountMinorFieldForCurrency("EGP");
 const confidenceField = z.number().min(0).max(1);
 const dateField = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -75,8 +82,12 @@ export const ledgerExtractionSchema = z.object({ rows: z.array(ledgerRowSchema) 
 export type LedgerExtraction = z.infer<typeof ledgerExtractionSchema>;
 
 /** Safe parser: invalid LLM output -> null (routes to human review). */
-export function parseLedgerExtraction(input: unknown): LedgerExtraction | null {
-  const parsed = ledgerExtractionSchema.safeParse(input);
+export function parseLedgerExtraction(input: unknown, currency = "EGP"): LedgerExtraction | null {
+  const code = normalizeCurrencyCode(currency);
+  const schema = code === "EGP" ? ledgerExtractionSchema : z.object({
+    rows: z.array(ledgerRowSchema.extend({ amount_minor: amountMinorFieldForCurrency(code) })),
+  });
+  const parsed = schema.safeParse(input);
   return parsed.success ? parsed.data : null;
 }
 
@@ -196,7 +207,7 @@ export type ReceiptMethod = (typeof RECEIPT_METHODS)[number];
 
 export const receiptExtractionSchema = z.object({
   is_receipt: z.boolean(),
-  amount_minor: amountMinorField.nullable().optional().default(null),
+  amount_minor: z.union([z.number(), z.string()]).nullable().optional().default(null),
   currency: z.string().nullable().optional().default(null),
   datetime: z.string().nullable().optional().default(null),
   sender_name: z.string().nullable().optional().default(null),
@@ -206,6 +217,17 @@ export const receiptExtractionSchema = z.object({
   status_text: z.string().nullable().optional().default(null),
   confidence: confidenceField,
   tamper_signals: z.array(z.string()).default([]),
+}).transform((data, ctx) => {
+  if (data.amount_minor === null || data.amount_minor === undefined) {
+    return { ...data, amount_minor: null as number | null };
+  }
+  const cur = data.currency ? normalizeCurrencyCode(data.currency) : "EGP";
+  const minor = coerceAmountMinor(data.amount_minor, cur);
+  if (minor === null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["amount_minor"], message: `amount is not a readable ${cur} amount` });
+    return z.NEVER;
+  }
+  return { ...data, amount_minor: minor };
 });
 export type ReceiptExtraction = z.infer<typeof receiptExtractionSchema>;
 
@@ -248,7 +270,7 @@ export function evaluateReceiptChecks(input: {
   );
   checks.push({
     key: "duplicate_reference",
-    passed: !refSeen,
+    passed: e.reference_no !== null && !refSeen,
     detail: e.reference_no === null ? "no reference number on the receipt" : refSeen ? "reference number was seen before" : "reference not seen before",
   });
   let dateOk = false;
@@ -921,7 +943,7 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
   const debtorDisplayName = safeDebtorName || (isEn ? "Valued Customer" : "عزيزي العميل");
   const businessDisplayName = safeBusinessName || (isEn ? "DAFQLY" : "دافقلي");
   const currency = input.currency ?? (isEn ? "EGP" : "ج.م");
-  const currencyCode = input.currency && /^[A-Z]{3}$/.test(input.currency)
+  const currencyCode = input.currency && /^[A-Za-z]{3}$/.test(input.currency)
     ? normalizeCurrencyCode(input.currency)
     : "EGP";
   const amountMajor = formatCurrencyMinor(amountMinor, currencyCode);

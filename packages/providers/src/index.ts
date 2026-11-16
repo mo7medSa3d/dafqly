@@ -10,6 +10,7 @@ export * from "./openai-compatible";
 export * from "./registry";
 export * from "./config";
 export { readSseData, parseSseJson } from "./sse";
+export * from "./image";
 export * from "./prompts/ledger";
 export * from "./prompts/receipt";
 export * from "./prompts/reply";

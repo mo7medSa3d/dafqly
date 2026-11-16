@@ -27,11 +27,7 @@ export interface RefundInput {
   /** The original Paymob transaction id being refunded. */
   transactionId: string;
   amountMinor: bigint;
-  /**
-   * Deterministic per-attempt key (H3: `refund:<reversal row id>`). Providers
-   * that support idempotent refunds should dedupe on it. The ledger-side
-   * refund-intent row is the authoritative dedupe — the key is a second layer.
-   */
+  /** Deterministic app-local refund intent key; not sent unless Paymob documents provider-side idempotency. */
   idempotencyKey?: string;
 }
 

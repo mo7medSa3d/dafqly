@@ -65,7 +65,7 @@ Every row names where the seam lives and what proves it.
 
 ## 6. What "verified" means here
 
-A row is FAKE-TESTED only when a test in `TESTING_EVIDENCE.md` exercises
+A row is FAKE-TESTED only when an e2e test exercises
 that seam end-to-end with the fake (not a unit test of a helper alone).
 No row claims a live provider success: per the brief, "no external
 integration is successful without credentials + real test" — every live

@@ -33,7 +33,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       const parsed = JSON.parse(raw) as { businessName?: string; email?: string };
       if (!name && parsed.businessName) setName(parsed.businessName);
       if (!email && parsed.email) setEmail(parsed.email);
-    } catch {}
+    } catch (err) { console.warn("[AuthForm] saved workspace card unreadable, ignoring it", err); }
   }, [initialBiz, initialEmail]);
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);

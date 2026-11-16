@@ -3,11 +3,11 @@ import {
   parseChequeExtraction, parseLedgerExtraction, parseReceiptExtraction, parseReplyClassification,
 } from "@tahseel/core";
 import { CHEQUE_PROMPT_VERSION, CHEQUE_SYSTEM, CHEQUE_TOOL_NAME, CHEQUE_TOOL_SCHEMA, CHEQUE_USER } from "./prompts/cheque";
-import { LEDGER_PROMPT_VERSION, LEDGER_SYSTEM, LEDGER_TOOL_NAME, LEDGER_TOOL_SCHEMA, LEDGER_USER } from "./prompts/ledger";
+import { LEDGER_PROMPT_VERSION, ledgerSystemForCurrency, LEDGER_TOOL_NAME, LEDGER_TOOL_SCHEMA, LEDGER_USER } from "./prompts/ledger";
 import { RECEIPT_PROMPT_VERSION, RECEIPT_SYSTEM, RECEIPT_TOOL_NAME, RECEIPT_TOOL_SCHEMA, RECEIPT_USER } from "./prompts/receipt";
 import { REPLY_PROMPT_VERSION, REPLY_SYSTEM, REPLY_TOOL_NAME, REPLY_TOOL_SCHEMA, replyUserText } from "./prompts/reply";
 import {
-  executeAgentToolCall, LlmNotConfiguredError,
+  executeAgentToolCall, LlmNotConfiguredError, maxStepsFallbackText,
   type AgentRunInput, type AgentRunResult, type AgentToolExecution, type LlmCallResult, type OcrLlmProvider, type ReplyContext,
 } from "./llm";
 import { combinedSignal, parseSseJson, readSseData } from "./sse";
@@ -146,8 +146,8 @@ export class OpenAiCompatibleLlmProvider implements OcrLlmProvider {
     };
   }
 
-  extractLedgerPage(image: Uint8Array, mime: string): Promise<LlmCallResult<LedgerExtraction>> {
-    return this.callTool({ model: this.visionModel, promptVersion: LEDGER_PROMPT_VERSION, system: LEDGER_SYSTEM, userText: LEDGER_USER, image: { data: image, mime }, toolName: LEDGER_TOOL_NAME, toolDescription: "Return the ledger rows transcribed from the page image.", toolSchema: LEDGER_TOOL_SCHEMA, parse: parseLedgerExtraction });
+  extractLedgerPage(image: Uint8Array, mime: string, currency = "EGP"): Promise<LlmCallResult<LedgerExtraction>> {
+    return this.callTool({ model: this.visionModel, promptVersion: LEDGER_PROMPT_VERSION, system: ledgerSystemForCurrency(currency), userText: LEDGER_USER, image: { data: image, mime }, toolName: LEDGER_TOOL_NAME, toolDescription: "Return the ledger rows transcribed from the page image.", toolSchema: LEDGER_TOOL_SCHEMA, parse: (value) => parseLedgerExtraction(value, currency) });
   }
   extractReceipt(image: Uint8Array, mime: string): Promise<LlmCallResult<ReceiptExtraction>> {
     return this.callTool({ model: this.visionModel, promptVersion: RECEIPT_PROMPT_VERSION, system: RECEIPT_SYSTEM, userText: RECEIPT_USER, image: { data: image, mime }, toolName: RECEIPT_TOOL_NAME, toolDescription: "Return the transfer receipt fields transcribed from the image.", toolSchema: RECEIPT_TOOL_SCHEMA, parse: parseReceiptExtraction });
@@ -172,15 +172,15 @@ export class OpenAiCompatibleLlmProvider implements OcrLlmProvider {
     };
   }
 
-  async streamText(prompt: string, systemInstruction: string | undefined, onToken: (delta: string) => void): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+  async streamText(prompt: string, systemInstruction: string | undefined, onToken: (delta: string) => void, signal?: AbortSignal): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
     const model = this.fastModel;
     const res = await this.post({
       model, [this.tokenParam]: 1400, stream: true,
       ...(this.opts.supportsStreamUsage === false ? {} : { stream_options: { include_usage: true } }),
       messages: [...(systemInstruction ? [{ role: "system", content: systemInstruction }] : []), { role: "user", content: prompt }],
-    });
+    }, signal);
     let text = ""; let inputTokens = 0; let outputTokens = 0;
-    for await (const data of readSseData(res)) {
+    for await (const data of readSseData(res, signal)) {
       const chunk = parseSseJson<ChatChunk>(data);
       if (!chunk) continue;
       if (chunk.error) throw new Error(`${this.name} stream error: ${chunk.error.message ?? "unknown"}`);
@@ -271,7 +271,7 @@ export class OpenAiCompatibleLlmProvider implements OcrLlmProvider {
       }
     }
     return {
-      text: finalText || "لم أتمكن من إكمال التحليل ضمن حد خطوات الأدوات. جرّب تقسيم السؤال إلى خطوات أصغر.",
+      text: finalText || maxStepsFallbackText(input.locale),
       toolExecutions, inputTokens, outputTokens, model, steps: maxSteps,
     };
   }

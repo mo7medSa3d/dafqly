@@ -9,6 +9,15 @@ mkdirSync(shotsDir, { recursive: true });
 
 test("DAFQLY landing renders for logged-out visitors with CTAs", async ({ page }) => {
   await page.goto("/ar");
+  // Mobile (default 390px viewport): the header CTAs hide below `sm` and
+  // the hamburger menu carries login + signup instead (DafqlyLanding.tsx
+  // #mobile-nav). The login link must work from there.
+  await page.getByRole("button", { name: "القائمة" }).click();
+  await page.locator("#mobile-nav a", { hasText: "دخول" }).click();
+  await expect(page).toHaveURL(/\/ar\/login/);
+  // Desktop: both header CTAs are visible and navigate.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/ar");
   await expect(page.getByTestId("landing-cta-signup")).toBeVisible();
   await expect(page.getByTestId("landing-cta-login")).toBeVisible();
   await page.screenshot({ path: `${shotsDir}/dafqly-landing-light.png` });

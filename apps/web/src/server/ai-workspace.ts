@@ -10,6 +10,7 @@ import {
   daysOverdue,
   formatMoney,
   normalizeCurrencyCode,
+  normalizeDigits,
   outstandingFor,
   type SmartHeaderMappingResult,
   type ParseReceiptScreenshotResult,
@@ -20,7 +21,7 @@ import { decodeBase64Upload, MAX_UPLOAD_BASE64_CHARS, sniffImageMime, stripImage
 import { withTenant, type Db } from "@tahseel/db";
 import { auditLog, debtors, disputes, files, invoices, messageIntents, optOuts, paymentLinks, payments, tenants, usageLedger } from "@tahseel/db/schema";
 import { planForInvoice, planForTenant, dispatchDue } from "@tahseel/reminders";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { aiDeps, engineDeps } from "./engine";
 
@@ -60,15 +61,14 @@ const generatedReplySchema = z.object({
 function immutableCopyFacts(text: string): string[] {
   const urls = text.match(/https?:\/\/[^\s)<>]+/g) ?? [];
   const dates = text.match(/\b\d{4}-\d{2}-\d{2}\b/g) ?? [];
-  const amounts = text.match(/(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}\b/g) ?? [];
+  const amounts = text.match(/(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2,3}\b|¥\s*(?:\d{1,3}(?:,\d{3})+|\d+)|(?:\d{1,3}(?:,\d{3})+|\d+)\s*(?:¥|JPY)\b|\bJPY\s*(?:\d{1,3}(?:,\d{3})+|\d+)/g) ?? [];
   return [...new Set([...urls, ...dates, ...amounts])];
 }
 
 function preservesCopyFacts(candidate: string, original: string, additionalFacts: string[] = []): boolean {
   const allowedFacts = [...new Set([...immutableCopyFacts(original), ...additionalFacts.filter(Boolean)])];
   const candidateFacts = immutableCopyFacts(candidate);
-  return allowedFacts.length > 0 &&
-    allowedFacts.every((fact) => candidate.includes(fact)) &&
+  return allowedFacts.every((fact) => candidate.includes(fact)) &&
     candidateFacts.every((fact) => allowedFacts.includes(fact));
 }
 
@@ -193,14 +193,18 @@ export async function analyzeWorkspaceReceipt(
     }
 
     if (extraction.reference_no) {
-      const cleanRef = extraction.reference_no.trim();
-      const existingPayment = await tx
+      const cleanRef = normalizeDigits(extraction.reference_no).trim().replace(/[\s\-_]/g, "").toUpperCase();
+      const existingPayments = await tx
         .select({ referenceNo: payments.referenceNo })
         .from(payments)
-        .where(eq(payments.referenceNo, cleanRef))
-        .limit(1);
-      if (existingPayment.length > 0 && existingPayment[0]?.referenceNo) {
-        seenReferences.add(existingPayment[0].referenceNo);
+        .where(and(isNotNull(payments.referenceNo), ne(payments.status, "rejected")));
+      for (const existing of existingPayments) {
+        if (
+          existing.referenceNo &&
+          normalizeDigits(existing.referenceNo).trim().replace(/[\s\-_]/g, "").toUpperCase() === cleanRef
+        ) {
+          seenReferences.add(existing.referenceNo);
+        }
       }
     }
   });
@@ -250,7 +254,7 @@ export const generateNotificationInput = z.object({
   tone: z.enum(["friendly", "polite", "firm", "urgent"]).optional(),
   locale: z.enum(["ar", "en"]).default("ar"),
   paymentLink: z.string().url().optional(),
-  channel: z.enum(["whatsapp", "sms"]).default("whatsapp"),
+  channel: z.enum(["whatsapp"]).default("whatsapp"),
 });
 export type GenerateNotificationInput = z.input<typeof generateNotificationInput>;
 

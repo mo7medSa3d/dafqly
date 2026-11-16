@@ -5,7 +5,7 @@ Written 2026-11-13 from the tree at `3bf42a8`. Classification per Prompt 09:
 **PA** = PARTIALLY IMPLEMENTED · **BL** = BLOCKED BY EXTERNAL DEPENDENCY ·
 **NI** = NOT IMPLEMENTED · **DF** = DEFERRED WITH JUSTIFICATION.
 "UI exists" is never proof — the evidence column names the test or the
-reason it is not verified. Full per-suite evidence: `TESTING_EVIDENCE.md`.
+reason it is not verified. Full per-suite evidence: the suites under `pnpm test` and `pnpm test:e2e`.
 
 ## 1. Auth, tenants, platform
 

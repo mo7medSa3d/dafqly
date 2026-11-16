@@ -124,15 +124,15 @@ export class FailoverLlmProvider implements OcrLlmProvider {
     throw lastError ?? new Error("No configured AI provider supports this operation");
   }
 
-  extractLedgerPage(image: Uint8Array, mime: string): Promise<LlmCallResult<LedgerExtraction>> { return this.each((p) => p.extractLedgerPage(image, mime)); }
+  extractLedgerPage(image: Uint8Array, mime: string, currency = "EGP"): Promise<LlmCallResult<LedgerExtraction>> { return this.each((p) => p.extractLedgerPage(image, mime, currency)); }
   extractReceipt(image: Uint8Array, mime: string): Promise<LlmCallResult<ReceiptExtraction>> { return this.each((p) => p.extractReceipt(image, mime)); }
   extractCheque(image: Uint8Array, mime: string): Promise<LlmCallResult<ChequeExtraction>> { return this.each((p) => p.extractCheque(image, mime)); }
   classifyReply(text: string, context: ReplyContext): Promise<LlmCallResult<ReplyClassification>> { return this.each((p) => p.classifyReply(text, context)); }
   generateText(prompt: string, system?: string) { return this.each((p) => p.generateText?.(prompt, system)); }
 
-  streamText(prompt: string, system: string | undefined, onToken: (delta: string) => void) {
+  streamText(prompt: string, system: string | undefined, onToken: (delta: string) => void, signal?: AbortSignal) {
     let emitted = false;
-    return this.each((p) => p.streamText?.(prompt, system, (d) => { emitted = true; onToken(d); }), () => !emitted);
+    return this.each((p) => p.streamText?.(prompt, system, (d) => { emitted = true; onToken(d); }, signal), () => !emitted, signal);
   }
 
   runAgent(input: AgentRunInput): Promise<AgentRunResult> {

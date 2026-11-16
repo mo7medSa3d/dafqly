@@ -41,7 +41,7 @@ async function loadPaidOnByInvoice(tx: Db): Promise<Map<string, string>> {
 /**
  * M6 (ADR-024): SQL-aggregation KPI path. The M5 implementation loaded
  * every invoice/payment/message row into memory — correct, but at 100k
- * invoices it measured seconds on this VM (PROGRESS M6 bench BEFORE).
+ * invoices it measured seconds on this VM (M6 bench BEFORE).
  * This path computes the SAME pinned definitions (ADR-023) with SQL
  * aggregates under RLS; the in-memory reference below stays exported and
  * the M6 bench cross-checks both paths number-for-number on the 100k
@@ -49,7 +49,7 @@ async function loadPaidOnByInvoice(tx: Db): Promise<Map<string, string>> {
  */
 export async function getKpis(app: Db, tenantId: string, todayIso: string): Promise<KpiServiceResult> {
   return withTenant(app, tenantId, async (tx) => {
-    const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+    const [tenant] = await tx.select({ settings: tenants.settings, timezone: tenants.timezone }).from(tenants).where(eq(tenants.id, tenantId));
     // F02: headline KPIs are computed in the tenant's default currency
     // ONLY — the old query summed minor units across currencies. The
     // per-currency breakdown below keeps other-currency money visible.
@@ -57,6 +57,7 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
     // same collectible rule as core outstandingFor(): a disputed invoice
     // is frozen and never counts toward outstanding, overdue or aging.
     const currency = tenant?.settings.currency ?? "EGP";
+    const timezone = tenant?.timezone ?? "Africa/Cairo";
     const [agg] = await tx.execute(sql`
       select
         coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor), 0)::bigint as outstanding,
@@ -132,7 +133,7 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
            join payments p on p.id = a.payment_id and p.status = 'confirmed'
            where i.status = 'paid' and i.last_reminded_at is not null
            group by i.id, i.last_reminded_at) x
-         where (x.paid_on - (x.last_reminded_at at time zone 'UTC')::date) between 0 and 7) as paid_within_7d`) as unknown as [{ sent: number; delivered: number; replied: number; paid_within_7d: number }];
+         where (x.paid_on - (x.last_reminded_at at time zone ${timezone})::date) between 0 and 7) as paid_within_7d`) as unknown as [{ sent: number; delivered: number; replied: number; paid_within_7d: number }];
 
     const totalOutstandingMinor = Number(agg!.outstanding);
     const collectedInMonthMinor = Number(col!.collected);
@@ -282,7 +283,7 @@ export async function exportInvoicesCsv(app: Db, tenantId: string): Promise<{ fi
     const isAr = t?.settings?.exportLanguage === "ar";
     const rows = await tx.select().from(invoices);
     const headers = isAr
-      ? ["المعرف", "معرف_العميل", "رقم_الفاتورة", "المبلغ_بالقروش", "المدفوع_بالقروش", "العملة", "تاريخ_الإصدار", "تاريخ_الاستحقاق", "الحالة"]
+      ? ["المعرف", "معرف_العميل", "رقم_الفاتورة", "المبلغ_بالوحدة_الصغرى", "المدفوع_بالوحدة_الصغرى", "العملة", "تاريخ_الإصدار", "تاريخ_الاستحقاق", "الحالة"]
       : ["id", "debtor_id", "reference", "amount_minor", "paid_minor", "currency", "issued_on", "due_on", "status"];
     const csv = toCsv([
       headers,
@@ -298,11 +299,11 @@ export async function exportPaymentsCsv(app: Db, tenantId: string): Promise<{ fi
     const isAr = t?.settings?.exportLanguage === "ar";
     const rows = await tx.select().from(payments);
     const headers = isAr
-      ? ["المعرف", "معرف_العميل", "المبلغ_بالقروش", "طريقة_الدفع", "تاريخ_الاستلام", "الرقم_المرجعي", "الحالة", "المصدر"]
-      : ["id", "debtor_id", "amount_minor", "method", "received_on", "reference_no", "status", "source"];
+      ? ["المعرف", "معرف_العميل", "المبلغ_بالوحدة_الصغرى", "العملة", "طريقة_الدفع", "تاريخ_الاستلام", "الرقم_المرجعي", "الحالة", "المصدر"]
+      : ["id", "debtor_id", "amount_minor", "currency", "method", "received_on", "reference_no", "status", "source"];
     const csv = toCsv([
       headers,
-      ...rows.map((p) => [p.id, p.debtorId, Number(p.amountMinor), p.method, p.receivedOn, p.referenceNo ?? "", p.status, p.source]),
+      ...rows.map((p) => [p.id, p.debtorId, Number(p.amountMinor), p.currency, p.method, p.receivedOn, p.referenceNo ?? "", p.status, p.source]),
     ]);
     return { filename: isAr ? "المدفوعات.csv" : "payments.csv", csv };
   });

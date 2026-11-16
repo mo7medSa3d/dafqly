@@ -1,7 +1,7 @@
 "use client";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { MotionProvider, PageTransition } from "./motion";
@@ -13,15 +13,18 @@ import { ThemeToggle } from "./ThemeToggle";
 import { LocaleToggle } from "./LocaleToggle";
 import { LogoutButton } from "./LogoutButton";
 import { InitialAvatar } from "./ui";
-import { CommandPalette } from "./CommandPalette";
+import dynamic from "next/dynamic";
 import { DafqlyAiMascot } from "./DafqlyAiMascot";
 import { NotificationBell } from "./NotificationBell";
-import {
-  AiCopilotDrawer,
-  type ComposerMode,
-  type CopilotTab,
-  type OpenCopilotDetail,
-} from "./AiCopilotDrawer";
+import type { ComposerMode, CopilotTab, OpenCopilotDetail } from "./copilot-events";
+/**
+ * The copilot drawer (1662 lines) and the command palette load only when
+ * the user opens them — AppShell always mounts and listens for the
+ * `dafqly:open-ai-copilot` event, so nothing is missed while they are out
+ * of the first-load bundle.
+ */
+const AiCopilotDrawer = dynamic(() => import("./AiCopilotDrawer").then((m) => m.AiCopilotDrawer), { ssr: false });
+const CommandPalette = dynamic(() => import("./CommandPalette").then((m) => m.CommandPalette), { ssr: false });
 import type { NotificationTone } from "@tahseel/core";
 import { trpc } from "@/lib/trpc-client";
 import { CurrencyProvider } from "./CurrencyContext";
@@ -79,21 +82,39 @@ export function AppShell({
   }>({ tab: "assistant" });
   const isEn = locale === "en";
 
+  // Every page mounts its own AppShell, so the sidebar state must live outside
+  // React: read it before first paint (no flash) and write it only when the
+  // user toggles it. Navigating never changes it.
+  const [sidebarReady, setSidebarReady] = useState(false);
+  useLayoutEffect(() => {
+    try { setCollapsed(window.localStorage.getItem("dafqly:sidebar") === "collapsed"); } catch (err) { console.warn("[AppShell] sidebar state unreadable, using default", err); }
+    setSidebarReady(true);
+  }, []);
+  const setSidebar = (next: boolean) => {
+    setCollapsed(next);
+    try { window.localStorage.setItem("dafqly:sidebar", next ? "collapsed" : "open"); } catch (err) { console.warn("[AppShell] sidebar state could not be saved", err); }
+  };
+
+  // Hydration-safe intel: the sessionStorage cache is client-only state, so
+  // it must be read AFTER hydration (in an effect), never in the state
+  // initializer. Reading it during the first render made the client render
+  // "(5 إجراءات)" + a "thinking" mascot while the server rendered "(0
+  // إجراءات)" + "idle" — a React hydration error (#418) on every page once
+  // a fresh (<60s) cache existed. Initial state is always null so the
+  // first client render matches the server HTML.
   const [intel, setIntel] = useState<{
     healthStatus: "strong" | "attention" | "urgent";
     topActions: Array<{ debtorId: string; displayName: string }>;
-  } | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const raw = window.sessionStorage.getItem("dafqly:intel-cache");
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as { ts: number; data: { healthStatus: "strong" | "attention" | "urgent"; topActions: Array<{ debtorId: string; displayName: string }> } };
-      return Date.now() - parsed.ts < 60_000 ? parsed.data : null;
-    } catch { return null; }
-  });
+  } | null>(null);
 
   useEffect(() => {
-    if (intel) return;
+    try {
+      const raw = window.sessionStorage.getItem("dafqly:intel-cache");
+      if (raw) {
+        const parsed = JSON.parse(raw) as { ts: number; data: { healthStatus: "strong" | "attention" | "urgent"; topActions: Array<{ debtorId: string; displayName: string }> } };
+        if (Date.now() - parsed.ts < 60_000) { setIntel(parsed.data); return; }
+      }
+    } catch (err) { console.warn("[AppShell] cached intelligence unreadable, refetching", err); }
     let mounted = true;
     trpc.intelligence.overview
       .query({ syncNotifications: false })
@@ -104,14 +125,14 @@ export function AppShell({
             topActions: data.topActions.map((a) => ({ debtorId: a.debtorId, displayName: a.displayName })),
           };
           setIntel(next);
-          try { window.sessionStorage.setItem("dafqly:intel-cache", JSON.stringify({ ts: Date.now(), data: next })); } catch {}
+          try { window.sessionStorage.setItem("dafqly:intel-cache", JSON.stringify({ ts: Date.now(), data: next })); } catch (err) { console.warn("[AppShell] intelligence cache could not be saved", err); }
         }
       })
-      .catch(() => {});
+      .catch((err) => { console.warn("[AppShell] intelligence overview failed", err); });
     return () => {
       mounted = false;
     };
-  }, [intel]);
+  }, []);
 
   const healthStatus = intel?.healthStatus ?? "strong";
   const priorityCount = intel?.topActions?.length ?? 0;
@@ -141,11 +162,16 @@ export function AppShell({
       });
       setCopilotOpen(true);
     };
+    const handleDataMutated = () => {
+      try { window.sessionStorage.removeItem("dafqly:intel-cache"); } catch { /* ignore */ }
+    };
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("dafqly:open-ai-copilot", handleOpenCopilot);
+    window.addEventListener("dafqly:data-mutated", handleDataMutated);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("dafqly:open-ai-copilot", handleOpenCopilot);
+      window.removeEventListener("dafqly:data-mutated", handleDataMutated);
     };
   }, []);
 
@@ -167,7 +193,7 @@ export function AppShell({
 
           {/* Vercel-Style Minimalist Sidebar */}
           <aside
-            className={`fixed inset-y-0 start-0 z-50 flex flex-col border-e border-border bg-sidebar text-sidebar-foreground transition-transform duration-200 ease-out lg:z-40 lg:transition-[width] ${
+            className={`fixed inset-y-0 start-0 z-50 flex flex-col border-e border-border bg-sidebar text-sidebar-foreground transition-transform duration-200 ease-out lg:z-40 ${sidebarReady ? "lg:transition-[width]" : ""} ${
               collapsed ? "w-[240px] lg:w-[60px]" : "w-[240px] lg:w-[240px]"
             } ${
               mobileOpen
@@ -183,7 +209,7 @@ export function AppShell({
                 ) : (
                   <button
                     type="button"
-                    onClick={() => setCollapsed(false)}
+                    onClick={() => setSidebar(false)}
                     title={isEn ? "Expand sidebar" : "توسيع القائمة"}
                     className="mx-auto flex size-8 items-center justify-center rounded-md border border-border bg-card transition-colors hover:bg-accent"
                   >
@@ -195,7 +221,7 @@ export function AppShell({
               {!collapsed && (
                 <button
                   type="button"
-                  onClick={() => setCollapsed(true)}
+                  onClick={() => setSidebar(true)}
                   title={isEn ? "Collapse sidebar" : "طي القائمة"}
                   className="hidden size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:inline-flex"
                 >
@@ -219,9 +245,9 @@ export function AppShell({
               {NAV_GROUPS.map((group) => {
                 const groupItems = ITEMS.filter((item) => item.group === group.id);
                 return (
-                  <div key={group.id} className="flex flex-col gap-0.5">
+                  <div key={group.id} className={cn("flex flex-col gap-0.5", collapsed && "lg:border-t lg:border-border lg:pt-3 lg:first:border-t-0 lg:first:pt-0")}>
                     <div
-                      className={`px-2.5 pb-1.5 text-[11px] font-medium text-muted-foreground ${
+                      className={`px-2.5 pb-1.5 text-xs font-semibold text-text-subtle ${
                         collapsed ? "lg:hidden" : "block"
                       }`}
                     >
@@ -236,21 +262,21 @@ export function AppShell({
                           key={href}
                           data-testid={testid}
                           href={`/${locale}/${href}`}
-                                                    onClick={() => setMobileOpen(false)}
+                          onClick={() => setMobileOpen(false)}
                           aria-current={active ? "page" : undefined}
                           title={t(key)}
                           className={cn(
-                            "group relative flex h-9.5 items-center gap-2.5 rounded-lg px-2.5 text-[13px] transition-all",
+                            "group relative flex h-10 items-center gap-3 rounded-md px-2.5 text-sm transition-colors",
                             collapsed ? "lg:justify-center lg:px-0" : "",
                             active
-                              ? "bg-accent font-semibold text-foreground"
-                              : "font-medium text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                              ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
+                              : "font-medium text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
                           )}
                         >
+                          {active && <span aria-hidden className="absolute inset-y-2 start-0 w-0.5 rounded-full bg-chart-2" />}
                           <Icon
-                            size={16}
-                            strokeWidth={active ? 2.2 : 1.8}
-                            className={cn("shrink-0", active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground")}
+                            size={20}
+                            className={cn("shrink-0", active ? "text-chart-2" : "text-muted-foreground group-hover:text-foreground")}
                             aria-hidden
                           />
                           <span className={`flex-1 truncate ${collapsed ? "lg:hidden" : "inline"}`}>
@@ -259,7 +285,7 @@ export function AppShell({
                           {badge && (
                             <span
                               className={cn(
-                                "rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] font-semibold text-muted-foreground",
+                                "rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[11px] font-semibold text-muted-foreground",
                                 collapsed ? "lg:hidden" : "inline-flex",
                               )}
                             >
@@ -299,7 +325,7 @@ export function AppShell({
 
           {/* Main Content Area */}
           <div
-            className={`flex min-h-dvh min-w-0 max-w-full flex-col overflow-x-hidden ps-0 transition-[padding] duration-200 ${
+            className={`flex min-h-dvh min-w-0 max-w-full flex-col overflow-x-hidden ps-0 ${sidebarReady ? "transition-[padding] duration-200" : ""} ${
               collapsed ? "lg:ps-[60px]" : "lg:ps-[240px]"
             }`}
           >
@@ -415,14 +441,14 @@ export function AppShell({
                     setCopilotConfig({ tab: "assistant", prompt: q });
                     setCopilotOpen(true);
                   }}
-                  className="flex items-center gap-1.5 rounded-xl border border-border bg-background p-1 focus-within:border-foreground/40"
+                  className="flex items-center gap-1.5 rounded-xl border border-border bg-background p-1 transition-all duration-200 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20"
                 >
                   <input
                     type="text"
                     value={quickAsk}
                     onChange={(e) => setQuickAsk(e.target.value)}
                     placeholder={isEn ? "Ask AI anything..." : "اسأل المساعد مباشرة..."}
-                    className="min-w-0 flex-1 bg-transparent px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground outline-none"
+                    className="min-w-0 flex-1 bg-transparent px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:outline-none"
                   />
                   <button
                     type="submit"

@@ -19,7 +19,8 @@
     "eval": "pnpm --filter @tahseel/eval eval",
     "db:migrate": "pnpm --filter @tahseel/db migrate",
     "db:seed": "pnpm --filter @tahseel/db seed",
-    "db:seed:rich": "pnpm --filter @tahseel/db seed:rich"
+    "db:seed:rich": "pnpm --filter @tahseel/db seed:rich",
+    "db:seed:stress": "pnpm --filter @tahseel/db seed:stress"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

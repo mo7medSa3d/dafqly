@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { AppError } from "@tahseel/core";
+import { AppError, isInQuietHours, safeTimezone } from "@tahseel/core";
 import {
   aiActionApprovals, collectionTasks, debtors, disputes, invoices, memberships,
   optOuts, promisesToPay, reminders, tenants, user, withTenant, type Db,
@@ -124,7 +124,7 @@ export async function listPromisesToPay(app: Db, tenantId: string, todayIso = ne
   return withTenant(app, tenantId, async (tx) => {
     const rows = await tx.select({
       id: promisesToPay.id, debtorId: promisesToPay.debtorId, debtorName: debtors.displayName,
-      invoiceId: promisesToPay.invoiceId, invoiceReference: invoices.reference,
+      invoiceId: promisesToPay.invoiceId, invoiceReference: invoices.reference, currency: invoices.currency,
       amountMinor: promisesToPay.amountMinor, promisedOn: promisesToPay.promisedOn,
       status: promisesToPay.status, source: promisesToPay.source, note: promisesToPay.note,
       requestedBy: promisesToPay.requestedBy, reviewedBy: promisesToPay.reviewedBy,
@@ -249,6 +249,16 @@ export async function createPendingAiApproval(app: Db, tenantId: string, actor: 
       if (!invoice || invoice.debtorId !== input.debtorId) throw new AppError("INVOICE_CUSTOMER_MISMATCH", "Invoice does not belong to this customer", 400);
       if (["paid", "cancelled", "written_off", "disputed"].includes(invoice.status)) throw new AppError("INVOICE_NOT_ACTIONABLE", "Invoice is not eligible for collection action", 400);
     }
+    if (input.actionType === "schedule_reminder") {
+      if (debtor.optedOutAt || !debtor.phoneValid) {
+        throw new AppError("CONTACT_BLOCKED", "Customer is opted out or lacks a valid phone number", 400);
+      }
+      const dueAt = new Date(input.dueAt);
+      const nowMs = Date.now();
+      if (dueAt.getTime() < nowMs + 5 * 60_000 || dueAt.getTime() > nowMs + 90 * 86_400_000) {
+        throw new AppError("INVALID_SCHEDULE_TIME", "Reminder must be scheduled between 5 minutes and 90 days from now", 400);
+      }
+    }
     const title = input.actionType === "create_collection_task"
       ? `AI: ${input.title}`
       : `AI: schedule ${input.channel} reminder for ${debtor.displayName}`;
@@ -279,7 +289,8 @@ export async function decideAiActionApproval(
 ) {
   return withTenant(app, tenantId, async (tx) => {
     const [approval] = await tx.select().from(aiActionApprovals)
-      .where(and(eq(aiActionApprovals.id, approvalId), eq(aiActionApprovals.tenantId, tenantId)));
+      .where(and(eq(aiActionApprovals.id, approvalId), eq(aiActionApprovals.tenantId, tenantId)))
+      .for("update");
     if (!approval) throw new AppError("NOT_FOUND", "AI approval not found", 404);
     if (approval.status !== "pending") throw new AppError("INVALID_TRANSITION", "This approval has already been handled", 409);
     const now = new Date();
@@ -297,8 +308,11 @@ export async function decideAiActionApproval(
       const [debtor] = await tx.select({ id: debtors.id }).from(debtors).where(and(eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
       if (!debtor) throw new AppError("NOT_FOUND", "Customer no longer exists", 404);
       if (input.invoiceId) {
-        const [invoice] = await tx.select({ id: invoices.id, debtorId: invoices.debtorId }).from(invoices).where(eq(invoices.id, input.invoiceId));
+        const [invoice] = await tx.select({ id: invoices.id, debtorId: invoices.debtorId, status: invoices.status }).from(invoices).where(eq(invoices.id, input.invoiceId));
         if (!invoice || invoice.debtorId !== input.debtorId) throw new AppError("INVOICE_CUSTOMER_MISMATCH", "Invoice no longer belongs to customer", 409);
+        if (["paid", "cancelled", "written_off", "disputed"].includes(invoice.status)) {
+          throw new AppError("INVOICE_NOT_ACTIONABLE", "Invoice is no longer eligible for collection action", 409);
+        }
       }
       const [task] = await tx.insert(collectionTasks).values({
         tenantId, debtorId: input.debtorId, invoiceId: input.invoiceId ?? null, title: input.title,
@@ -323,6 +337,14 @@ export async function decideAiActionApproval(
       const dueAt = new Date(input.dueAt);
       if (dueAt.getTime() < now.getTime() + 5 * 60_000 || dueAt.getTime() > now.getTime() + 90 * 86_400_000) {
         throw new AppError("INVALID_SCHEDULE_TIME", "Reminder must be scheduled between 5 minutes and 90 days from now", 400);
+      }
+      if (isInQuietHours(dueAt, {
+        timezone: safeTimezone(tenant?.timezone),
+        quietStart: tenant?.settings?.quietStart ?? "21:00",
+        quietEnd: tenant?.settings?.quietEnd ?? "09:00",
+        fridayMorningSkip: tenant?.settings?.fridayMorningSkip ?? false,
+      })) {
+        throw new AppError("QUIET_HOURS", "Reminder cannot be scheduled during quiet hours or Friday morning skip window", 400);
       }
       const localTodayParts = new Intl.DateTimeFormat("en-CA", { timeZone: tenant?.timezone ?? "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
       const localToday = `${localTodayParts.find((part) => part.type === "year")?.value}-${localTodayParts.find((part) => part.type === "month")?.value}-${localTodayParts.find((part) => part.type === "day")?.value}`;
@@ -350,12 +372,16 @@ export async function getCollectionWorkspaceSummary(app: Db, tenantId: string, t
       open: sql<number>`count(*) filter (where ${collectionTasks.status} in ('open','in_progress'))::int`,
       overdue: sql<number>`count(*) filter (where ${collectionTasks.status} in ('open','in_progress') and ${collectionTasks.dueAt} < now())::int`,
     }).from(collectionTasks).where(eq(collectionTasks.tenantId, tenantId));
+    const [tenantRow] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+    const tenantCurrency = tenantRow?.settings?.currency ?? "EGP";
     const [promises] = await tx.select({
       pending: sql<number>`count(*) filter (where ${promisesToPay.status} = 'pending')::int`,
       accepted: sql<number>`count(*) filter (where ${promisesToPay.status} = 'accepted')::int`,
-      acceptedAmount: sql<string>`coalesce(sum(${promisesToPay.amountMinor}) filter (where ${promisesToPay.status} = 'accepted' and ${promisesToPay.promisedOn} >= ${todayIso}),0)::text`,
+      acceptedAmount: sql<string>`coalesce(sum(${promisesToPay.amountMinor}) filter (where ${promisesToPay.status} = 'accepted' and ${promisesToPay.promisedOn} >= ${todayIso} and coalesce(${invoices.currency}, ${tenantCurrency}) = ${tenantCurrency}),0)::text`,
       overdue: sql<number>`count(*) filter (where ${promisesToPay.status} = 'accepted' and ${promisesToPay.promisedOn} < ${todayIso})::int`,
-    }).from(promisesToPay).where(eq(promisesToPay.tenantId, tenantId));
+    }).from(promisesToPay)
+      .leftJoin(invoices, eq(invoices.id, promisesToPay.invoiceId))
+      .where(eq(promisesToPay.tenantId, tenantId));
     const [approvals] = await tx.select({ pending: sql<number>`count(*)::int` }).from(aiActionApprovals)
       .where(and(eq(aiActionApprovals.tenantId, tenantId), eq(aiActionApprovals.status, "pending")));
     return { openTasks: tasks?.open ?? 0, overdueTasks: tasks?.overdue ?? 0,

@@ -54,7 +54,11 @@ export function clientIp(headers: Headers, explicitTrustedProxies?: number): str
       return parts[idx]!;
     }
   }
-  return headers.get("x-real-ip")?.trim() || "local";
+  if (trusted > 0) {
+    const realIp = headers.get("x-real-ip")?.trim();
+    if (realIp) return realIp;
+  }
+  return "local";
 }
 
 /** Remove buckets whose window has fully elapsed. Returns how many were removed. */

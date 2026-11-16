@@ -137,13 +137,15 @@ export async function getDashboardSummary(app: Db, tenantId: string, todayIso: s
       select currency,
         coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor), 0)::bigint as outstanding,
         coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and due_on < ${todayIso}::date), 0)::bigint as overdue
-      from invoices group by currency order by currency`) as unknown as { currency: string; outstanding: string; overdue: string }[];
+      from invoices
+      where tenant_id = ${tenantId}
+      group by currency order by currency`) as unknown as { currency: string; outstanding: string; overdue: string }[];
     const collectedRows = await tx.execute(sql`
       select currency,
         coalesce(sum(amount_minor) filter (where amount_minor > 0), 0)::bigint as collected,
         coalesce(-sum(amount_minor) filter (where amount_minor < 0), 0)::bigint as refunded
       from payments
-      where status = 'confirmed' and to_char(received_on, 'YYYY-MM') = ${monthPrefix}
+      where tenant_id = ${tenantId} and status = 'confirmed' and to_char(received_on, 'YYYY-MM') = ${monthPrefix}
       group by currency order by currency`) as unknown as { currency: string; collected: string; refunded: string }[];
     const collectedMap = new Map(collectedRows.map((c) => [c.currency, c.collected]));
     const refundedMap = new Map(collectedRows.map((c) => [c.currency, c.refunded]));
@@ -217,7 +219,7 @@ export async function getTenantSettingsAndIntegrations(app: Db, tenantId: string
         llmModelVision: primaryModelFor(safeLlmConfigs(e), "vision") ?? "",
         paymobConfigured: Boolean(e.PAYMOB_SECRET_KEY && e.PAYMOB_PUBLIC_KEY && e.PAYMOB_INTEGRATION_ID && e.PAYMOB_HMAC_SECRET),
         whatsappConfigured: Boolean(e.WHATSAPP_PHONE_NUMBER_ID && e.WHATSAPP_ACCESS_TOKEN),
-        smsConfigured: Boolean(e.SMS_API_KEY && e.SMS_PROVIDER),
+        smsConfigured: false,
         dryRunMessaging: e.DRY_RUN_MESSAGING,
         webhooks: {
           paymob: `${e.APP_URL}/api/webhooks/paymob`,

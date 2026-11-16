@@ -91,6 +91,7 @@ export async function processReceiptImage(
     let debtor = input.debtorId
       ? allDebtors.find((d) => d.id === input.debtorId) ?? null
       : null;
+    if (input.debtorId && !debtor) throw new AppError("NOT_FOUND", "Debtor not found", 404);
 
     // Smart auto-matching if debtorId was not specified
     if (!debtor && extraction) {
@@ -101,18 +102,13 @@ export async function processReceiptImage(
         }
       }
       if (!debtor && extraction.amount_minor && extraction.amount_minor > 0) {
-        const openInvs = await tx.select().from(invoices).where(and(eq(invoices.status, "open"), eq(invoices.currency, paymentCurrency)));
+        const openInvs = await tx.select().from(invoices).where(and(inArray(invoices.status, ["open", "partially_paid"]), eq(invoices.currency, paymentCurrency)));
         const match = openInvs.find((i) => (i.amountMinor - i.paidMinor) === BigInt(extraction.amount_minor!));
         if (match) {
           debtor = allDebtors.find((d) => d.id === match.debtorId) ?? null;
         }
       }
-      if (!debtor) {
-        debtor = allDebtors[0] ?? null;
-      }
     }
-
-    if (!debtor) throw new AppError("NOT_FOUND", "Debtor not found", 404);
     await tx.insert(usageLedger).values({
       tenantId, kind: "llm_vision",
       units: extractionResult.inputTokens + extractionResult.outputTokens, costEstimateMinor: 0n,
@@ -123,23 +119,25 @@ export async function processReceiptImage(
     if (!extraction) {
       await tx.insert(auditLog).values({
         tenantId, actorUserId: actor, action: "payment.receipt_unreadable", entity: "file", entityId: fileId!,
-        after: { debtorId: debtor.id, model: extractionResult.model, promptVersion: extractionResult.promptVersion } as never,
+        after: { debtorId: debtor?.id ?? null, model: extractionResult.model, promptVersion: extractionResult.promptVersion } as never,
       });
       return {
         outcome: "unreadable" as const, paymentId: null, fileId: fileId!, sha256, extraction: null, checks: [], matchKind: null,
-        matchedDebtorId: debtor.id, matchedDebtorName: debtor.displayName,
+        matchedDebtorId: debtor?.id ?? null, matchedDebtorName: debtor?.displayName ?? null,
       };
     }
 
     // Duplicate detection: a single indexed lookup for ANOTHER file with
-    // this hash (this file's own row must not self-match) + every reference
-    // number already carried by a payment. M06: the old code loaded the
-    // whole files table into memory on every receipt.
+    // this hash (this file's own row must not self-match) + existing payment
+    // reusing the same fileId + every non-rejected reference number.
     const [otherWithHash] = await tx.select({ id: files.id }).from(files)
       .where(and(eq(files.sha256, sha256), ne(files.id, fileId!))).limit(1);
-    const seenHashes = new Set<string>(uploadWasDuplicate || otherWithHash ? [sha256] : []);
+    const [existingPaymentForFile] = input.fileId
+      ? await tx.select({ id: payments.id }).from(payments).where(eq(payments.evidenceFileId, fileId!)).limit(1)
+      : [undefined];
+    const seenHashes = new Set<string>(uploadWasDuplicate || otherWithHash || existingPaymentForFile ? [sha256] : []);
     const paidRefs = await tx.select({ referenceNo: payments.referenceNo }).from(payments)
-      .where(isNotNull(payments.referenceNo));
+      .where(and(isNotNull(payments.referenceNo), ne(payments.status, "rejected")));
     const seenReferences = new Set(paidRefs.map((p) => p.referenceNo!).filter(Boolean));
 
     const checksResult = evaluateReceiptChecks({ extraction, sha256, seenHashes, seenReferences, now });
@@ -148,12 +146,24 @@ export async function processReceiptImage(
     if (!extraction.is_receipt || extraction.amount_minor === null) {
       await tx.insert(auditLog).values({
         tenantId, actorUserId: actor, action: "payment.receipt_not_a_receipt", entity: "file", entityId: fileId!,
-        after: { debtorId: debtor.id, isReceipt: extraction.is_receipt, checks } as never,
+        after: { debtorId: debtor?.id ?? null, isReceipt: extraction.is_receipt, checks } as never,
       });
       return {
         outcome: "not_receipt" as const, paymentId: null, fileId: fileId!, sha256,
         extraction, checks, matchKind: null,
-        matchedDebtorId: debtor.id, matchedDebtorName: debtor.displayName,
+        matchedDebtorId: debtor?.id ?? null, matchedDebtorName: debtor?.displayName ?? null,
+      };
+    }
+
+    if (!debtor) {
+      await tx.insert(auditLog).values({
+        tenantId, actorUserId: actor, action: "payment.receipt_unmatched_debtor", entity: "file", entityId: fileId!,
+        after: { amountMinor: String(extraction.amount_minor), checks, model: extractionResult.model, promptVersion: extractionResult.promptVersion } as never,
+      });
+      return {
+        outcome: "claimed" as const, paymentId: null, fileId: fileId!, sha256,
+        extraction, checks, matchKind: null,
+        matchedDebtorId: null, matchedDebtorName: null,
       };
     }
 

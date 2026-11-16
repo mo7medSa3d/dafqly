@@ -1,38 +1,76 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { AppError } from "@tahseel/core";
 import { appRouter } from "@/server/routers";
 import { createTrpcContext } from "@/server/trpc";
+import { env } from "@/server/env";
 import { clientIp, rateLimit } from "@/server/rate-limit";
 
 /**
  * M7: the tRPC handler is rate-limited per caller — 120 req/min overall,
  * plus a stricter 20/min bucket for the AI/file procedures (ledger
  * extraction, receipt vision, copilot, cheque OCR), which are the
- * expensive ones. Identity is the hashed session cookie when present
- * (one-way hash — no session material in the key, no DB hit), else the
- * client IP. The monthly global AI budget cap still bounds LLM spend;
- * this bounds DB/CPU/storage burn per caller.
+ * expensive ones. Identity is the hashed verified session token when a
+ * valid Better Auth signed cookie is present (one-way hash — no session
+ * material in the key, no DB hit), else the hashed client IP.
  */
-const AI_PROCEDURE_PREFIXES = ["ai", "ledgerAi", "receipts", "cheques", "intelligence"];
+const AI_PROCEDURES = new Set([
+  "ledgerAi.runExtraction",
+  "receipts.uploadAndProcess",
+  "cheques.extractPhoto",
+  "intelligence.askCopilot",
+]);
+const AI_PROCEDURE_PREFIXES = ["aiWorkspace."];
+
+function verifySignedSessionToken(rawCookieValue: string): string | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(rawCookieValue);
+  } catch {
+    return null;
+  }
+  const dot = decoded.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const token = decoded.slice(0, dot);
+  const sig = decoded.slice(dot + 1);
+  if (!token || !sig) return null;
+  let secret: string | undefined;
+  try {
+    secret = process.env.BETTER_AUTH_SECRET ?? env().SESSION_SECRET;
+  } catch {
+    return null;
+  }
+  if (!secret) return null;
+  const expectedB64 = createHmac("sha256", secret).update(token).digest("base64");
+  const expectedB64Url = createHmac("sha256", secret).update(token).digest("base64url");
+  const sigBuf = Buffer.from(sig);
+  for (const candidate of [expectedB64, expectedB64Url]) {
+    const expBuf = Buffer.from(candidate);
+    if (sigBuf.length === expBuf.length && timingSafeEqual(sigBuf, expBuf)) {
+      return token;
+    }
+  }
+  return null;
+}
 
 function callerKey(req: Request): string {
   const cookie = req.headers.get("cookie") ?? "";
   const match = /(?:^|;\s*)(?:__Secure-)?better-auth\.session_token=([^;]+)/.exec(cookie);
-  if (match?.[1]) {
-    const hash = createHash("sha256").update(match[1]).digest("hex").slice(0, 16);
+  const verifiedToken = match?.[1] ? verifySignedSessionToken(match[1]) : null;
+  if (verifiedToken) {
+    const hash = createHash("sha256").update(verifiedToken).digest("hex").slice(0, 16);
     return `session:${hash}`;
   }
-  return `ip:${clientIp(req.headers)}`;
+  const ipHash = createHash("sha256").update(clientIp(req.headers)).digest("hex").slice(0, 16);
+  return `ip:${ipHash}`;
 }
 
 function isAiProcedure(req: Request): boolean {
   const path = new URL(req.url).pathname.replace(/^\/api\/trpc\/?/, "");
   if (!path) return false;
-  return path.split(",").some((proc) => {
-    const head = proc.split(".")[0] ?? "";
-    return AI_PROCEDURE_PREFIXES.some((prefix) => head === prefix || head.startsWith(prefix));
-  });
+  return path.split(",").some((proc) =>
+    AI_PROCEDURES.has(proc) || AI_PROCEDURE_PREFIXES.some((prefix) => proc.startsWith(prefix)),
+  );
 }
 
 function limited(status: number, retryAfterSeconds: number): Response {

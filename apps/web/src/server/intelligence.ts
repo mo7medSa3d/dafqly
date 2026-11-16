@@ -596,7 +596,7 @@ const TOOL_TITLES: Record<string, [string, string]> = {
   propose_schedule_reminder: ["تجهيز تذكير للموافقة", "Propose reminder for approval"],
 };
 
-export function toolTitle(name: string): [string, string] {
+function toolTitle(name: string): [string, string] {
   return TOOL_TITLES[name] ?? [name, name];
 }
 
@@ -1056,8 +1056,8 @@ export async function askWorkspaceCopilot(
   emit({ type: "status", phase: "reading_context" });
   const recentTokenUsage = !ai.usingFakeLlm && ai.llm.runAgent
     ? await withTenant(app, tenantId, async (tx) => {
-        const [usage] = await tx.select({ usedTokens: sql<number>`coalesce(sum(${aiMessages.inputTokens} + ${aiMessages.outputTokens}), 0)::int` })
-          .from(aiMessages).where(gte(aiMessages.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1000)));
+        const [usage] = await tx.select({ usedTokens: sql<number>`coalesce(sum(${usageLedger.units}), 0)::int` })
+          .from(usageLedger).where(and(eq(usageLedger.tenantId, tenantId), inArray(usageLedger.kind, ["llm_text", "llm_vision"]), gte(usageLedger.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1000))));
         return usage?.usedTokens ?? 0;
       })
     : 0;
@@ -1077,6 +1077,7 @@ export async function askWorkspaceCopilot(
         tools: copilotAgentTools,
         maxSteps: 5,
         maxToolCalls: 8,
+        locale: input.locale,
         signal,
         // Passing onEvent switches the provider to its streaming request path.
         onEvent: onEvent ? (event) => {
@@ -1130,11 +1131,11 @@ export async function askWorkspaceCopilot(
               if (!debtor) return { error: "debtor_not_found_in_this_workspace" };
               return withTenant(app, tenantId, async (tx) => {
                 const invoiceRows = await tx.select({
-                  id: invoices.id, reference: invoices.reference, amountMinor: invoices.amountMinor,
+                  id: invoices.id, reference: invoices.reference, currency: invoices.currency, amountMinor: invoices.amountMinor,
                   paidMinor: invoices.paidMinor, issuedOn: invoices.issuedOn, dueOn: invoices.dueOn, status: invoices.status,
                 }).from(invoices).where(eq(invoices.debtorId, args.debtorId)).orderBy(desc(invoices.dueOn)).limit(20);
                 const paymentRows = await tx.select({
-                  amountMinor: payments.amountMinor, receivedOn: payments.receivedOn,
+                  currency: payments.currency, amountMinor: payments.amountMinor, receivedOn: payments.receivedOn,
                   method: payments.method, status: payments.status, referenceNo: payments.referenceNo,
                 }).from(payments).where(eq(payments.debtorId, args.debtorId)).orderBy(desc(payments.receivedOn)).limit(10);
                 return {
@@ -1167,7 +1168,7 @@ export async function askWorkspaceCopilot(
                   currency: invoices.currency, amountMinor: invoices.amountMinor, paidMinor: invoices.paidMinor,
                   dueOn: invoices.dueOn, status: invoices.status,
                 }).from(invoices).innerJoin(debtors, eq(debtors.id, invoices.debtorId))
-                  .where(args.debtorId ? and(filter, eq(invoices.debtorId, args.debtorId)) : filter)
+                  .where(args.debtorId ? and(filter, eq(invoices.debtorId, args.debtorId), isNull(debtors.deletedAt)) : and(filter, isNull(debtors.deletedAt)))
                   .orderBy(args.scope === "paid" ? desc(invoices.dueOn) : asc(invoices.dueOn)).limit(args.limit);
                 return { scope: args.scope, today: todayIso, invoices: rows.map((row) => ({
                   ...row, amountMinor: row.amountMinor.toString(), paidMinor: row.paidMinor.toString(),
@@ -1183,7 +1184,8 @@ export async function askWorkspaceCopilot(
               }).strict().parse(rawArgs);
               return withTenant(app, tenantId, async (tx) => {
                 const where = args.debtorId
-                  ? and(eq(payments.status, args.status), eq(payments.debtorId, args.debtorId)) : eq(payments.status, args.status);
+                  ? and(eq(payments.status, args.status), eq(payments.debtorId, args.debtorId), isNull(debtors.deletedAt))
+                  : and(eq(payments.status, args.status), isNull(debtors.deletedAt));
                 const rows = await tx.select({
                   debtorId: payments.debtorId, debtorName: debtors.displayName, currency: payments.currency,
                   amountMinor: payments.amountMinor, receivedOn: payments.receivedOn, method: payments.method, status: payments.status,
@@ -1202,7 +1204,7 @@ export async function askWorkspaceCopilot(
                   debtorId: promisesToPay.debtorId, debtorName: debtors.displayName, amountMinor: promisesToPay.amountMinor,
                   promisedOn: promisesToPay.promisedOn, status: promisesToPay.status, source: promisesToPay.source,
                 }).from(promisesToPay).innerJoin(debtors, eq(debtors.id, promisesToPay.debtorId))
-                  .where(eq(promisesToPay.status, args.status)).orderBy(asc(promisesToPay.promisedOn)).limit(args.limit);
+                  .where(and(eq(promisesToPay.status, args.status), isNull(debtors.deletedAt))).orderBy(asc(promisesToPay.promisedOn)).limit(args.limit);
                 return { today: todayIso, promises: rows.map((row) => ({ ...row, amountMinor: row.amountMinor.toString() })) };
               });
             }
@@ -1216,7 +1218,7 @@ export async function askWorkspaceCopilot(
                   debtorId: collectionTasks.debtorId, debtorName: debtors.displayName, title: collectionTasks.title,
                   priority: collectionTasks.priority, status: collectionTasks.status, dueAt: collectionTasks.dueAt,
                 }).from(collectionTasks).innerJoin(debtors, eq(debtors.id, collectionTasks.debtorId))
-                  .where(eq(collectionTasks.status, args.status)).orderBy(asc(collectionTasks.dueAt)).limit(args.limit);
+                  .where(and(eq(collectionTasks.status, args.status), isNull(debtors.deletedAt))).orderBy(asc(collectionTasks.dueAt)).limit(args.limit);
                 return { tasks: rows.map((row) => ({ ...row, dueAt: row.dueAt.toISOString() })) };
               });
             }

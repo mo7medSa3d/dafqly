@@ -58,9 +58,9 @@ function formatAction(action: string, isAr: boolean): { label: string; color: st
       return { label: isAr ? "استخراج بيانات إيصال ومراجعتها" : "Receipt data extracted for review", color: "bg-callout text-primary border-primary/20" };
     case "ai.headers_mapped":
       return { label: isAr ? "مطابقة أعمدة ملف الاستيراد" : "Import columns mapped", color: "bg-callout text-primary border-primary/20" };
-    case "settings.updated":
+    case "tenant.settings_updated":
       return { label: isAr ? "تحديث الإعدادات" : "Settings updated", color: "bg-surface-muted text-text-muted border-border" };
-    case "plan.changed":
+    case "tenant.plan_changed":
       return { label: isAr ? "ترقية الباقة" : "Plan upgraded", color: "bg-primary/10 text-primary border-primary/20" };
     case "import.committed":
       return { label: isAr ? "استيراد ملف فواتير" : "Import committed", color: "bg-status-paid-bg text-status-paid-fg border-border" };
@@ -87,6 +87,7 @@ export function AuditTrail() {
   const isAr = locale === "ar";
   const [logs, setLogs] = useState<AuditEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [forbidden, setForbidden] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -94,11 +95,15 @@ export function AuditTrail() {
       .query({ limit: 20 })
       .then((items: AuditEntry[]) => {
         if (!active) return;
+        setForbidden(false);
         setLogs(items);
         setIsLoading(false);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (!active) return;
+        const code = (err as { data?: { code?: string } } | null)?.data?.code;
+        const msg = err instanceof Error ? err.message : "";
+        setForbidden(code === "FORBIDDEN" || /owner|FORBIDDEN/i.test(msg));
         setLogs([]);
         setIsLoading(false);
       });
@@ -129,6 +134,10 @@ export function AuditTrail() {
       {isLoading ? (
         <div className="py-8 text-center text-xs text-text-muted animate-pulse">
           {isAr ? "جارٍ تحميل السجل..." : "Loading audit log..."}
+        </div>
+      ) : forbidden ? (
+        <div className="py-8 text-center text-xs font-semibold text-text-muted">
+          {isAr ? "سجل العمليات متاح لمالك الحساب فقط." : "Audit log is restricted to workspace owners."}
         </div>
       ) : logs.length === 0 ? (
         <div className="py-8 text-center text-xs text-text-muted">

@@ -35,15 +35,17 @@ export interface PaymobTxnLike {
   success: boolean;
 }
 
-const fieldString = (v: unknown): string => (typeof v === "boolean" ? (v ? "true" : "false") : String(v));
+const fieldString = (v: unknown): string => (v === null || v === undefined ? "" : typeof v === "boolean" ? (v ? "true" : "false") : String(v));
 
 export function paymobHmacMessage(obj: PaymobTxnLike): string {
+  const order = obj?.order ?? ({} as PaymobTxnLike["order"]);
+  const sourceData = obj?.source_data ?? ({} as PaymobTxnLike["source_data"]);
   const fields: unknown[] = [
-    obj.amount_cents, obj.created_at, obj.currency, obj.error_occured,
-    obj.has_parent_transaction, obj.id, obj.integration_id, obj.is_3d_secure,
-    obj.is_auth, obj.is_capture, obj.is_refunded, obj.is_standalone_payment,
-    obj.is_voided, obj.order.id, obj.owner, obj.pending,
-    obj.source_data.pan, obj.source_data.sub_type, obj.source_data.type, obj.success,
+    obj?.amount_cents, obj?.created_at, obj?.currency, obj?.error_occured,
+    obj?.has_parent_transaction, obj?.id, obj?.integration_id, obj?.is_3d_secure,
+    obj?.is_auth, obj?.is_capture, obj?.is_refunded, obj?.is_standalone_payment,
+    obj?.is_voided, order.id, obj?.owner, obj?.pending,
+    sourceData.pan, sourceData.sub_type, sourceData.type, obj?.success,
   ];
   return fields.map(fieldString).join("");
 }
@@ -78,7 +80,7 @@ const requiredBool = z.boolean();
 export const paymobTransactionSchema = z.object({
   amount_cents: amountCents,
   created_at: z.string().min(1),
-  currency: z.string().min(1).default("EGP"),
+  currency: z.string().min(1),
   error_occured: requiredBool,
   has_parent_transaction: boolWithDefault,
   id: z.union([z.number(), z.string()]),
@@ -180,7 +182,7 @@ export type GatewayDecision =
   | { action: "fulfil" }
   | { action: "reverse"; reason: "refund" | "void"; amountMinor: bigint }
   | { action: "duplicate" }
-  | { action: "ignore"; reason: "failed" | "pending" | "auth_only" | "amount_mismatch" | "link_expired" };
+  | { action: "ignore"; reason: "failed" | "pending" | "auth_only" | "amount_mismatch" | "link_expired" | "refund_requires_inquiry" };
 
 /**
  * What a verified callback should do. Order matters: replay first (a replay
@@ -194,10 +196,13 @@ export function decideGatewayCallback(
   ctx: { link: GatewayLinkContext; now: Date; txnAlreadyProcessed: boolean },
 ): GatewayDecision {
   if (ctx.txnAlreadyProcessed) return { action: "duplicate" };
-  if (cb.isRefunded) return { action: "reverse", reason: "refund", amountMinor: cb.amountMinor };
-  if (cb.isVoided) return { action: "reverse", reason: "void", amountMinor: cb.amountMinor };
   if (!cb.success || cb.errorOccured) return { action: "ignore", reason: "failed" };
   if (cb.pending) return { action: "ignore", reason: "pending" };
+  // Paymob documents refunded_amount_cents as a cumulative total, but it is not one of the 20 HMAC-signed fields.
+  // Never reverse cb.amountMinor (the original transaction amount) or trust the unsigned total.
+  // A future inquiry-backed reconciliation path must verify the current refund total before changing the ledger.
+  if (cb.isRefunded) return { action: "ignore", reason: "refund_requires_inquiry" };
+  if (cb.isVoided) return { action: "reverse", reason: "void", amountMinor: cb.amountMinor };
   if (cb.isAuth && !cb.isCapture) return { action: "ignore", reason: "auth_only" };
   if (cb.amountMinor !== ctx.link.amountMinor) return { action: "ignore", reason: "amount_mismatch" };
   if (ctx.link.status !== "paid" && ctx.now.getTime() > ctx.link.expiresAt.getTime()) {
@@ -306,7 +311,7 @@ export function reconcileGateway(
 }
 
 // ------------------------------------------------------- ledger reconciliation
-export interface LedgerInvoiceRow { id: string; paidMinor: bigint }
+export interface LedgerInvoiceRow { id: string; paidMinor: bigint; currency?: string }
 export interface LedgerPaymentRow {
   id: string; debtorId: string; amountMinor: bigint; currency: string;
   status: string; createdAt: string;
@@ -352,10 +357,21 @@ export function reconcileLedger(
 ): LedgerReconciliation {
   const discrepancies: LedgerReconciliationDiscrepancy[] = [];
   const abs = (v: bigint) => (v < 0n ? -v : v);
+  const paymentById = new Map(payments.map((p) => [p.id, p]));
+  const invoiceById = new Map(invoices.map((i) => [i.id, i]));
   const confirmedIds = new Set(payments.filter((p) => p.status === "confirmed").map((p) => p.id));
   const allocByPayment = new Map<string, bigint>();
   const confirmedByInvoice = new Map<string, bigint>();
   for (const a of allocations) {
+    const pay = paymentById.get(a.paymentId);
+    const inv = invoiceById.get(a.invoiceId);
+    if (pay && inv && inv.currency && pay.currency !== inv.currency) {
+      discrepancies.push({
+        kind: "currency_imbalance",
+        id: a.paymentId,
+        detail: `allocation currency mismatch: payment ${pay.id} (${pay.currency}) allocated to invoice ${inv.id} (${inv.currency})`,
+      });
+    }
     allocByPayment.set(a.paymentId, (allocByPayment.get(a.paymentId) ?? 0n) + a.amountMinor);
     if (confirmedIds.has(a.paymentId)) {
       confirmedByInvoice.set(a.invoiceId, (confirmedByInvoice.get(a.invoiceId) ?? 0n) + a.amountMinor);

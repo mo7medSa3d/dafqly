@@ -44,7 +44,7 @@ export function OnboardingWizard() {
           setDefaultTermsDays(policy.defaultTermsDays);
         }
       }
-    } catch {}
+    } catch (err) { console.warn("[OnboardingWizard] saved cycle policy unreadable, using defaults", err); }
   }, []);
   const [tone, setTone] = useState<"polite" | "firm">("polite");
   const [consent, setConsent] = useState(false);

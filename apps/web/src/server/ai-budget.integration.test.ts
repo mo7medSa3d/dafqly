@@ -71,6 +71,28 @@ d("Prompt 04 §9: global AI budget under concurrency", () => {
     expect(clean?.reservedUsdMicros).toBe(0n);
   });
 
+  it("records the full token-cost estimate when it exceeds the admission cap", async () => {
+    const key = randomUUID();
+    const [before] = await owner().select().from(aiGlobalBudget).where(eq(aiGlobalBudget.singletonId, 1));
+    const spentBefore = before?.spentUsdMicros ?? 0n;
+    const reservedBefore = before?.reservedUsdMicros ?? 0n;
+    const capUsd = Number(process.env.AI_GLOBAL_MONTHLY_USD_CAP ?? 50);
+    const actual = estimateAiCostUsdMicros("gemini-3.8-flash", 0, 20_000_000);
+    expect(actual).toBeGreaterThan(BigInt(Math.round(capUsd * 1_000_000)));
+
+    const { budgetPeriod } = await reserveGlobalAiBudget(owner(), tenantId, key, "gemini-3.8-flash");
+    await settleGlobalAiBudget(owner(), key, 0, 20_000_000, "gemini-3.8-flash", budgetPeriod);
+    const [overrun] = await owner().select().from(aiGlobalBudget).where(eq(aiGlobalBudget.singletonId, 1));
+    expect(overrun?.spentUsdMicros).toBe(spentBefore + actual);
+    expect(overrun?.reservedUsdMicros).toBe(reservedBefore);
+
+    await expect(reserveGlobalAiBudget(owner(), tenantId, randomUUID(), "gemini-3.8-flash"))
+      .rejects.toMatchObject({ code: "AI_GLOBAL_BUDGET_EXCEEDED" });
+
+    // Keep the singleton budget isolated for other suites in a shared DB.
+    await owner().update(aiGlobalBudget).set({ spentUsdMicros: spentBefore }).where(eq(aiGlobalBudget.singletonId, 1));
+  });
+
   it("settle converts reserved to spent at the actual token cost; release returns the rest", async () => {
     const settleKey = randomUUID();
     const releaseKey = randomUUID();

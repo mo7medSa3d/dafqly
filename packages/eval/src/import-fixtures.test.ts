@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   detectHeaderRow, parseImportGrid, dedupeImportRows, readWorkbookGrid, parseCsvText, type Grid,
-} from "@tahseel/core";
+} from "@tahseel/core/import";
 
 /**
  * F2 ACCEPTANCE harness: every golden fixture in fixtures/import/test

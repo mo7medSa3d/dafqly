@@ -9,7 +9,7 @@ import {
   parseReplyClassification,
 } from "@tahseel/core";
 import { CHEQUE_PROMPT_VERSION, CHEQUE_SYSTEM, CHEQUE_TOOL_NAME, CHEQUE_TOOL_SCHEMA, CHEQUE_USER } from "./prompts/cheque";
-import { LEDGER_PROMPT_VERSION, LEDGER_SYSTEM, LEDGER_TOOL_NAME, LEDGER_TOOL_SCHEMA, LEDGER_USER } from "./prompts/ledger";
+import { LEDGER_PROMPT_VERSION, ledgerSystemForCurrency, LEDGER_TOOL_NAME, LEDGER_TOOL_SCHEMA, LEDGER_USER } from "./prompts/ledger";
 import { RECEIPT_PROMPT_VERSION, RECEIPT_SYSTEM, RECEIPT_TOOL_NAME, RECEIPT_TOOL_SCHEMA, RECEIPT_USER } from "./prompts/receipt";
 import { REPLY_PROMPT_VERSION, REPLY_SYSTEM, REPLY_TOOL_NAME, REPLY_TOOL_SCHEMA, replyUserText } from "./prompts/reply";
 import {
@@ -20,6 +20,7 @@ import {
   type AgentRunInput,
   type AgentRunResult,
   executeAgentToolCall,
+  maxStepsFallbackText,
 } from "./llm";
 import { combinedSignal, parseSseJson, readSseData } from "./sse";
 import dns from "node:dns";
@@ -73,17 +74,26 @@ type GeminiPart = NonNullable<NonNullable<NonNullable<GeminiApiResponse["candida
  * - Flatten union type arrays `type: ["string", "null"]` -> `type: "string", nullable: true`
  * - Remove `null` from `enum` arrays and mark `nullable: true`
  */
-export function cleanSchemaForGemini(schema: unknown): unknown {
+export function cleanSchemaForGemini(schema: unknown, isPropertiesMap = false): unknown {
   if (!schema || typeof schema !== "object") return schema;
   if (Array.isArray(schema)) {
-    return schema.map(cleanSchemaForGemini);
+    return schema.map((item) => cleanSchemaForGemini(item, false));
   }
   const obj = { ...(schema as Record<string, unknown>) };
+  if (!isPropertiesMap) {
+    delete obj.additionalProperties;
+    delete obj.format;
+    delete obj.default;
+    delete obj.$schema;
+    delete obj.exclusiveMinimum;
+    delete obj.exclusiveMaximum;
+    delete obj.patternProperties;
+  }
 
   if (Array.isArray(obj.type)) {
     const rawTypes = obj.type as string[];
     const nonNull = rawTypes.filter((t) => t !== "null");
-    obj.type = nonNull[0] ?? "string";
+    obj.type = nonNull.includes("string") ? "string" : (nonNull[0] ?? "string");
     if (rawTypes.includes("null")) {
       obj.nullable = true;
     }
@@ -100,7 +110,7 @@ export function cleanSchemaForGemini(schema: unknown): unknown {
 
   for (const [key, val] of Object.entries(obj)) {
     if (val && typeof val === "object") {
-      obj[key] = cleanSchemaForGemini(val);
+      obj[key] = cleanSchemaForGemini(val, !isPropertiesMap && key === "properties");
     }
   }
   return obj;
@@ -203,16 +213,16 @@ export class GeminiLlmProvider implements OcrLlmProvider {
     };
   }
 
-  async extractLedgerPage(image: Uint8Array, mime: string): Promise<LlmCallResult<LedgerExtraction>> {
+  async extractLedgerPage(image: Uint8Array, mime: string, currency = "EGP"): Promise<LlmCallResult<LedgerExtraction>> {
     return this.callTool({
       promptVersion: LEDGER_PROMPT_VERSION,
-      system: LEDGER_SYSTEM,
+      system: ledgerSystemForCurrency(currency),
       userText: LEDGER_USER,
       image: { data: image, mime },
       toolName: LEDGER_TOOL_NAME,
       toolDescription: "Return the ledger rows transcribed from the page image.",
       toolSchema: LEDGER_TOOL_SCHEMA,
-      parse: parseLedgerExtraction,
+      parse: (value) => parseLedgerExtraction(value, currency),
       model: this.opts.modelVision,
     });
   }
@@ -277,7 +287,7 @@ export class GeminiLlmProvider implements OcrLlmProvider {
           description: tool.description,
           parameters: cleanSchemaForGemini(tool.inputSchema),
         })) }],
-        toolConfig: { functionCallingConfig: { mode: "AUTO", allowedFunctionNames: input.tools.map((tool) => tool.name) } },
+        toolConfig: { functionCallingConfig: { mode: "AUTO" } },
         generationConfig: { temperature: 0.25, maxOutputTokens: 1400 },
       }),
       signal: combinedSignal(this.timeoutMs, input.signal),
@@ -367,12 +377,12 @@ export class GeminiLlmProvider implements OcrLlmProvider {
     }
 
     return {
-      text: finalText || "لم أتمكن من إكمال التحليل ضمن حد خطوات الأدوات. جرّب تقسيم السؤال إلى خطوات أصغر.",
+      text: finalText || maxStepsFallbackText(input.locale),
       toolExecutions, inputTokens, outputTokens, model, steps: maxSteps,
     };
   }
 
-  async streamText(prompt: string, systemInstruction: string | undefined, onToken: (delta: string) => void): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+  async streamText(prompt: string, systemInstruction: string | undefined, onToken: (delta: string) => void, signal?: AbortSignal): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
     const model = this.opts.modelFast ?? this.opts.model ?? "gemini-3.5-flash-lite";
     const endpoint = `${this.baseUrl}/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(this.opts.apiKey)}`;
     const res = await this.fetchFn(endpoint, {
@@ -381,30 +391,18 @@ export class GeminiLlmProvider implements OcrLlmProvider {
         systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: { temperature: 0.25, maxOutputTokens: 1400 },
-      }), signal: AbortSignal.timeout(this.timeoutMs),
+      }), signal: combinedSignal(this.timeoutMs, signal),
     });
     if (!res.ok || !res.body) throw new Error(`Gemini streaming error: HTTP ${res.status}`);
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = ""; let text = ""; let inputTokens = 0; let outputTokens = 0;
-    const consume = (block: string) => {
-      const data = block.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
-      if (!data || data === "[DONE]") return;
-      const event = JSON.parse(data) as GeminiApiResponse;
+    let text = ""; let inputTokens = 0; let outputTokens = 0;
+    for await (const data of readSseData(res, signal)) {
+      const event = parseSseJson<GeminiApiResponse>(data);
+      if (!event) continue;
       const delta = event.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
       if (delta) { text += delta; onToken(delta); }
       inputTokens = Math.max(inputTokens, event.usageMetadata?.promptTokenCount ?? 0);
       outputTokens = Math.max(outputTokens, event.usageMetadata?.candidatesTokenCount ?? 0);
-    };
-    try {
-      while (true) {
-        const { value, done } = await reader.read(); if (done) break;
-        buffer += decoder.decode(value, { stream: true }).replace(/\r/g, "");
-        let boundary = buffer.indexOf("\n\n");
-        while (boundary >= 0) { consume(buffer.slice(0, boundary)); buffer = buffer.slice(boundary + 2); boundary = buffer.indexOf("\n\n"); }
-      }
-      if (buffer.trim()) consume(buffer);
-    } finally { reader.releaseLock(); }
+    }
     return { text, inputTokens, outputTokens, model };
   }
 

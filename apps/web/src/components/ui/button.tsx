@@ -1,7 +1,4 @@
-import * as React from "react";
-import { Slot } from "@radix-ui/react-slot";
-import { cva, type VariantProps } from "class-variance-authority";
-import { cn } from "@/lib/utils";
+import { cva } from "class-variance-authority";
 
 /** shadcn/ui Button, themed with the monochrome Swiss-editorial oklch tokens. */
 export const buttonVariants = cva(
@@ -33,21 +30,3 @@ export const buttonVariants = cva(
     defaultVariants: { variant: "default", size: "default" },
   },
 );
-
-export interface ButtonProps
-  extends React.ComponentProps<"button">,
-    VariantProps<typeof buttonVariants> {
-  asChild?: boolean;
-}
-
-export function Button({ className, variant, size, asChild = false, type, ...props }: ButtonProps) {
-  const Comp = asChild ? Slot : "button";
-  return (
-    <Comp
-      data-slot="button"
-      {...(asChild ? {} : type ? { type } : {})}
-      className={cn(buttonVariants({ variant, size }), className)}
-      {...props}
-    />
-  );
-}

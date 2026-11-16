@@ -2,7 +2,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { SecurityLockBadge } from "./illustrations";
-import { Button } from "./ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { cn } from "@/lib/utils";
@@ -20,7 +19,6 @@ import { ArrowLeft, CheckCircle, Clock, Coins, LockKey, Prohibit, WarningCircle,
 
 /** Legacy class-string API, now backed by shadcn/ui (see ui/styles.ts). */
 export { inputCls, labelCls, btnPrimary, btnGhost, btnDanger, btnSmall, linkAction } from "./ui/styles";
-export { Button, Card, Badge };
 
 type IconType = LucideIcon;
 

@@ -26,10 +26,12 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
   const tenant = mine[0];
   if (!tenant) redirect(`/${locale}/onboarding`);
 
-  const t = await getTranslations("dashboard");
-  const tr = await getTranslations("reports");
-  const ti = await getTranslations("invoices");
-  const tn = await getTranslations("nav");
+  const [t, tr, ti, tn] = await Promise.all([
+    getTranslations("dashboard"),
+    getTranslations("reports"),
+    getTranslations("invoices"),
+    getTranslations("nav"),
+  ]);
   const isAr = locale === "ar";
   const today = todayInTimezone(tenant.timezone);
 

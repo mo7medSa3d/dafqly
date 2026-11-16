@@ -1,6 +1,6 @@
 "use client";
 import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, todayIso } from "@/lib/utils";
 import { inputVariants } from "@/components/ui/input";
 import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
@@ -57,7 +57,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
   const [msg, setMsg] = useState<string | null>(null);
   const [promiseInvoiceId, setPromiseInvoiceId] = useState("");
   const [promiseAmount, setPromiseAmount] = useState("");
-  const [promiseDate, setPromiseDate] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 10));
+  const [promiseDate, setPromiseDate] = useState(todayIso(1));
   const [promiseNote, setPromiseNote] = useState("");
 
   async function refresh() {
@@ -110,11 +110,10 @@ export function StatementClient({ token, initial }: { token: string; initial: St
   }
 
   async function onRequestPromise() {
-    // F-06: parse the typed amount in the tenant currency (exponent-aware:
-    // KWD 3 decimals, JPY 0) — the old Math.round(x * 100) assumed EGP.
+    const activePromiseCurrency = openInvoices.find((i) => i.id === promiseInvoiceId)?.currency ?? currency;
     let amountMinor: bigint;
     try {
-      amountMinor = parseMoney(promiseAmount, currency);
+      amountMinor = parseMoney(promiseAmount, activePromiseCurrency);
     } catch {
       setMsg(t("promiseInvalid")); return;
     }
@@ -154,7 +153,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
               </span>
             </div>
           </div>
-          <div className="flex items-center justify-between gap-3 border-t border-white/15 pt-4">
+          <div className="flex items-center justify-between gap-3 border-t border-primary-foreground/20 pt-4">
             <div className="min-w-0 flex-1"><p className="text-sm opacity-85">{t("totalDue")}</p>
             <p className="mt-1 text-4xl font-extrabold leading-none">
               <span data-testid="statement-total" className="tnum" dir="ltr">{fmt(data.totalDueMinor)}</span>
@@ -165,7 +164,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
                 {data.totalsByCurrency!.map((t) => `${fmtCur(t.minor, t.currency)}`).join(" · ")}
               </p>
             )}
-            {data.gatewayEnabled && openInvoices.length > 0 && (
+            {data.gatewayEnabled && openInvoices.some((inv) => inv.currency === "EGP") && (
               <button data-testid="statement-pay-total" disabled={busy} onClick={() => void onPay()}
                 className={cn(buttonVariants({ variant: "secondary", size: "default" }), "mt-4 w-full bg-background text-foreground shadow-none hover:bg-background hover:opacity-90")}>
                 {t("payTotal")}
@@ -201,7 +200,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
                 {(inv.status === "open" || inv.status === "partially_paid") && (
                   <div className="mt-1.5 flex flex-col gap-2">
                     <div className="flex flex-wrap gap-2">
-                      {data.gatewayEnabled && (
+                      {data.gatewayEnabled && inv.currency === "EGP" && (
                         <button data-testid={`statement-pay-${inv.id}`} disabled={busy} onClick={() => void onPay(inv.id)}
                           className={`${btnPrimary} flex-1`}>
                           {t("payThisInvoice")}
@@ -241,15 +240,15 @@ export function StatementClient({ token, initial }: { token: string; initial: St
       {openInvoices.length > 0 && <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 sm:p-5">
         <div><h2 className="text-lg font-extrabold">{t("promiseTitle")}</h2><p className="mt-1 text-xs text-text-muted">{t("promiseHint")}</p></div>
         <form className="grid gap-3 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); void onRequestPromise(); }}>
-          <label className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t("promiseInvoice")}</span><select className={cn(inputVariants)} value={promiseInvoiceId} onChange={(e) => setPromiseInvoiceId(e.target.value)}><option value="">{t("promiseAnyInvoice")}</option>{openInvoices.map((inv) => <option key={inv.id} value={inv.id}>{inv.reference ?? t("invoiceFallback")} — {t("promiseRemaining")} {fmt(inv.outstandingMinor)}</option>)}</select></label>
-          <label className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t("promiseAmount")} ({symbol})</span><input required inputMode="decimal" className={cn(inputVariants)} value={promiseAmount} onChange={(e) => setPromiseAmount(e.target.value)} placeholder="1500.00"/></label>
-          <label className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t("promiseDate")}</span><input required type="date" min={new Date().toISOString().slice(0, 10)} className={cn(inputVariants)} value={promiseDate} onChange={(e) => setPromiseDate(e.target.value)}/></label>
+          <label className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t("promiseInvoice")}</span><select className={cn(inputVariants)} value={promiseInvoiceId} onChange={(e) => setPromiseInvoiceId(e.target.value)}><option value="">{t("promiseAnyInvoice")}</option>{openInvoices.map((inv) => <option key={inv.id} value={inv.id}>{inv.reference ?? t("invoiceFallback")} — {t("promiseRemaining")} {fmtCur(inv.outstandingMinor, inv.currency)}</option>)}</select></label>
+          <label className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t("promiseAmount")} ({(() => { const sel = openInvoices.find((i) => i.id === promiseInvoiceId); return sel ? getCurrencySymbol(sel.currency, locale) : symbol; })()})</span><input required inputMode="decimal" className={cn(inputVariants)} value={promiseAmount} onChange={(e) => setPromiseAmount(e.target.value)} placeholder="1500.00"/></label>
+          <label className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t("promiseDate")}</span><input required type="date" min={todayIso()} className={cn(inputVariants)} value={promiseDate} onChange={(e) => setPromiseDate(e.target.value)}/></label>
           <label className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t("promiseNote")}</span><input maxLength={500} className={cn(inputVariants)} value={promiseNote} onChange={(e) => setPromiseNote(e.target.value)} placeholder={t("promiseNotePlaceholder")}/></label>
           <button type="submit" disabled={busy || Number(promiseAmount) <= 0} className={`${btnPrimary} sm:col-span-2`}>{t("promiseSubmit")}</button>
         </form>
       </section>}
 
-      {data.promises.length > 0 && <section className="flex flex-col gap-3"><h2 className="text-lg font-extrabold">{t("promisesTitle")}</h2><div className="overflow-hidden rounded-xl border border-border bg-surface"><ul className="divide-y divide-border">{data.promises.map((p) => <li key={p.id} className="flex flex-wrap items-center gap-2 p-4 text-sm"><span className="font-extrabold" dir="ltr">{fmt(p.amountMinor)}</span><span className="text-text-muted">· {p.promisedOn}</span><span className={`ms-auto rounded px-2.5 py-1 text-xs font-bold ${p.status === "accepted" ? "bg-status-paid-bg text-status-paid-fg" : p.status === "pending" ? "bg-status-due-bg text-status-due-fg" : "bg-surface-muted text-text-subtle"}`}>{promiseStatusLabel(p.status)}</span></li>)}</ul></div></section>}
+      {data.promises.length > 0 && <section className="flex flex-col gap-3"><h2 className="text-lg font-extrabold">{t("promisesTitle")}</h2><div className="overflow-hidden rounded-xl border border-border bg-surface"><ul className="divide-y divide-border">{data.promises.map((p) => { const inv = p.invoiceId ? data.invoices.find((i) => i.id === p.invoiceId) : undefined; return <li key={p.id} className="flex flex-wrap items-center gap-2 p-4 text-sm"><span className="font-extrabold" dir="ltr">{fmtCur(p.amountMinor, inv?.currency)}</span><span className="text-text-muted">· {p.promisedOn}</span><span className={`ms-auto rounded px-2.5 py-1 text-xs font-bold ${p.status === "accepted" ? "bg-status-paid-bg text-status-paid-fg" : p.status === "pending" ? "bg-status-due-bg text-status-due-fg" : "bg-surface-muted text-text-subtle"}`}>{promiseStatusLabel(p.status)}</span></li>; })}</ul></div></section>}
 
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-extrabold">{t("paymentsTitle")}</h2>

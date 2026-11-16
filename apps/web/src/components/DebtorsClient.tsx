@@ -11,7 +11,7 @@ import { ArrowLeft, BellRinging, BellSlash, CheckCircle, CurrencyCircleDollar, M
 import { WhatsappLogo } from "@/components/ui/icons";
 import { trpc } from "@/lib/trpc-client";
 import type { DebtorIntelligenceView } from "@/server/intelligence";
-import { openAiCopilot } from "./AiCopilotDrawer";
+import { openAiCopilot } from "./copilot-events";
 import { useCurrency } from "./CurrencyContext";
 import { EmptyState, InitialAvatar, LoadingState, Panel, btnPrimary, inputCls, labelCls } from "./ui";
 

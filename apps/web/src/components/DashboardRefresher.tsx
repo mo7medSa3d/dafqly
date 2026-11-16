@@ -12,7 +12,7 @@ import { useRouter } from "next/navigation";
  */
 export function DashboardRefresher() {
   const router = useRouter();
-  const lastRefresh = useRef(0);
+  const lastRefresh = useRef(Date.now());
   useEffect(() => {
     const refresh = () => {
       const now = Date.now();
@@ -23,11 +23,17 @@ export function DashboardRefresher() {
     const onVisibility = () => {
       if (document.visibilityState === "visible") refresh();
     };
+    const onMutated = () => {
+      lastRefresh.current = Date.now();
+      router.refresh();
+    };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("dafqly:data-mutated", onMutated);
     return () => {
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("dafqly:data-mutated", onMutated);
     };
   }, [router]);
   return null;

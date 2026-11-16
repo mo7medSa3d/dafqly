@@ -1,11 +1,11 @@
 "use client";
-import { cn } from "@/lib/utils";
+import { cn, todayIso } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { inputVariants } from "@/components/ui/input";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
-import { canTransition, type InvoiceStatus } from "@tahseel/core";
+import { canTransition, formatCurrencyMinor, getCurrencySymbol, type InvoiceStatus } from "@tahseel/core";
 import { useCurrency } from "./CurrencyContext";
 import { Check, MagnifyingGlass, PencilSimple, Plus, Sparkle, WarningCircle, X } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
@@ -35,9 +35,9 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
   const tc = useTranslations("common");
   const locale = useLocale();
   const isAr = locale === "ar";
-  const { symbol: currencySymbol, formatAmountOnly } = useCurrency();
-  // F-06: amounts render in the tenant currency, not hardcoded EGP.
-  const fmt = (minor: string) => formatAmountOnly(BigInt(minor));
+  const { currency: tenantCurrency, symbol: currencySymbol, formatAmountOnly } = useCurrency();
+  // F-06: amounts render in the invoice's own currency, falling back to tenant currency.
+  const fmt = (minor: string, invCurrency?: string) => formatAmountOnly(BigInt(minor), invCurrency ? { currency: invCurrency } : undefined);
   const effectiveBusinessName = businessName || (isAr ? "منشأتك" : "Your Business");
   const [items, setItems] = useState<Invoice[]>([]);
   const [debtors, setDebtors] = useState<DebtorLite[]>([]);
@@ -50,8 +50,8 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
   const [bulkTo, setBulkTo] = useState<string>("cancelled");
   const [debtorId, setDebtorId] = useState("");
   const [amount, setAmount] = useState("");
-  const [issuedOn, setIssuedOn] = useState(() => new Date().toISOString().slice(0, 10));
-  const [dueOn, setDueOn] = useState(() => addDaysIso(new Date().toISOString().slice(0, 10), 14));
+  const [issuedOn, setIssuedOn] = useState(() => todayIso());
+  const [dueOn, setDueOn] = useState(() => addDaysIso(todayIso(), 14));
   const [reference, setReference] = useState("");
   const [description, setDescription] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -108,13 +108,13 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
         amount,
         issuedOn,
         dueOn: dueOn || undefined,
-        reference: reference.trim() || nextAutoReference,
+        reference: reference.trim() || undefined,
         description: description.trim() || undefined,
       });
       setAmount(""); setReference(""); setDescription("");
       await load();
       router.refresh();
-    } catch { setError(t("title")); }
+    } catch (err: unknown) { setError(err instanceof Error ? err.message : (isAr ? "فشل إنشاء الفاتورة" : "Failed to create invoice")); }
   }
 
   function startEdit(inv: Invoice) {
@@ -122,7 +122,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
     setEditForm({
       reference: inv.reference ?? "",
       description: inv.description ?? "",
-      amount: (Number(inv.amountMinor) / 100).toFixed(2),
+      amount: formatCurrencyMinor(BigInt(inv.amountMinor), inv.currency),
       dueOn: inv.dueOn,
     });
   }
@@ -139,7 +139,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
       });
       setEditingId(null);
       await load();
-    } catch { setError(t("title")); }
+    } catch (err: unknown) { setError(err instanceof Error ? err.message : (isAr ? "فشل تحديث الفاتورة" : "Failed to update invoice")); }
   }
 
   async function onTransition(id: string, to: InvoiceStatus) {
@@ -269,7 +269,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
           { key: "31-60", label: isAr ? "31–60 يومًا" : "31–60 days" },
           { key: "60+", label: isAr ? "أكثر من 60 يومًا" : "60+ days" },
         ];
-        const rows = definitions.map((bucket) => ({ ...bucket, amount: items.filter((invoice) => invoice.agingBucket === bucket.key && invoice.status !== "paid" && invoice.status !== "cancelled" && invoice.status !== "written_off").reduce((sum, invoice) => sum + BigInt(invoice.outstandingMinor || "0"), 0n) }));
+        const rows = definitions.map((bucket) => ({ ...bucket, amount: items.filter((invoice) => invoice.agingBucket === bucket.key && invoice.currency === tenantCurrency && invoice.status !== "paid" && invoice.status !== "cancelled" && invoice.status !== "written_off" && invoice.status !== "disputed").reduce((sum, invoice) => sum + BigInt(invoice.outstandingMinor || "0"), 0n) }));
         const total = rows.reduce((sum, row) => sum + row.amount, 0n);
         const tones = ["bg-status-paid-fg", "bg-primary", "bg-status-due-fg", "bg-status-overdue-fg", "bg-status-overdue-fg"];
         return <section data-testid="inv-aging-analysis" className="panel-shadow flex flex-col gap-4 rounded-xl border border-border bg-surface p-4 sm:p-5">
@@ -372,7 +372,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                       phone={debtorPhone(i.debtorId)}
                       message={invoiceShareMessage({
                         businessName: effectiveBusinessName,
-                        amount: `${fmt(i.outstandingMinor)} ${currencySymbol}`,
+                        amount: `${fmt(i.outstandingMinor, i.currency)} ${getCurrencySymbol(i.currency, locale)}`,
                         dueDate: i.dueOn,
                         locale,
                       })}
@@ -382,7 +382,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                       type="button"
                       onClick={() => editingId === i.id ? setEditingId(null) : startEdit(i)}
                       className={cn(buttonVariants({ variant: "outline", size: "icon" }), "size-8")}
-                      title={tc("save")}
+                      title={tc.has("edit") ? tc("edit") : (isAr ? "تعديل" : "Edit")}
                     >
                       <PencilSimple size={15} aria-hidden />
                     </button>
@@ -409,11 +409,11 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                 {/* Sub row: Amount breakdown & Transition Actions */}
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/50 pt-2.5 text-xs sm:text-sm text-text-muted">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span>{t("amount")}: <b className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
+                    <span>{t("amount")}: <b className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor, i.currency)}</b> <span className="text-[11px] font-bold text-text-muted">{getCurrencySymbol(i.currency, locale)}</span></span>
                     <span>·</span>
-                    <span>{t("paid")}: <b className="tnum font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
+                    <span>{t("paid")}: <b className="tnum font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor, i.currency)}</b> <span className="text-[11px] font-bold text-text-muted">{getCurrencySymbol(i.currency, locale)}</span></span>
                     <span>·</span>
-                    <span>{t("remaining")}: <b className="tnum font-bold text-primary" dir="ltr">{fmt(i.outstandingMinor)}</b> <span className="text-[11px] font-bold text-text-muted">{currencySymbol}</span></span>
+                    <span>{t("remaining")}: <b className="tnum font-bold text-primary" dir="ltr">{fmt(i.outstandingMinor, i.currency)}</b> <span className="text-[11px] font-bold text-text-muted">{getCurrencySymbol(i.currency, locale)}</span></span>
                     <span>·</span>
                     <span>{t("dueOn")}: <span className="font-semibold text-text" dir="ltr">{i.dueOn}</span></span>
                   </div>

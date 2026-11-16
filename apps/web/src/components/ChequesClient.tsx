@@ -1,5 +1,5 @@
 "use client";
-import { cn } from "@/lib/utils";
+import { cn, todayIso as localTodayIso } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
@@ -20,7 +20,7 @@ interface ChequeRow {
   invoiceId: string | null; paymentId: string | null;
 }
 interface DebtorLite { id: string; displayName: string }
-interface InvoiceLite { id: string; reference: string | null; amountMinor: string }
+interface InvoiceLite { id: string; reference: string | null; amountMinor: string; currency?: string }
 interface AlertRow { id: string; chequeId: string; alertKind: string; alertDate: string }
 interface WeekGroup { weekStart: string; cheques: ChequeRow[] }
 
@@ -50,8 +50,8 @@ export function ChequesClient() {
   const [invoices, setInvoices] = useState<InvoiceLite[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const due30Iso = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  const todayIso = localTodayIso();
+  const due30Iso = localTodayIso(30);
   const [matchedInfo, setMatchedInfo] = useState<{
     debtorName: string;
     invoiceRef: string | null;
@@ -380,13 +380,13 @@ export function ChequesClient() {
                     setForm({
                       ...form,
                       invoiceId: invId,
-                      amount: inv && !form.amount ? formatAmountOnly(BigInt(inv.amountMinor)) : form.amount,
+                      amount: inv && !form.amount ? formatAmountOnly(BigInt(inv.amountMinor), inv.currency ? { currency: inv.currency } : undefined) : form.amount,
                     });
                   }}
                   className={inputCls}
                 >
                   <option value="">{t("none")}</option>
-                  {invoices.map((i) => <option key={i.id} value={i.id}>{i.reference ?? i.id} — {formatAmountOnly(BigInt(i.amountMinor))}</option>)}
+                  {invoices.map((i) => <option key={i.id} value={i.id}>{i.reference ?? i.id} — {formatAmountOnly(BigInt(i.amountMinor), i.currency ? { currency: i.currency } : undefined)}</option>)}
                 </select></label>
               <label className={labelCls}><span>{t("issueDate")}</span>
                 <input data-testid="cheque-issue" required type="date" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} className={inputCls} /></label>

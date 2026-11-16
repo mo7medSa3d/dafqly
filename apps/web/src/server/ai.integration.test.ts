@@ -83,6 +83,7 @@ d("M4 AI services (F6/F7/F8)", () => {
   const user = { id: randomUUID().replace(/-/g, ""), email: `m4-${randomUUID()}@example.test`, name: "M4" };
   let tenantA = ""; // autoClose OFF
   let tenantB = ""; // autoClose ON
+  let tenantKwd = ""; // KWD ledger extraction + currency freeze
   const app = () => appDb();
   const storage = new FakeStorageProvider();
   const llm = new FakeLlmProvider();
@@ -103,6 +104,9 @@ d("M4 AI services (F6/F7/F8)", () => {
     await ownerDb().insert(userTable).values([user]);
     tenantA = (await createTenantForUser(appDb(), user.id, tenantInput)).tenantId;
     tenantB = (await createTenantForUser(appDb(), user.id, { ...tenantInput, businessNameAr: "شركة م٤ ب" })).tenantId;
+    tenantKwd = (await createTenantForUser(appDb(), user.id, { ...tenantInput, businessNameAr: "شركة م٤ كويت" })).tenantId;
+    const [tk] = await ownerDb().select().from(tenants).where(eq(tenants.id, tenantKwd));
+    await ownerDb().update(tenants).set({ settings: { ...tk!.settings, currency: "KWD" } }).where(eq(tenants.id, tenantKwd));
     const [tb] = await ownerDb().select().from(tenants).where(eq(tenants.id, tenantB));
     await ownerDb().update(tenants).set({ settings: { ...tb!.settings, autoCloseEnabled: true } }).where(eq(tenants.id, tenantB));
   });
@@ -110,6 +114,7 @@ d("M4 AI services (F6/F7/F8)", () => {
     const owner = ownerDb();
     await owner.delete(tenants).where(eq(tenants.id, tenantA));
     await owner.delete(tenants).where(eq(tenants.id, tenantB));
+    await owner.delete(tenants).where(eq(tenants.id, tenantKwd));
     await owner.delete(userTable).where(eq(userTable.id, user.id));
   });
 
@@ -155,6 +160,33 @@ d("M4 AI services (F6/F7/F8)", () => {
     expect(byAmount.get(30000)!.debtorId).not.toBe(existing.id);
     await expect(commitLedgerJob(app(), tenantA, user.id, created.jobId, "2026-11-09"))
       .rejects.toMatchObject({ code: "ALREADY_COMMITTED" });
+  });
+
+  it("F6: KWD ledger extraction preserves three decimals and blocks a currency change before commit", async () => {
+    const payload = {
+      kind: "ledger",
+      rows: [{ name: "عميل كويتي", phone: "01088887777", amount_minor: "1.234", date: "2026-11-10", note: null, confidence: 0.96, cellConfidence: { name: 0.95, amount: 0.97 } }],
+      errors: {},
+    };
+    const created = await createLedgerJob(app(), tenantKwd, user.id, { llm, storage }, {
+      uploads: [{ fileName: "kwd-ledger.png", mime: "image/png", contentBase64: b64(pngWith(payload)) }],
+    });
+    const view = await runLedgerExtraction(app(), tenantKwd, user.id, { llm, storage }, created.jobId);
+    expect(view.rows[0]!.data?.amountMinor).toBe("1234");
+    await commitLedgerJob(app(), tenantKwd, user.id, created.jobId, "2026-11-15");
+    const [invoice] = await withTenant(app(), tenantKwd, (tx) => tx.select().from(invoices));
+    expect(invoice).toMatchObject({ currency: "KWD", amountMinor: 1234n });
+
+    const second = await createLedgerJob(app(), tenantKwd, user.id, { llm, storage }, {
+      uploads: [{ fileName: "kwd-ledger-2.png", mime: "image/png", contentBase64: b64(pngWith({
+        ...payload, rows: [{ ...payload.rows[0], amount_minor: "2.500" }],
+      })) }],
+    });
+    await runLedgerExtraction(app(), tenantKwd, user.id, { llm, storage }, second.jobId);
+    const [tenant] = await ownerDb().select().from(tenants).where(eq(tenants.id, tenantKwd));
+    await ownerDb().update(tenants).set({ settings: { ...tenant!.settings, currency: "JPY" } }).where(eq(tenants.id, tenantKwd));
+    await expect(commitLedgerJob(app(), tenantKwd, user.id, second.jobId, "2026-11-15"))
+      .rejects.toMatchObject({ code: "CURRENCY_CHANGED_DURING_IMPORT" });
   });
 
   // ------------------------------------------------------------- F7 receipts

@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { and, eq, isNotNull, lt } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { debtors, messages, reminders, webhookEvents, withTenant, type Db } from "@tahseel/db";
 import { canAdvanceMessageStatus, isOptOutText, type ProviderMessageStatus } from "@tahseel/core";
 import { applyOptOut, type EngineDeps } from "./engine";
@@ -77,10 +77,10 @@ export function parseWebhookPayload(payload: unknown): WebhookEvent[] {
 }
 
 /**
- * M6: strip PII from a Meta webhook payload before it is stored. The typed
- * events (ids, statuses, error codes) are what processing and replay need;
- * the sender's phone number and the message body text are never persisted.
- * Returns a deep copy — the caller's payload is untouched.
+ * M6: strip PII from the generic Meta webhook inbox payload before it is
+ * stored. The tenant-scoped `messages` table separately retains message text
+ * for conversation history; the generic inbox never retains the raw phone
+ * number or text. Returns a deep copy — the caller's payload is untouched.
  */
 export function redactWebhookPayload(payload: unknown): unknown {
   let copy: unknown;
@@ -110,20 +110,35 @@ export function redactWebhookPayload(payload: unknown): unknown {
   return copy;
 }
 
-/** Persist the payload's events in the inbox (owner connection). Returns how many were NEW. */
+/**
+ * Persist the payload's events in the inbox (owner connection).
+ * Returns how many were NEW and only newly inserted or still-unprocessed events
+ * so duplicate redeliveries do not re-run processing or overwrite processedAt.
+ */
 export async function persistWebhookEvents(owner: Db, payload: unknown): Promise<{ inserted: number; events: WebhookEvent[] }> {
   const events = parseWebhookPayload(payload);
   // M6: store the redacted payload — processing uses the parsed events.
   const stored = redactWebhookPayload(payload) as Record<string, unknown>;
   let inserted = 0;
+  const pending: WebhookEvent[] = [];
   for (const event of events) {
     const rows = await owner.insert(webhookEvents)
       .values({ provider: "whatsapp", dedupeKey: event.dedupeKey, payload: stored })
       .onConflictDoNothing()
       .returning();
-    inserted += rows.length;
+    if (rows.length > 0) {
+      inserted += rows.length;
+      pending.push(event);
+    } else {
+      const [existing] = await owner.select({ processedAt: webhookEvents.processedAt })
+        .from(webhookEvents)
+        .where(eq(webhookEvents.dedupeKey, event.dedupeKey));
+      if (existing && existing.processedAt === null) {
+        pending.push(event);
+      }
+    }
   }
-  return { inserted, events };
+  return { inserted, events: pending };
 }
 
 /**
@@ -132,17 +147,70 @@ export async function persistWebhookEvents(owner: Db, payload: unknown): Promise
  * so at-least-once redelivery still dedupes) and old message raw payloads
  * are dropped. Run nightly from the worker maintenance tick.
  */
-export async function purgeOldWebhookPayloads(owner: Db, olderThanDays = 90): Promise<{ webhookEvents: number; messages: number }> {
-  const cutoff = new Date(Date.now() - olderThanDays * 86_400_000);
+export async function purgeOldWebhookPayloads(owner: Db, olderThanDays = 90, now: Date = new Date()): Promise<{ webhookEvents: number; messages: number }> {
+  const cutoff = new Date(now.getTime() - olderThanDays * 86_400_000);
   const events = await owner.update(webhookEvents)
     .set({ payload: { redacted: true } })
-    .where(lt(webhookEvents.receivedAt, cutoff))
+    .where(and(lt(webhookEvents.receivedAt, cutoff), sql`${webhookEvents.payload} IS DISTINCT FROM '{"redacted":true}'::jsonb`))
     .returning({ id: webhookEvents.id });
   const msgs = await owner.update(messages)
     .set({ raw: null })
     .where(and(lt(messages.createdAt, cutoff), isNotNull(messages.raw)))
     .returning({ id: messages.id });
   return { webhookEvents: events.length, messages: msgs.length };
+}
+
+/**
+ * Retry bounded batch of previously failed webhook_events rows
+ * (processedAt IS NULL AND processError IS NOT NULL).
+ */
+export async function replayFailedWebhooks(
+  deps: EngineDeps,
+  now: Date,
+  limit = 50,
+): Promise<{ replayed: number; failed: number }> {
+  const rows = await deps.owner
+    .select()
+    .from(webhookEvents)
+    .where(and(
+      eq(webhookEvents.provider, "whatsapp"),
+      isNull(webhookEvents.processedAt),
+      isNotNull(webhookEvents.processError),
+    ))
+    .orderBy(asc(webhookEvents.receivedAt))
+    .limit(limit);
+
+  let replayed = 0;
+  let failed = 0;
+  for (const row of rows) {
+    try {
+      const events = parseWebhookPayload(row.payload);
+      const hasRedactedInbound = events.some((ev) => ev.kind === "inbound" && ev.waId === "[redacted]");
+      if (hasRedactedInbound) {
+        await deps.owner
+          .update(webhookEvents)
+          .set({ processError: "cannot replay redacted inbound payload" })
+          .where(eq(webhookEvents.id, row.id));
+        failed++;
+        continue;
+      }
+      if (events.length > 0) {
+        await processWebhookEvents(deps, events, now);
+      }
+      await deps.owner
+        .update(webhookEvents)
+        .set({ processedAt: now, processError: null })
+        .where(eq(webhookEvents.id, row.id));
+      replayed++;
+    } catch (err) {
+      await deps.owner
+        .update(webhookEvents)
+        .set({ processError: err instanceof Error ? err.message : "replay failed" })
+        .where(eq(webhookEvents.id, row.id));
+      failed++;
+    }
+  }
+  return { replayed, failed };
 }
 
 export interface ProcessSummary { inboundStored: number; optOutsApplied: number; statusesApplied: number; statusesIgnored: number; unknown: number }
@@ -184,13 +252,17 @@ export async function processWebhookEvents(deps: EngineDeps, events: WebhookEven
     if (candidates.length === 0) { summary.unknown++; continue; }
     let debtor = candidates[0]!;
     if (candidates.length > 1) {
-      const recent = await deps.owner.select().from(messages)
-        .where(and(eq(messages.direction, "out"), eq(messages.providerMessageId, event.providerMessageId)));
-      void recent;
-      const outbound = await deps.owner.select().from(messages).where(eq(messages.direction, "out"));
-      const byDebtor = outbound.filter((m) => candidates.some((c) => c.id === m.debtorId))
-        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-      if (byDebtor[0]?.debtorId) debtor = candidates.find((c) => c.id === byDebtor[0]!.debtorId) ?? debtor;
+      const [latest] = await deps.owner.select({ debtorId: messages.debtorId })
+        .from(messages)
+        .where(and(
+          eq(messages.direction, "out"),
+          inArray(messages.debtorId, candidates.map((c) => c.id)),
+        ))
+        .orderBy(desc(messages.createdAt))
+        .limit(1);
+      if (latest?.debtorId) {
+        debtor = candidates.find((c) => c.id === latest.debtorId) ?? debtor;
+      }
     }
     const insertedRow = await withTenant(deps.app, debtor.tenantId, async (tx) => {
       const rows = await tx.insert(messages).values({
@@ -214,8 +286,12 @@ export async function processWebhookEvents(deps: EngineDeps, events: WebhookEven
       }).catch((err) => console.error("[webhook] onInboundImage hook failed", err));
     }
     if (event.text && isOptOutText(event.text)) {
-      const result = await applyOptOut(deps, debtor.tenantId, debtor.id, now, "keyword");
-      if (result.applied) {
+      let anyApplied = false;
+      for (const candidate of candidates) {
+        const result = await applyOptOut(deps, candidate.tenantId, candidate.id, now, "keyword");
+        if (result.applied) anyApplied = true;
+      }
+      if (anyApplied) {
         summary.optOutsApplied++;
         // Polite confirmation inside the (just-opened) 24h window.
         try {

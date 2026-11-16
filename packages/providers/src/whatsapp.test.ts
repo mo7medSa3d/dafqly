@@ -16,7 +16,7 @@ function stubFetch(response: unknown, status = 200) {
   return { calls, fetchImpl };
 }
 
-const config = { apiVersion: "v24.0", phoneNumberId: "1234567890", accessToken: "test-token" };
+const config = { apiVersion: "v27.0", phoneNumberId: "1234567890", accessToken: "test-token" };
 
 describe("WhatsAppCloudProvider (mocked fetch, Meta-shaped responses)", () => {
   it("posts a template message in the documented shape and returns the wamid", async () => {
@@ -30,7 +30,7 @@ describe("WhatsAppCloudProvider (mocked fetch, Meta-shaped responses)", () => {
     });
     expect(r.providerMessageId).toBe("wamid.TEST1");
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe("https://graph.facebook.com/v24.0/1234567890/messages");
+    expect(calls[0]?.url).toBe("https://graph.facebook.com/v27.0/1234567890/messages");
     expect((calls[0]?.init.headers as Record<string, string>).Authorization).toBe("Bearer test-token");
     const body = JSON.parse(String(calls[0]?.init.body)) as Record<string, unknown>;
     expect(body.messaging_product).toBe("whatsapp");

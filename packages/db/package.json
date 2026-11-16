@@ -14,7 +14,8 @@
     "generate": "drizzle-kit generate",
     "migrate": "tsx src/migrate.ts",
     "seed": "tsx src/seed.ts",
-    "seed:rich": "tsx src/seed-rich.ts"
+    "seed:rich": "tsx src/seed-rich.ts",
+    "seed:stress": "tsx src/seed-stress.ts"
   },
   "dependencies": {
     "argon2": "^0.44.0",

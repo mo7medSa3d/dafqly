@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./import": "./src/import.ts",
     "./payments-crypto": "./src/payments-crypto.ts",
     "./files-crypto": "./src/files-crypto.ts"
   },

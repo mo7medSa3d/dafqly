@@ -5,12 +5,12 @@ import { Redis } from "ioredis";
 import pino from "pino";
 import { parseEnv } from "@tahseel/core";
 import { assertAppRole, createDb, createAppDb } from "@tahseel/db";
+import { SystemClock } from "@tahseel/providers";
+import { createEngineDeps } from "@tahseel/reminders";
 import {
-  SystemClock, DryRunMessagingProvider, NotConfiguredMessagingProvider, NotConfiguredSmsProvider,
-  WhatsAppCloudProvider, type TextCapableProvider,
-} from "@tahseel/providers";
-import { quotaExceededFromDb, type EngineDeps } from "@tahseel/reminders";
-import { processPlannerTick, processDispatchTick, processMaintenanceTick } from "./processors";
+  processPlannerTick, processReplanInvoice, processReplanTenant,
+  processDispatchTick, processMaintenanceTick,
+} from "./processors";
 
 // Same monorepo root-.env convenience as the web app (no-op in production).
 (function loadRootEnv() {
@@ -42,20 +42,13 @@ const log = pino({
   redact: ["phoneE164", "toE164", "debtorPhone", "phone", "waId", "*.phoneE164", "*.toE164", "*.phone"],
 });
 
-const connection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
+// BullMQ requires maxRetriesPerRequest: null for Worker connections; Queue
+// (producer) connections should stay separate with bounded retries.
+const workerConnection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
+const queueConnection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 3 });
+workerConnection.on("error", (err) => log.error({ err }, "worker redis error"));
+queueConnection.on("error", (err) => log.error({ err }, "queue redis error"));
 
-// Engine wiring (M2, ADR-016): the real WhatsApp adapter only when a token
-// is configured; DRY_RUN_MESSAGING=true (the default) wraps everything in
-// the dry-run renderer, so the worker can never send for real in dev/CI.
-const realWhatsapp: TextCapableProvider = env.WHATSAPP_ACCESS_TOKEN
-  ? new WhatsAppCloudProvider({
-      apiVersion: env.WHATSAPP_API_VERSION, phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID,
-      accessToken: env.WHATSAPP_ACCESS_TOKEN,
-    })
-  : new NotConfiguredMessagingProvider("whatsapp");
-const whatsapp = env.DRY_RUN_MESSAGING ? new DryRunMessagingProvider(realWhatsapp) : realWhatsapp;
-const smsBase: TextCapableProvider = new NotConfiguredSmsProvider(); // No SMS adapter is shipped until the provider is selected and verified.
-const sms = env.DRY_RUN_MESSAGING ? new DryRunMessagingProvider(smsBase) : smsBase;
 // Runtime tenant access must use the RLS-bound role. The owner URL is
 // retained only for the engine's explicitly platform-scoped enumeration.
 if (env.NODE_ENV === "production" && !env.APP_DATABASE_URL) {
@@ -63,20 +56,20 @@ if (env.NODE_ENV === "production" && !env.APP_DATABASE_URL) {
 }
 const appConnection = createAppDb(env.APP_DATABASE_URL ?? env.DATABASE_URL);
 const ownerConnection = createDb(env.DATABASE_URL);
-const engineAppDb = appConnection.db;
-const engine: EngineDeps = {
-  app: engineAppDb,
+const engine = createEngineDeps({
+  app: appConnection.db,
   owner: ownerConnection.db,
-  providers: { whatsapp, sms },
+  dryRunMessaging: env.DRY_RUN_MESSAGING,
+  whatsappApiVersion: env.WHATSAPP_API_VERSION,
+  whatsappPhoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID,
+  whatsappAccessToken: env.WHATSAPP_ACCESS_TOKEN,
   appUrl: env.APP_URL,
-  // F13: block sends when the tenant is at/over its monthly quota.
-  quotaExceeded: (tenantId: string) => quotaExceededFromDb(engineAppDb, tenantId, new Date()),
-};
+});
 const deps = { clock: new SystemClock(), dryRun: env.DRY_RUN_MESSAGING, engine };
 
-const plannerQueue = new Queue("reminders-planner", { connection });
-const dispatcherQueue = new Queue("reminders-dispatcher", { connection });
-const maintenanceQueue = new Queue("maintenance", { connection });
+const plannerQueue = new Queue("reminders-planner", { connection: queueConnection });
+const dispatcherQueue = new Queue("reminders-dispatcher", { connection: queueConnection });
+const maintenanceQueue = new Queue("maintenance", { connection: queueConnection });
 
 // Workers are deliberately created only after the RLS role assertion in
 // main(). BullMQ Workers autorun by default; constructing them at module
@@ -91,10 +84,29 @@ async function main(): Promise<void> {
   if (env.NODE_ENV === "production" || env.APP_DATABASE_URL) {
     await assertAppRole(appConnection.client);
   }
-  plannerWorker = new Worker("reminders-planner", async () => processPlannerTick(deps), { connection });
-  dispatcherWorker = new Worker("reminders-dispatcher", async () => processDispatchTick(deps), { connection });
-  maintenanceWorker = new Worker("maintenance", async () => processMaintenanceTick(deps), { connection });
-  plannerWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "planner tick done"));
+  plannerWorker = new Worker(
+    "reminders-planner",
+    async (job) => {
+      if (job.name === "replan-invoice") {
+        return processReplanInvoice(deps, job.data as { tenantId: string; invoiceId: string });
+      }
+      if (job.name === "replan-tenant") {
+        return processReplanTenant(deps, job.data as { tenantId: string });
+      }
+      return processPlannerTick(deps);
+    },
+    { connection: workerConnection },
+  );
+  dispatcherWorker = new Worker(
+    "reminders-dispatcher",
+    async (job) => {
+      const tenantId = (job.data as { tenantId?: string } | undefined)?.tenantId;
+      return processDispatchTick(tenantId ? { ...deps, tenantId } : deps);
+    },
+    { connection: workerConnection },
+  );
+  maintenanceWorker = new Worker("maintenance", async () => processMaintenanceTick(deps), { connection: workerConnection });
+  plannerWorker.on("completed", (job, result) => log.info({ job: job.id, name: job.name, result }, "planner tick done"));
   dispatcherWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "dispatch tick done"));
   maintenanceWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "maintenance tick done"));
   plannerWorker.on("failed", (_job, err) => log.error({ err }, "planner tick failed"));
@@ -102,13 +114,13 @@ async function main(): Promise<void> {
   maintenanceWorker.on("failed", (_job, err) => log.error({ err }, "maintenance tick failed"));
   // Repeatable jobs (BUILD_PLAN §3): planner nightly, dispatcher every minute.
   // The engines behind them land in M2; the schedules are wired now.
-  await plannerQueue.add("nightly", {}, { repeat: { pattern: "0 2 * * *", tz: env.DEFAULT_TIMEZONE }, removeOnComplete: 50 });
-  await dispatcherQueue.add("every-minute", {}, { repeat: { every: 60_000 }, removeOnComplete: 50 });
-  // M3/M6: nightly payload-retention purge (90-day tombstone).
-  await maintenanceQueue.add("nightly", {}, { repeat: { pattern: "0 3 * * *", tz: env.DEFAULT_TIMEZONE }, removeOnComplete: 50 });
+  await plannerQueue.add("nightly", {}, { repeat: { pattern: "0 2 * * *", tz: env.DEFAULT_TIMEZONE }, removeOnComplete: 50, removeOnFail: 50 });
+  await dispatcherQueue.add("every-minute", {}, { repeat: { every: 60_000 }, removeOnComplete: 50, removeOnFail: 50 });
+  // M3/M6: nightly payload-retention purge (90-day tombstone) + failed webhook replay.
+  await maintenanceQueue.add("nightly", {}, { repeat: { pattern: "0 3 * * *", tz: env.DEFAULT_TIMEZONE }, removeOnComplete: 50, removeOnFail: 50 });
   // One immediate tick so a fresh boot proves the plumbing end to end.
-  await plannerQueue.add("boot-tick", {});
-  await dispatcherQueue.add("boot-tick", {});
+  await plannerQueue.add("boot-tick", {}, { removeOnComplete: 50, removeOnFail: 50 });
+  await dispatcherQueue.add("boot-tick", {}, { removeOnComplete: 50, removeOnFail: 50 });
   // F-02: production + dry-run + a configured WhatsApp number is the silent
   // trap — the operator sees a working number and assumes messages go out,
   // but the dry-run renderer queues them and never sends. Warn loudly at
@@ -119,24 +131,35 @@ async function main(): Promise<void> {
   log.info({ dryRunMessaging: env.DRY_RUN_MESSAGING, whatsappConfigured: Boolean(env.WHATSAPP_ACCESS_TOKEN), redis: env.REDIS_URL.replace(/\/\/.*@/, "//***@") }, "tahseel worker ready (M2 reminder engine wired)");
 }
 
-async function shutdown(signal: string): Promise<void> {
+let shuttingDown = false;
+async function shutdown(signal: string, exitCode = 0): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
   log.info({ signal }, "shutting down");
-  await Promise.all([
+  await Promise.allSettled([
     plannerWorker?.close(),
     dispatcherWorker?.close(),
     maintenanceWorker?.close(),
+    plannerQueue.close(),
+    dispatcherQueue.close(),
+    maintenanceQueue.close(),
   ]);
-  await plannerQueue.close();
-  await dispatcherQueue.close();
-  await maintenanceQueue.close();
-  connection.disconnect();
-  await Promise.allSettled([appConnection.client.end(), ownerConnection.client.end()]);
-  process.exit(0);
+  const closeTimeout = new Promise<void>((resolve) => setTimeout(resolve, 10_000));
+  await Promise.race([
+    Promise.allSettled([
+      workerConnection.quit().catch(() => workerConnection.disconnect()),
+      queueConnection.quit().catch(() => queueConnection.disconnect()),
+      appConnection.client.end(),
+      ownerConnection.client.end(),
+    ]),
+    closeTimeout,
+  ]);
+  process.exit(exitCode);
 }
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
 
 main().catch((err) => {
   log.error({ err }, "worker failed to start");
-  process.exit(1);
+  void shutdown("STARTUP_ERROR", 1);
 });

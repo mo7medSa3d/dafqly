@@ -83,7 +83,9 @@ export function AiInboxClient() {
         mime: file.type || "image/png",
         contentBase64: await fileToBase64(file),
       });
-      if (out.matchedDebtorName) {
+      if (out.outcome === "unreadable" || out.outcome === "not_receipt") {
+        setMsg(t("receiptOutcome", { outcome: out.outcome }));
+      } else if (out.matchedDebtorName) {
         setMsg(
           isAr
             ? `✨ تم التعرف التلقائي على العميل «${out.matchedDebtorName}» ومعالجة الإشعار بنجاح.`
@@ -394,7 +396,7 @@ export function AiInboxClient() {
                 accept="image/*"
                 disabled={busy}
                 className="sr-only"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) void onReceiptFile(f); }}
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void onReceiptFile(f); }}
               />
             </label>
           </div>

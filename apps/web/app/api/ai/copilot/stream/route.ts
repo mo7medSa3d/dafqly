@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { AppError } from "@tahseel/core";
 import { auth } from "@/server/auth";
 import { appDb, ownerDb } from "@/server/db";
 import { listTenantsForUser, todayInTimezone } from "@/server/services";
@@ -65,13 +66,22 @@ export async function POST(request: Request): Promise<Response> {
           (event: CopilotStreamEvent) => emit(event),
           abort.signal,
         ));
-        emit({ type: "done", response: result });
+        emit({
+          type: "done",
+          response: result,
+          ...(result.aiFallbackReason === "global_budget_exceeded"
+            ? { aiFallbackReason: result.aiFallbackReason, budgetExceeded: true }
+            : {}),
+        });
       } catch (error) {
         if (!abort.signal.aborted) {
           const message = error instanceof Error ? error.message : "AI request failed";
           console.error("[copilot] stream failed", { tenantId: tenant.tenantId, error: message.slice(0, 300) });
-          emit({ type: "error", message: message.includes("monthly AI spending cap")
-            ? "GLOBAL_AI_BUDGET_EXCEEDED" : "AI_REQUEST_FAILED" });
+          const isBudgetExceeded =
+            (error instanceof AppError && error.code === "AI_GLOBAL_BUDGET_EXCEEDED") ||
+            message.includes("AI_GLOBAL_BUDGET_EXCEEDED") ||
+            message.includes("monthly AI spending cap");
+          emit({ type: "error", message: isBudgetExceeded ? "AI_GLOBAL_BUDGET_EXCEEDED" : "AI_REQUEST_FAILED" });
         }
       } finally {
         if (heartbeat) clearInterval(heartbeat);

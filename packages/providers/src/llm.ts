@@ -3,7 +3,7 @@ import {
   parseChequeExtraction, resolveRelativeDate,
   type LedgerExtraction, type ReceiptExtraction, type ReplyClassification, type ChequeExtraction,
 } from "@tahseel/core";
-import { LEDGER_PROMPT_VERSION, LEDGER_SYSTEM, LEDGER_TOOL_NAME, LEDGER_TOOL_SCHEMA, LEDGER_USER } from "./prompts/ledger";
+import { LEDGER_PROMPT_VERSION, ledgerSystemForCurrency, LEDGER_TOOL_NAME, LEDGER_TOOL_SCHEMA, LEDGER_USER } from "./prompts/ledger";
 import { RECEIPT_PROMPT_VERSION, RECEIPT_SYSTEM, RECEIPT_TOOL_NAME, RECEIPT_TOOL_SCHEMA, RECEIPT_USER } from "./prompts/receipt";
 import { CHEQUE_PROMPT_VERSION, CHEQUE_SYSTEM, CHEQUE_TOOL_NAME, CHEQUE_TOOL_SCHEMA, CHEQUE_USER } from "./prompts/cheque";
 import { REPLY_PROMPT_VERSION, REPLY_SYSTEM, REPLY_TOOL_NAME, REPLY_TOOL_SCHEMA, replyUserText } from "./prompts/reply";
@@ -86,6 +86,17 @@ export interface AgentRunInput {
   onEvent?: (event: AgentEvent) => void;
   /** Client disconnect / user "stop" — aborts the provider request in flight. */
   signal?: AbortSignal;
+  locale?: "ar" | "en" | string;
+}
+
+export function maxStepsFallbackText(locale?: string): string {
+  if (locale === "en") {
+    return "I could not complete the analysis within the tool step limit. Try breaking the question into smaller steps.";
+  }
+  if (locale === "ar") {
+    return "لم أتمكن من إكمال التحليل ضمن حد خطوات الأدوات. جرّب تقسيم السؤال إلى خطوات أصغر.";
+  }
+  return "I could not complete the analysis within the tool step limit. Try breaking the question into smaller steps.\n\nلم أتمكن من إكمال التحليل ضمن حد خطوات الأدوات. جرّب تقسيم السؤال إلى خطوات أصغر.";
 }
 
 /** Shared by every adapter: run one tool call, emit events, never throw. */
@@ -110,7 +121,7 @@ export async function executeAgentToolCall(args: {
 }
 
 export interface OcrLlmProvider {
-  extractLedgerPage(image: Uint8Array, mime: string): Promise<LlmCallResult<LedgerExtraction>>;
+  extractLedgerPage(image: Uint8Array, mime: string, currency?: string): Promise<LlmCallResult<LedgerExtraction>>;
   extractReceipt(image: Uint8Array, mime: string): Promise<LlmCallResult<ReceiptExtraction>>;
   classifyReply(text: string, context: ReplyContext): Promise<LlmCallResult<ReplyClassification>>;
   /** F9: cheque photo -> fields for a merchant-reviewed pre-filled form (a claim, never a registration). */
@@ -119,7 +130,7 @@ export interface OcrLlmProvider {
   /** Native multi-turn tool calling; tools are executed only by the server callback. */
   runAgent?(input: AgentRunInput): Promise<AgentRunResult>;
   /** Emits provider text deltas as they arrive; used for user-visible token streaming. */
-  streamText?(prompt: string, systemInstruction: string | undefined, onToken: (delta: string) => void): Promise<{ text: string; inputTokens: number; outputTokens: number; model?: string }>;
+  streamText?(prompt: string, systemInstruction: string | undefined, onToken: (delta: string) => void, signal?: AbortSignal): Promise<{ text: string; inputTokens: number; outputTokens: number; model?: string }>;
 }
 
 export class LlmNotConfiguredError extends Error {
@@ -130,6 +141,9 @@ export class LlmNotConfiguredError extends Error {
 }
 
 type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
+
+/** Current Anthropic Messages API version recommended by the official docs. */
+const ANTHROPIC_API_VERSION = "2026-10-21";
 
 export interface AnthropicOptions {
   apiKey: string;
@@ -175,7 +189,7 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
       headers: {
         "content-type": "application/json",
         "x-api-key": this.opts.apiKey,
-        "anthropic-version": "2023-06-01",
+        "anthropic-version": ANTHROPIC_API_VERSION,
       },
       body: JSON.stringify({
         model: args.model,
@@ -209,12 +223,12 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
     };
   }
 
-  async extractLedgerPage(image: Uint8Array, mime: string): Promise<LlmCallResult<LedgerExtraction>> {
+  async extractLedgerPage(image: Uint8Array, mime: string, currency = "EGP"): Promise<LlmCallResult<LedgerExtraction>> {
     return this.callTool({
-      model: this.opts.model ?? this.opts.modelVision ?? this.opts.modelFast ?? "claude-sonnet-5-5", promptVersion: LEDGER_PROMPT_VERSION, system: LEDGER_SYSTEM,
+      model: this.opts.model ?? this.opts.modelVision ?? this.opts.modelFast ?? "claude-sonnet-5-5", promptVersion: LEDGER_PROMPT_VERSION, system: ledgerSystemForCurrency(currency),
       content: [this.imageBlock(image, mime), { type: "text", text: LEDGER_USER }],
       toolName: LEDGER_TOOL_NAME, toolDescription: "Return the ledger rows transcribed from the page image.",
-      toolSchema: LEDGER_TOOL_SCHEMA, parse: parseLedgerExtraction,
+      toolSchema: LEDGER_TOOL_SCHEMA, parse: (value) => parseLedgerExtraction(value, currency),
     });
   }
 
@@ -261,7 +275,7 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
       headers: {
         "content-type": "application/json",
         "x-api-key": this.opts.apiKey,
-        "anthropic-version": "2023-06-01",
+        "anthropic-version": ANTHROPIC_API_VERSION,
       },
       body: JSON.stringify({
         model: args.model,
@@ -349,67 +363,62 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
 
       // The full assistant content (including opaque tool-use ids) must be
       // echoed back exactly before the corresponding tool_result blocks.
-      messages.push({ role: "assistant", content });
+      const normalizedContent = content.map((part, idx) =>
+        part.type === "tool_use" && !part.id ? { ...part, id: `${step}-${toolExecutions.length + idx}` } : part,
+      );
+      messages.push({ role: "assistant", content: normalizedContent });
       const results: Record<string, unknown>[] = [];
-      for (const toolUse of toolUses) {
+      for (const toolUse of normalizedContent.filter((part) => part.type === "tool_use")) {
         const args = toolUse.input && typeof toolUse.input === "object" && !Array.isArray(toolUse.input)
           ? toolUse.input as Record<string, unknown> : {};
+        const toolUseId = toolUse.id!;
         const result = await executeAgentToolCall({
-          id: toolUse.id ?? `${step}-${toolExecutions.length}`, name: toolUse.name ?? "unknown", toolArgs: args,
+          id: toolUseId, name: toolUse.name ?? "unknown", toolArgs: args,
           allowed, executed: toolExecutions.length, maxToolCalls, executeTool: input.executeTool, onEvent: input.onEvent,
         });
         toolExecutions.push({ name: toolUse.name ?? "unknown", arguments: args, result });
-        if (toolUse.id) {
-          // Anthropic requires one tool_result per tool_use id, even when the
-          // application rejects execution because its budget is exhausted.
-          results.push({ type: "tool_result", tool_use_id: toolUse.id, content: JSON.stringify(result) });
-        }
+        // Anthropic requires one tool_result per tool_use id, even when the
+        // application rejects execution because its budget is exhausted.
+        results.push({ type: "tool_result", tool_use_id: toolUseId, content: JSON.stringify(result) });
       }
       if (results.length === 0) break;
       messages.push({ role: "user", content: results });
     }
 
     return {
-      text: finalText || "لم أتمكن من إكمال التحليل ضمن حد خطوات الأدوات. جرّب تقسيم السؤال إلى خطوات أصغر.",
+      text: finalText || maxStepsFallbackText(input.locale),
       toolExecutions, inputTokens, outputTokens, model, steps: maxSteps,
     };
   }
 
-  async streamText(prompt: string, systemInstruction: string | undefined, onToken: (delta: string) => void): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
+  async streamText(prompt: string, systemInstruction: string | undefined, onToken: (delta: string) => void, signal?: AbortSignal): Promise<{ text: string; inputTokens: number; outputTokens: number; model: string }> {
     const model = this.opts.modelFast ?? this.opts.model ?? "claude-haiku-5-5";
     const res = await this.fetchFn(`${this.baseUrl}/v1/messages`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": this.opts.apiKey, "anthropic-version": "2023-06-01" },
+      headers: { "content-type": "application/json", "x-api-key": this.opts.apiKey, "anthropic-version": ANTHROPIC_API_VERSION },
       body: JSON.stringify({ model, max_tokens: 1400, stream: true, system: systemInstruction, messages: [{ role: "user", content: prompt }] }),
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: combinedSignal(this.timeoutMs, signal),
     });
     if (!res.ok || !res.body) throw new Error(`Anthropic streaming error: HTTP ${res.status}`);
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     let text = "";
     let inputTokens = 0;
     let outputTokens = 0;
-    const consume = (block: string) => {
-      const data = block.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
-      if (!data || data === "[DONE]") return;
-      const event = JSON.parse(data) as { type?: string; delta?: { type?: string; text?: string }; message?: { usage?: { input_tokens?: number } }; usage?: { output_tokens?: number } };
+    for await (const data of readSseData(res, signal)) {
+      const event = parseSseJson<{
+        type?: string;
+        delta?: { type?: string; text?: string };
+        message?: { usage?: { input_tokens?: number } };
+        usage?: { output_tokens?: number };
+        error?: { message?: string };
+      }>(data);
+      if (!event) continue;
+      if (event.type === "error") throw new Error(`Anthropic stream error: ${event.error?.message ?? "unknown"}`);
       if (event.type === "message_start") inputTokens += event.message?.usage?.input_tokens ?? 0;
       if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
         text += event.delta.text; onToken(event.delta.text);
       }
       if (event.type === "message_delta") outputTokens += event.usage?.output_tokens ?? 0;
-    };
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true }).replace(/\r/g, "");
-        let boundary = buffer.indexOf("\n\n");
-        while (boundary >= 0) { consume(buffer.slice(0, boundary)); buffer = buffer.slice(boundary + 2); boundary = buffer.indexOf("\n\n"); }
-      }
-      if (buffer.trim()) consume(buffer);
-    } finally { reader.releaseLock(); }
+    }
     return { text, inputTokens, outputTokens, model };
   }
 
@@ -427,7 +436,7 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
       headers: {
         "Content-Type": "application/json",
         "x-api-key": this.opts.apiKey,
-        "anthropic-version": "2023-06-01",
+        "anthropic-version": ANTHROPIC_API_VERSION,
       },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(this.timeoutMs),
@@ -436,8 +445,8 @@ export class AnthropicLlmProvider implements OcrLlmProvider {
       const errText = await res.text().catch(() => "");
       throw new Error(`Anthropic API error: HTTP ${res.status} ${errText}`);
     }
-    const body = (await res.json()) as { content?: Array<{ text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
-    const text = body.content?.[0]?.text ?? "";
+    const body = (await res.json()) as { content?: Array<{ type?: string; text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+    const text = body.content?.find((b) => b.type === "text" && typeof b.text === "string")?.text ?? body.content?.[0]?.text ?? "";
     return {
       text, model,
       inputTokens: body.usage?.input_tokens ?? 0,
@@ -492,7 +501,7 @@ export class FakeLlmProvider implements OcrLlmProvider {
   readonly modelFast = "fake-fast";
   readonly modelVision = "fake-vision";
 
-  async extractLedgerPage(image: Uint8Array, _mime: string): Promise<LlmCallResult<LedgerExtraction>> {
+  async extractLedgerPage(image: Uint8Array, _mime: string, currency = "EGP"): Promise<LlmCallResult<LedgerExtraction>> {
     const payload = readSyntheticPayload(image);
     if (!payload || payload.kind !== "ledger" || !payload.rows) {
       return { data: null, model: this.modelVision, promptVersion: LEDGER_PROMPT_VERSION, ...zeroUsage };
@@ -506,7 +515,7 @@ export class FakeLlmProvider implements OcrLlmProvider {
       return merged;
     });
     return {
-      data: parseLedgerExtraction({ rows }), model: this.modelVision,
+      data: parseLedgerExtraction({ rows }, currency), model: this.modelVision,
       promptVersion: LEDGER_PROMPT_VERSION, ...zeroUsage,
     };
   }

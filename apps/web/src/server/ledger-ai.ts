@@ -1,7 +1,7 @@
 import { asc, eq, isNull, and } from "drizzle-orm";
 import { z } from "zod";
 import {
-  AppError, MAX_LEDGER_PAGES, normalizeEgPhone, normalizeLedgerRowDigits, parseEgp,
+  AppError, MAX_LEDGER_PAGES, normalizeCurrencyCode, normalizeEgPhone, normalizeLedgerRowDigits, parseMoney,
   resolveDueOn, suggestDebtorByName,
 } from "@tahseel/core";
 import { decodeBase64Upload, MAX_UPLOAD_BASE64_CHARS } from "@tahseel/core/files-crypto";
@@ -112,8 +112,9 @@ export interface LedgerJobView {
   }[];
 }
 
-async function loadJob(tx: Db, jobId: string) {
-  const [job] = await tx.select().from(importJobs).where(eq(importJobs.id, jobId));
+async function loadJob(tx: Db, jobId: string, forUpdate = false) {
+  const query = tx.select().from(importJobs).where(eq(importJobs.id, jobId));
+  const [job] = await (forUpdate ? query.for("update") : query);
   if (!job || job.kind !== "ledger_photo") throw new AppError("NOT_FOUND", "Ledger import job not found", 404);
   return job;
 }
@@ -126,11 +127,16 @@ async function loadJob(tx: Db, jobId: string) {
 export async function runLedgerExtraction(
   app: Db, tenantId: string, actor: string, ai: LedgerAiDeps, jobId: string,
 ): Promise<LedgerJobView> {
-  const fileIds = await withTenant(app, tenantId, async (tx) => {
-    const job = await loadJob(tx, jobId);
+  const extractionContext = await withTenant(app, tenantId, async (tx) => {
+    const job = await loadJob(tx, jobId, true);
     if (job.status !== "pending_review") throw new AppError("ALREADY_COMMITTED", "Only a pending-review job can be extracted", 409);
-    return ((job.sourceGrid ?? {}) as { fileIds?: string[] }).fileIds ?? [];
+    const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+    return {
+      fileIds: ((job.sourceGrid ?? {}) as { fileIds?: string[] }).fileIds ?? [],
+      currency: normalizeCurrencyCode(tenant?.settings?.currency),
+    };
   });
+  const { fileIds, currency } = extractionContext;
 
   const debtorList = await withTenant(app, tenantId, async (tx) =>
     tx.select({ id: debtors.id, displayName: debtors.displayName }).from(debtors).where(isNull(debtors.deletedAt)));
@@ -139,7 +145,7 @@ export async function runLedgerExtraction(
   const pages: PageResult[] = [];
   for (let i = 0; i < fileIds.length; i++) {
     const { file, bytes } = await getFileBytes(app, ai.storage, tenantId, fileIds[i]!);
-    const result = await ai.llm.extractLedgerPage(bytes, file.mime);
+    const result = await ai.llm.extractLedgerPage(bytes, file.mime, currency);
     const rows: LedgerStoredRow[] = [];
     if (result.data) {
       for (const raw of result.data.rows) {
@@ -169,6 +175,8 @@ export async function runLedgerExtraction(
   }
 
   await withTenant(app, tenantId, async (tx) => {
+    const lockedJob = await loadJob(tx, jobId, true);
+    if (lockedJob.status !== "pending_review") throw new AppError("ALREADY_COMMITTED", "Only a pending-review job can be extracted", 409);
     await tx.delete(importRows).where(eq(importRows.jobId, jobId));
     let n = 0;
     for (const page of pages) {
@@ -188,7 +196,8 @@ export async function runLedgerExtraction(
       }
     }
     const stats = { pagesTotal: fileIds.length, pagesDone: pages.length, rowsFound: n };
-    await tx.update(importJobs).set({ stats, updatedAt: new Date() }).where(eq(importJobs.id, jobId));
+    const sourceGrid = { ...((lockedJob.sourceGrid ?? {}) as Record<string, unknown>), currency };
+    await tx.update(importJobs).set({ sourceGrid: sourceGrid as never, stats, updatedAt: new Date() }).where(eq(importJobs.id, jobId));
     await audit(tx, tenantId, actor, "import.ledger_extracted", jobId, {
       stats, model: pages[0]?.usage?.model ?? null, promptVersion: pages[0]?.usage?.promptVersion ?? null,
     });
@@ -198,7 +207,7 @@ export async function runLedgerExtraction(
 
 export async function getLedgerJob(app: Db, tenantId: string, jobId: string): Promise<LedgerJobView> {
   return withTenant(app, tenantId, async (tx) => {
-    const job = await loadJob(tx, jobId);
+    const job = await loadJob(tx, jobId, true);
     const rows = await tx.select().from(importRows).where(eq(importRows.jobId, jobId)).orderBy(asc(importRows.rowNumber));
     return {
       id: job.id, status: job.status, fileName: job.fileName, stats: job.stats,
@@ -265,11 +274,10 @@ export async function updateLedgerRow(
       }
     }
     if (input.amount !== undefined) {
-      // F-06: the ledger-photo import is EGP-denominated by design —
-      // committed invoices are created with currency "EGP" — so the EGP
-      // parse here is correct, not a leftover.
-      try { data.amountMinor = parseEgp(input.amount).toString(); }
-      catch { throw new AppError("INVALID_AMOUNT", "Amount is not a readable EGP amount", 400); }
+      const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+      const currency = normalizeCurrencyCode(tenant?.settings?.currency);
+      try { data.amountMinor = parseMoney(input.amount, currency).toString(); }
+      catch { throw new AppError("INVALID_AMOUNT", `Amount is not a readable ${currency} amount`, 400); }
     }
     if (input.date !== undefined) data.date = input.date;
     if (input.note !== undefined) data.note = input.note;
@@ -295,10 +303,16 @@ export async function commitLedgerJob(
   app: Db, tenantId: string, actor: string, jobId: string, today: string,
 ): Promise<{ jobId: string; createdDebtors: number; createdInvoices: number; skippedInvalid: number }> {
   const result = await withTenant(app, tenantId, async (tx) => {
-    const job = await loadJob(tx, jobId);
+    const job = await loadJob(tx, jobId, true);
     if (job.status !== "pending_review") throw new AppError("ALREADY_COMMITTED", "This ledger import was already committed", 409);
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     const terms = tenant?.settings.defaultTermsDays ?? 14;
+    const currency = normalizeCurrencyCode(tenant?.settings?.currency);
+    const sourceGrid = (job.sourceGrid ?? {}) as { currency?: string };
+    const extractionCurrency = sourceGrid.currency ? normalizeCurrencyCode(sourceGrid.currency) : currency;
+    if (extractionCurrency !== currency) {
+      throw new AppError("CURRENCY_CHANGED_DURING_IMPORT", "Tenant currency changed after this ledger was extracted. Re-run extraction or review every amount before committing.", 409);
+    }
     const rows = await tx.select().from(importRows).where(eq(importRows.jobId, jobId)).orderBy(asc(importRows.rowNumber));
     let createdDebtors = 0;
     let createdInvoices = 0;
@@ -335,7 +349,7 @@ export async function commitLedgerJob(
       const reference = await nextInvoiceReference(tx, tenantId, issuedOn.slice(0, 4));
       const [invoice] = await tx.insert(invoices).values({
         tenantId, debtorId, reference, description: data.note,
-        amountMinor: BigInt(data.amountMinor), currency: "EGP", issuedOn,
+        amountMinor: BigInt(data.amountMinor), currency, issuedOn,
         dueOn: resolveDueOn(issuedOn, null, terms),
         status: "open", source: "ledger_photo", importJobId: jobId,
         evidenceFileId: stored.pageFileId,

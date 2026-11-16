@@ -46,6 +46,12 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   compress: true,
   reactStrictMode: true,
+  poweredByHeader: false,
+  experimental: {
+    // lucide-react ships a barrel: rewrite named imports to per-icon paths
+    // so only the icons a page actually renders reach its bundle.
+    optimizePackageImports: ["lucide-react"],
+  },
   transpilePackages: ["@tahseel/core", "@tahseel/db", "@tahseel/brand"],
   serverExternalPackages: ["argon2", "postgres"],
   async headers() {

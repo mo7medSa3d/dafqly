@@ -32,7 +32,7 @@ function safeConfigs(): LlmProviderConfig[] {
  * Explicit rates win over the built-in table, so a re-priced/proxied model is
  * metered at what the operator actually pays.
  */
-export function rateOverrideFor(model: string): AiRateOverride | undefined {
+function rateOverrideFor(model: string): AiRateOverride | undefined {
   const hit = safeConfigs().find((c) => c.pricing && [c.model, c.modelFast, c.modelVision].includes(model));
   if (hit?.pricing) return { input: hit.pricing.inputUsdPerM, output: hit.pricing.outputUsdPerM };
   const e = env();
@@ -78,7 +78,7 @@ export function estimateAiCostUsdMicros(model: string, inputTokens: number, outp
 
 export async function reserveGlobalAiBudget(
   owner: Db, tenantId: string, requestKey: string, model: string,
-): Promise<bigint> {
+): Promise<{ reservedUsdMicros: bigint; budgetPeriod: string }> {
   const config = env();
   const cap = BigInt(Math.round(config.AI_GLOBAL_MONTHLY_USD_CAP * 1_000_000));
   const reserveUsd = Math.min(config.AI_GLOBAL_REQUEST_RESERVE_USD, config.AI_GLOBAL_MONTHLY_USD_CAP);
@@ -110,30 +110,31 @@ export async function reserveGlobalAiBudget(
     await tx.insert(aiGlobalUsage).values({
       requestKey, tenantId, model, status: "reserved", reservedUsdMicros: reserve,
     });
-    return reserve;
+    return { reservedUsdMicros: reserve, budgetPeriod: period };
   });
 }
 
 export async function settleGlobalAiBudget(
-  owner: Db, requestKey: string, inputTokens: number, outputTokens: number, model?: string,
+  owner: Db, requestKey: string, inputTokens: number, outputTokens: number, model?: string, budgetPeriod?: string,
 ): Promise<void> {
   await owner.transaction(async (tx) => {
     const [usage] = await tx.select().from(aiGlobalUsage).where(eq(aiGlobalUsage.requestKey, requestKey)).for("update");
     if (!usage || usage.status !== "reserved") return;
     const meteredModel = model ?? usage.model;
     const actual = estimateAiCostUsdMicros(meteredModel, inputTokens, outputTokens, rateOverrideFor(meteredModel));
-    const currentMonth = usage.createdAt.toISOString().slice(0, 7);
-    const budgetPeriod = monthStart();
-    if (currentMonth === budgetPeriod.slice(0, 7)) {
-      const [budget] = await tx.select().from(aiGlobalBudget).where(eq(aiGlobalBudget.singletonId, 1)).for("update");
-      if (budget?.periodStart === budgetPeriod) {
-        await tx.update(aiGlobalBudget).set({
-          reservedUsdMicros: budget.reservedUsdMicros > usage.reservedUsdMicros
-            ? budget.reservedUsdMicros - usage.reservedUsdMicros : 0n,
-          spentUsdMicros: budget.spentUsdMicros + actual,
-          updatedAt: new Date(),
-        }).where(eq(aiGlobalBudget.singletonId, 1));
-      }
+    const targetPeriod = budgetPeriod ?? monthStart(usage.createdAt);
+    const [budget] = await tx.select().from(aiGlobalBudget).where(eq(aiGlobalBudget.singletonId, 1)).for("update");
+    if (budget?.periodStart === targetPeriod) {
+      const nextReserved = budget.reservedUsdMicros > usage.reservedUsdMicros
+        ? budget.reservedUsdMicros - usage.reservedUsdMicros : 0n;
+      // Record the full estimated cost computed from provider-reported token
+      // usage, even when it exceeds the admission cap. The cap is checked
+      // before the call; truncating here would hide overruns and admit more calls.
+      await tx.update(aiGlobalBudget).set({
+        reservedUsdMicros: nextReserved,
+        spentUsdMicros: budget.spentUsdMicros + actual,
+        updatedAt: new Date(),
+      }).where(eq(aiGlobalBudget.singletonId, 1));
     }
     await tx.update(aiGlobalUsage).set({
       status: "settled", actualUsdMicros: actual, inputTokens, outputTokens,
@@ -142,13 +143,13 @@ export async function settleGlobalAiBudget(
   });
 }
 
-export async function releaseGlobalAiBudget(owner: Db, requestKey: string): Promise<void> {
+export async function releaseGlobalAiBudget(owner: Db, requestKey: string, budgetPeriod?: string): Promise<void> {
   await owner.transaction(async (tx) => {
     const [usage] = await tx.select().from(aiGlobalUsage).where(eq(aiGlobalUsage.requestKey, requestKey)).for("update");
     if (!usage || usage.status !== "reserved") return;
-    const currentMonth = usage.createdAt.toISOString().slice(0, 7);
+    const targetPeriod = budgetPeriod ?? monthStart(usage.createdAt);
     const [budget] = await tx.select().from(aiGlobalBudget).where(eq(aiGlobalBudget.singletonId, 1)).for("update");
-    if (budget && currentMonth === budget.periodStart.slice(0, 7)) {
+    if (budget?.periodStart === targetPeriod) {
       await tx.update(aiGlobalBudget).set({
         reservedUsdMicros: budget.reservedUsdMicros > usage.reservedUsdMicros
           ? budget.reservedUsdMicros - usage.reservedUsdMicros : 0n,
@@ -157,6 +158,21 @@ export async function releaseGlobalAiBudget(owner: Db, requestKey: string): Prom
     }
     await tx.update(aiGlobalUsage).set({ status: "released", updatedAt: new Date() }).where(eq(aiGlobalUsage.id, usage.id));
   });
+}
+
+/**
+ * A normal 4xx response (except timeout/too-early) is an explicit rejection,
+ * so it is safe to release the reservation. A transport failure, timeout,
+ * 5xx, or malformed successful response is ambiguous: the provider may
+ * already have processed/billed the request, so keep the reservation for
+ * reconciliation rather than treating an unknown outcome as free.
+ */
+export function providerDefinitelyRejected(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = /\bHTTP\s+(\d{3})\b/i.exec(message);
+  if (!match) return false;
+  const status = Number(match[1]);
+  return status >= 400 && status < 500 && status !== 408 && status !== 425;
 }
 
 function usageFromResult(result: unknown): { inputTokens: number; outputTokens: number; model?: string } {
@@ -177,7 +193,10 @@ export function budgetedLlmProvider<T extends OcrLlmProvider>(provider: T): T {
       if (typeof method !== "function" || property === "constructor") return method;
       return async (...args: unknown[]) => {
         const tenantId = activeAiTenantId();
-        if (!tenantId || env().NODE_ENV === "test") return method.apply(target, args);
+        if (env().NODE_ENV === "test" && !tenantId) return method.apply(target, args);
+        if (!tenantId) {
+          throw new AppError("AI_CONTEXT_MISSING", "AI calls must execute inside withAiTenantContext", 500);
+        }
         const key = randomUUID();
         const methodName = String(property);
         // Model hint for the pre-call reservation row comes from the PRIMARY
@@ -186,16 +205,46 @@ export function budgetedLlmProvider<T extends OcrLlmProvider>(provider: T): T {
         const operation = methodName === "runAgent" ? "agent"
           : ["extractLedgerPage", "extractReceipt", "extractCheque"].includes(methodName) ? "vision" : "fast";
         const modelHint = primaryModelFor(safeConfigs(), operation) ?? "unknown-model";
-        await reserveGlobalAiBudget(ownerDb(), tenantId, key, modelHint);
+        const { budgetPeriod } = await reserveGlobalAiBudget(ownerDb(), tenantId, key, modelHint);
+        let result: unknown;
         try {
-          const result = await method.apply(target, args);
-          const usage = usageFromResult(result);
-          await settleGlobalAiBudget(ownerDb(), key, usage.inputTokens, usage.outputTokens, usage.model);
-          return result;
+          result = await method.apply(target, args);
         } catch (error) {
-          await releaseGlobalAiBudget(ownerDb(), key).catch(() => undefined);
+          if (providerDefinitelyRejected(error)) {
+            await releaseGlobalAiBudget(ownerDb(), key, budgetPeriod).catch((releaseError) => {
+              console.error("[ai-budget] failed to release a provider-rejected reservation", {
+                requestKey: key,
+                errorClass: releaseError instanceof Error ? releaseError.name : "UnknownError",
+              });
+            });
+          } else {
+            // A timeout/transport/5xx error does not prove the provider did
+            // not process the request. Retain the reserve for reconciliation.
+            console.error("[ai-budget] provider call outcome is unknown; reservation retained", {
+              requestKey: key,
+              errorClass: error instanceof Error ? error.name : "UnknownError",
+            });
+          }
           throw error;
         }
+        const usage = usageFromResult(result);
+        try {
+          await settleGlobalAiBudget(ownerDb(), key, usage.inputTokens, usage.outputTokens, usage.model, budgetPeriod);
+        } catch (error) {
+          // Provider usage has already happened. Releasing the reservation
+          // here would undercount real spend and allow more calls through the
+          // global cap. Keep it reserved for operator reconciliation.
+          console.error("[ai-budget] provider call completed but usage settlement failed; reservation retained", {
+            requestKey: key,
+            errorClass: error instanceof Error ? error.name : "UnknownError",
+          });
+          throw new AppError(
+            "AI_BUDGET_SETTLEMENT_FAILED",
+            "AI completed but its usage could not be recorded. The budget reservation is retained for reconciliation.",
+            503,
+          );
+        }
+        return result;
       };
     },
   }) as T;

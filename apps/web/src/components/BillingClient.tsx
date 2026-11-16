@@ -75,8 +75,8 @@ export function BillingClient({
       const out = await trpc.billing.changePlan.mutate({ planKey });
       setMsg(out.effectiveImmediately ? t("currentPlan") : t("quotaWarn"));
       await load();
-    } catch {
-      setMsg(null);
+    } catch (err: unknown) {
+      setMsg(err instanceof Error ? err.message : (isAr ? "تعذّر تغيير الباقة" : "Failed to change plan"));
     } finally {
       setBusy(false);
     }
@@ -192,7 +192,7 @@ export function BillingClient({
       badge: null,
       highlighted: false,
       featuresAr: [
-        "١٠٠ تذكير واتساب ورسائل شهرياً",
+        "١٠٠ تذكير واتساب شهرياً",
         "استيراد ملفات الإكسل وCSV",
         "متابعة أرصدة المدينين والتحصيل",
         "لوحة متابعة مالية أساسية",

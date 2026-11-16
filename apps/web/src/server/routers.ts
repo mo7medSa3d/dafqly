@@ -1,10 +1,12 @@
 import { z } from "zod";
-import { AppError, decodeCursor, encodeCursor, type InvoiceStatus } from "@tahseel/core";
+import { TRPCError } from "@trpc/server";
+import { decodeCursor, encodeCursor, type InvoiceStatus } from "@tahseel/core";
 import { decodeBase64Upload, MAX_UPLOAD_BASE64_CHARS } from "@tahseel/core/files-crypto";
 import { applyOptOut, resumeReminders } from "@tahseel/reminders";
 import { router, publicProcedure, protectedProcedure, tenantProcedure, ownerProcedure } from "./trpc";
+import { withAiTenantContext } from "./ai-budget";
 import { auth } from "./auth";
-import { createTenantInput, createTenantForUser, listTenantsForUser, getDashboardSummary, todayInTimezone, getTenantSettingsAndIntegrations, updateTenantSettings, updateTenantSettingsInput } from "./services";
+import { createTenantInput, createTenantForUser, listTenantsForUser, getDashboardSummary, getTenantSettingsAndIntegrations, updateTenantSettings, updateTenantSettingsInput } from "./services";
 import {
   createDebtor, createDebtorInput, updateDebtor, softDeleteDebtor, listDebtorsPage2,
   createInvoice, createInvoiceInput, listInvoicesPage, updateInvoice, transitionInvoice,
@@ -66,19 +68,6 @@ const encodePage = <T extends { nextCursor: { id: string } | null }>(page: T) =>
   nextCursor: page.nextCursor ? encodeCursor(page.nextCursor) : null,
 });
 
-async function tenantMeta(ctx: { ownerDb: Parameters<typeof listTenantsForUser>[0]; user: { id: string }; tenantId: string }): Promise<{ today: string; businessName: string }> {
-  const mine = await listTenantsForUser(ctx.ownerDb, ctx.user.id);
-  const found = mine.find((m) => m.tenantId === ctx.tenantId);
-  return {
-    today: todayInTimezone(found?.timezone ?? "Africa/Cairo"),
-    businessName: found?.businessNameAr ?? "DAFQLY",
-  };
-}
-
-async function tenantToday(ctx: { ownerDb: Parameters<typeof listTenantsForUser>[0]; user: { id: string }; tenantId: string }): Promise<string> {
-  return (await tenantMeta(ctx)).today;
-}
-
 export const appRouter = router({
   health: publicProcedure.query(() => ({ ok: true })),
   auth: {
@@ -102,7 +91,7 @@ export const appRouter = router({
   },
   dashboard: {
     summary: tenantProcedure.query(async ({ ctx }) => {
-      return getDashboardSummary(ctx.appDb, ctx.tenantId, await tenantToday(ctx));
+      return getDashboardSummary(ctx.appDb, ctx.tenantId, ctx.tenantMeta.today);
     }),
   },
   collections: {
@@ -113,28 +102,20 @@ export const appRouter = router({
       ...input, assignedToUserId: ctx.role === "owner" ? input.assignedToUserId : ctx.user.id,
     })),
     updateTask: tenantProcedure.input(updateTaskInput).mutation(async ({ ctx, input }) => updateCollectionTask(ctx.appDb, ctx.tenantId, ctx.user.id, ctx.role, input)),
-    promises: tenantProcedure.query(async ({ ctx }) => listPromisesToPay(ctx.appDb, ctx.tenantId, await tenantToday(ctx))),
-    createPromise: tenantProcedure.input(createPromiseInput).mutation(async ({ ctx, input }) => createMerchantPromise(ctx.appDb, ctx.tenantId, ctx.user.id, input, await tenantToday(ctx))),
-    decidePromise: tenantProcedure.input(z.object({ id: z.string().uuid(), status: z.enum(["accepted", "rejected", "broken", "cancelled"]) }))
-      .mutation(async ({ ctx, input }) => {
-        if (ctx.role !== "owner") {
-          throw new AppError("FORBIDDEN", "Only workspace owners can approve or change customer promise status", 403);
-        }
-        return decidePromiseToPay(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input.status, await tenantToday(ctx));
-      }),
-    summary: tenantProcedure.query(async ({ ctx }) => getCollectionWorkspaceSummary(ctx.appDb, ctx.tenantId, await tenantToday(ctx))),
+    promises: tenantProcedure.query(async ({ ctx }) => listPromisesToPay(ctx.appDb, ctx.tenantId, ctx.tenantMeta.today)),
+    createPromise: tenantProcedure.input(createPromiseInput).mutation(async ({ ctx, input }) => createMerchantPromise(ctx.appDb, ctx.tenantId, ctx.user.id, input, ctx.tenantMeta.today)),
+    decidePromise: ownerProcedure.input(z.object({ id: z.string().uuid(), status: z.enum(["accepted", "rejected", "broken", "cancelled"]) }))
+      .mutation(async ({ ctx, input }) => decidePromiseToPay(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input.status, ctx.tenantMeta.today)),
+    summary: tenantProcedure.query(async ({ ctx }) => getCollectionWorkspaceSummary(ctx.appDb, ctx.tenantId, ctx.tenantMeta.today)),
   },
   aiActions: {
     list: tenantProcedure.query(async ({ ctx }) => listAiActionApprovals(ctx.appDb, ctx.tenantId)),
-    decide: tenantProcedure.input(z.object({ id: z.string().uuid(), decision: z.enum(["approve", "reject"]) }))
-      .mutation(async ({ ctx, input }) => {
-        if (ctx.role !== "owner") throw new AppError("FORBIDDEN", "Only workspace owners can approve AI actions", 403);
-        return decideAiActionApproval(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input.decision);
-      }),
+    decide: ownerProcedure.input(z.object({ id: z.string().uuid(), decision: z.enum(["approve", "reject"]) }))
+      .mutation(async ({ ctx, input }) => decideAiActionApproval(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input.decision)),
   },
   debtors: {
     list: tenantProcedure
-      .input(z.object({ cursor: z.string().optional(), limit: z.number().optional(), search: z.string().optional() }).optional())
+      .input(z.object({ cursor: z.string().optional(), limit: z.number().int().min(1).max(200).optional(), search: z.string().optional() }).optional())
       .query(async ({ ctx, input }) => {
         return encodePage(await listDebtorsPage2(ctx.appDb, ctx.tenantId, { ...pageArgs(input), search: input?.search }));
       }),
@@ -144,7 +125,7 @@ export const appRouter = router({
     update: tenantProcedure
       .input(z.object({ id: z.string().uuid(), displayName: z.string().trim().min(1).max(160).optional(), notes: z.string().max(2000).nullable().optional(), riskFlag: z.boolean().optional() }))
       .mutation(async ({ ctx, input }) => updateDebtor(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input)),
-    remove: tenantProcedure
+    remove: ownerProcedure
       .input(z.object({ id: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => { await softDeleteDebtor(ctx.appDb, ctx.tenantId, ctx.user.id, input.id); return { ok: true }; }),
     toggleReminders: tenantProcedure
@@ -161,7 +142,7 @@ export const appRouter = router({
       }),
     get: tenantProcedure
       .input(z.object({ id: z.string().uuid() }))
-      .query(async ({ ctx, input }) => getDebtorDetail(ctx.appDb, ctx.tenantId, input.id, await tenantToday(ctx))),
+      .query(async ({ ctx, input }) => getDebtorDetail(ctx.appDb, ctx.tenantId, input.id, ctx.tenantMeta.today)),
     timeline: tenantProcedure
       .input(z.object({ id: z.string().uuid() }))
       .query(async ({ ctx, input }) => getDebtorTimeline(ctx.appDb, ctx.tenantId, input.id)),
@@ -169,7 +150,7 @@ export const appRouter = router({
   invoices: {
     list: tenantProcedure
       .input(z.object({
-        cursor: z.string().optional(), limit: z.number().optional(),
+        cursor: z.string().optional(), limit: z.number().int().min(1).max(200).optional(),
         debtorId: z.string().uuid().optional(),
         status: z.enum(["open", "partially_paid", "paid", "disputed", "written_off", "cancelled"]).optional(),
         overdue: z.boolean().optional(), agingBucket: z.string().optional(), search: z.string().optional(),
@@ -178,7 +159,7 @@ export const appRouter = router({
         ...pageArgs(input),
         debtorId: input?.debtorId, status: input?.status as InvoiceStatus | undefined,
         overdue: input?.overdue, agingBucket: input?.agingBucket, search: input?.search,
-      }, await tenantToday(ctx)))),
+      }, ctx.tenantMeta.today))),
     create: tenantProcedure
       .input(createInvoiceInput)
       .mutation(async ({ ctx, input }) => createInvoice(ctx.appDb, ctx.tenantId, ctx.user.id, input)),
@@ -187,10 +168,10 @@ export const appRouter = router({
         id: z.string().uuid(), amount: z.string().optional(), description: z.string().nullable().optional(),
         reference: z.string().nullable().optional(), dueOn: z.string().optional(), issuedOn: z.string().optional(),
       }))
-      .mutation(async ({ ctx, input }) => updateInvoice(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input, await tenantToday(ctx))),
+      .mutation(async ({ ctx, input }) => updateInvoice(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input, ctx.tenantMeta.today)),
     transition: tenantProcedure
       .input(z.object({ id: z.string().uuid(), to: z.enum(["open", "partially_paid", "paid", "disputed", "written_off", "cancelled"]) }))
-      .mutation(async ({ ctx, input }) => transitionInvoice(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input.to, await tenantToday(ctx))),
+      .mutation(async ({ ctx, input }) => transitionInvoice(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input.to, ctx.tenantMeta.today)),
     bulkTransition: tenantProcedure
       .input(z.object({ ids: z.array(z.string().uuid()).min(1).max(100), to: z.enum(["open", "partially_paid", "paid", "disputed", "written_off", "cancelled"]) }))
       .mutation(async ({ ctx, input }) => bulkTransitionInvoices(ctx.appDb, ctx.tenantId, ctx.user.id, input.ids, input.to)),
@@ -236,7 +217,7 @@ export const appRouter = router({
     list: tenantProcedure
       .input(z.object({ debtorId: z.string().uuid() }))
       .query(async ({ ctx, input }) => listStatementLinks(ctx.appDb, ctx.tenantId, input.debtorId, new Date())),
-    revoke: tenantProcedure
+    revoke: ownerProcedure
       .input(z.object({ linkId: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => { await revokeStatementLink(ctx.appDb, ctx.tenantId, ctx.user.id, input.linkId, new Date()); return { ok: true }; }),
     disputes: tenantProcedure
@@ -262,11 +243,11 @@ export const appRouter = router({
     list: tenantProcedure.query(async ({ ctx }) => listImportJobs(ctx.appDb, ctx.tenantId)),
     commit: tenantProcedure
       .input(z.object({ jobId: z.string().uuid() }))
-      .mutation(async ({ ctx, input }) => commitImport(ctx.appDb, ctx.tenantId, ctx.user.id, input.jobId, await tenantToday(ctx))),
-    undo: tenantProcedure
+      .mutation(async ({ ctx, input }) => commitImport(ctx.appDb, ctx.tenantId, ctx.user.id, input.jobId, ctx.tenantMeta.today)),
+    undo: ownerProcedure
       .input(z.object({ jobId: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => undoImport(ctx.appDb, ctx.tenantId, ctx.user.id, input.jobId)),
-    delete: tenantProcedure
+    delete: ownerProcedure
       .input(z.object({ jobId: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => deleteImportJob(ctx.appDb, ctx.tenantId, ctx.user.id, input.jobId)),
   },
@@ -277,7 +258,7 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => createLedgerJob(ctx.appDb, ctx.tenantId, ctx.user.id, aiDeps(), input)),
     runExtraction: tenantProcedure
       .input(z.object({ jobId: z.string().uuid() }))
-      .mutation(async ({ ctx, input }) => runLedgerExtraction(ctx.appDb, ctx.tenantId, ctx.user.id, aiDeps(), input.jobId)),
+      .mutation(async ({ ctx, input }) => withAiTenantContext(ctx.tenantId, () => runLedgerExtraction(ctx.appDb, ctx.tenantId, ctx.user.id, aiDeps(), input.jobId))),
     job: tenantProcedure
       .input(z.object({ jobId: z.string().uuid() }))
       .query(async ({ ctx, input }) => getLedgerJob(ctx.appDb, ctx.tenantId, input.jobId)),
@@ -287,8 +268,8 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => { await updateLedgerRow(ctx.appDb, ctx.tenantId, ctx.user.id, input); return { ok: true }; }),
     commit: tenantProcedure
       .input(z.object({ jobId: z.string().uuid() }))
-      .mutation(async ({ ctx, input }) => commitLedgerJob(ctx.appDb, ctx.tenantId, ctx.user.id, input.jobId, await tenantToday(ctx))),
-    delete: tenantProcedure
+      .mutation(async ({ ctx, input }) => commitLedgerJob(ctx.appDb, ctx.tenantId, ctx.user.id, input.jobId, ctx.tenantMeta.today)),
+    delete: ownerProcedure
       .input(z.object({ jobId: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => deleteLedgerJob(ctx.appDb, ctx.tenantId, ctx.user.id, input.jobId)),
   },
@@ -301,7 +282,7 @@ export const appRouter = router({
         mime: z.string().trim().min(3).max(80),
         contentBase64: z.string().min(4).max(MAX_UPLOAD_BASE64_CHARS),
       }))
-      .mutation(async ({ ctx, input }) => {
+      .mutation(async ({ ctx, input }) => withAiTenantContext(ctx.tenantId, () => {
         const ai = aiDeps();
         const deps = engineDeps();
         return processReceiptImage(ctx.appDb, ctx.tenantId, ctx.user.id, {
@@ -313,7 +294,7 @@ export const appRouter = router({
           bytes: decodeBase64Upload(input.contentBase64),
           mime: input.mime,
         });
-      }),
+      })),
     listClaims: tenantProcedure.query(async ({ ctx }) => listReceiptClaims(ctx.appDb, ctx.tenantId)),
   },
   replies: {
@@ -338,10 +319,15 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => listCheques(ctx.appDb, ctx.tenantId, { status: input?.status })),
     transition: tenantProcedure
       .input(z.object({ id: z.string().uuid(), to: z.enum(["deposited", "cleared", "bounced", "returned", "cancelled"]) }))
-      .mutation(async ({ ctx, input }) => transitionCheque(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input.to, await tenantToday(ctx))),
+      .mutation(async ({ ctx, input }) => {
+        if ((input.to === "cleared" || input.to === "bounced" || input.to === "returned") && ctx.role !== "owner") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Only the workspace owner can settle or bounce cheques" });
+        }
+        return transitionCheque(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input.to, ctx.tenantMeta.today);
+      }),
     calendar: tenantProcedure.query(async ({ ctx }) => getChequeCalendar(ctx.appDb, ctx.tenantId)),
     runAlerts: tenantProcedure
-      .mutation(async ({ ctx }) => runChequeAlerts(ctx.appDb, ctx.tenantId, await tenantToday(ctx))),
+      .mutation(async ({ ctx }) => runChequeAlerts(ctx.appDb, ctx.tenantId, ctx.tenantMeta.today)),
     alerts: tenantProcedure.query(async ({ ctx }) => listChequeAlerts(ctx.appDb, ctx.tenantId)),
     extractPhoto: tenantProcedure
       .input(z.object({
@@ -349,17 +335,17 @@ export const appRouter = router({
         mime: z.string().trim().min(3).max(80),
         contentBase64: z.string().min(4).max(MAX_UPLOAD_BASE64_CHARS),
       }))
-      .mutation(async ({ ctx, input }) => {
+      .mutation(async ({ ctx, input }) => withAiTenantContext(ctx.tenantId, () => {
         const ai = aiDeps();
         return extractChequePhoto(ctx.appDb, ctx.tenantId, ctx.user.id, { llm: ai.llm, storage: ai.storage }, {
           bytes: decodeBase64Upload(input.contentBase64), mime: input.mime,
         });
-      }),
+      })),
   },
   reports: {
     // F11/F12: KPIs + reminder performance, forecast, CSV exports.
     kpis: tenantProcedure.query(async ({ ctx }) => {
-      const k = await getKpis(ctx.appDb, ctx.tenantId, await tenantToday(ctx));
+      const k = await getKpis(ctx.appDb, ctx.tenantId, ctx.tenantMeta.today);
       return {
         ...k,
         totalOutstandingMinor: String(k.totalOutstandingMinor),
@@ -371,7 +357,7 @@ export const appRouter = router({
       };
     }),
     forecast: tenantProcedure.query(async ({ ctx }) => {
-      const f = await getForecast(ctx.appDb, ctx.tenantId, await tenantToday(ctx));
+      const f = await getForecast(ctx.appDb, ctx.tenantId, ctx.tenantMeta.today);
       return {
         ...f,
         weeks: f.weeks.map((w) => ({ ...w, expectedMinor: String(w.expectedMinor), conservativeMinor: String(w.conservativeMinor) })),
@@ -410,7 +396,7 @@ export const appRouter = router({
     // §8 (M6): export everything / delete everything. Owner-only enforced
     // in the service for delete (ctx.role comes from the caller's membership).
     export: ownerProcedure.query(async ({ ctx }) => exportTenantData(ctx.appDb, ctx.tenantId)),
-    deleteAll: tenantProcedure
+    deleteAll: ownerProcedure
       .input(z.object({ confirmation: z.string().min(1).max(200) }))
       .mutation(async ({ ctx, input }) => deleteTenantData(ctx.ownerDb, ctx.tenantId, { userId: ctx.user.id, role: ctx.role }, input.confirmation)),
   },
@@ -432,29 +418,29 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => mapWorkspaceHeaders(ctx.appDb, ctx.tenantId, ctx.user.id, input)),
     analyzeReceipt: tenantProcedure
       .input(analyzeReceiptInput)
-      .mutation(async ({ ctx, input }) => analyzeWorkspaceReceipt(ctx.appDb, ctx.tenantId, ctx.user.id, input)),
+      .mutation(async ({ ctx, input }) => withAiTenantContext(ctx.tenantId, () => analyzeWorkspaceReceipt(ctx.appDb, ctx.tenantId, ctx.user.id, input))),
     generateNotification: tenantProcedure
       .input(generateNotificationInput)
-      .mutation(async ({ ctx, input }) => {
-        const { businessName } = await tenantMeta(ctx);
+      .mutation(async ({ ctx, input }) => withAiTenantContext(ctx.tenantId, () => {
+        const { businessName } = ctx.tenantMeta;
         return generateWorkspaceNotification(ctx.appDb, ctx.tenantId, ctx.user.id, businessName, input);
-      }),
+      })),
     proposeInstallmentPlan: tenantProcedure
       .input(proposeInstallmentInput)
       .mutation(async ({ ctx, input }) => {
-        const { today, businessName } = await tenantMeta(ctx);
+        const { today, businessName } = ctx.tenantMeta;
         return proposeWorkspaceInstallmentPlan(ctx.appDb, ctx.tenantId, ctx.user.id, businessName, today, input);
       }),
     suggestInboxReply: tenantProcedure
       .input(suggestInboxReplyInput)
-      .mutation(async ({ ctx, input }) => {
-        const { businessName } = await tenantMeta(ctx);
+      .mutation(async ({ ctx, input }) => withAiTenantContext(ctx.tenantId, () => {
+        const { businessName } = ctx.tenantMeta;
         return suggestWorkspaceInboxReply(ctx.appDb, ctx.tenantId, ctx.user.id, businessName, input);
-      }),
+      })),
     dispatchSmartReminder: tenantProcedure
       .input(dispatchSmartReminderInput)
       .mutation(async ({ ctx, input }) => {
-        const { today, businessName } = await tenantMeta(ctx);
+        const { today, businessName } = ctx.tenantMeta;
         return dispatchSmartReminderForDebtor(ctx.appDb, ctx.tenantId, ctx.user.id, businessName, today, input);
       }),
     optimizeReminders: tenantProcedure
@@ -468,7 +454,7 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => listNotifications(ctx.appDb, ctx.tenantId, input ?? {})),
     sync: tenantProcedure
       .mutation(async ({ ctx }) => {
-        const { today, businessName } = await tenantMeta(ctx);
+        const { today, businessName } = ctx.tenantMeta;
         const intel = await getWorkspaceIntelligence(ctx.appDb, ctx.tenantId, businessName, today, { syncNotifications: true });
         return { ok: true, unreadCount: (await listNotifications(ctx.appDb, ctx.tenantId)).unreadCount, headlineAr: intel.headlineAr };
       }),
@@ -485,14 +471,14 @@ export const appRouter = router({
     overview: tenantProcedure
       .input(z.object({ syncNotifications: z.boolean().optional() }).optional())
       .query(async ({ ctx, input }) => {
-        const { today, businessName } = await tenantMeta(ctx);
+        const { today, businessName } = ctx.tenantMeta;
         return getWorkspaceIntelligence(ctx.appDb, ctx.tenantId, businessName, today, {
           syncNotifications: input?.syncNotifications ?? false,
         });
       }),
     forDebtor: tenantProcedure
       .input(z.object({ debtorId: z.string().uuid() }))
-      .query(async ({ ctx, input }) => getDebtorIntelligence(ctx.appDb, ctx.tenantId, input.debtorId, await tenantToday(ctx))),
+      .query(async ({ ctx, input }) => getDebtorIntelligence(ctx.appDb, ctx.tenantId, input.debtorId, ctx.tenantMeta.today)),
     listCopilotConversations: tenantProcedure
       .query(async ({ ctx }) => listCopilotConversations(ctx.appDb, ctx.tenantId, ctx.user.id)),
     getCopilotConversation: tenantProcedure
@@ -508,10 +494,10 @@ export const appRouter = router({
       .mutation(async ({ ctx }) => clearCopilotConversations(ctx.appDb, ctx.tenantId, ctx.user.id)),
     askCopilot: tenantProcedure
       .input(copilotQueryInput)
-      .mutation(async ({ ctx, input }) => {
-        const { today, businessName } = await tenantMeta(ctx);
+      .mutation(async ({ ctx, input }) => withAiTenantContext(ctx.tenantId, () => {
+        const { today, businessName } = ctx.tenantMeta;
         return askWorkspaceCopilot(ctx.appDb, ctx.tenantId, ctx.user.id, businessName, today, input);
-      }),
+      })),
   },
 });
 export type AppRouter = typeof appRouter;

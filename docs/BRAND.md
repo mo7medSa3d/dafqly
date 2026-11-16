@@ -10,7 +10,7 @@
 2. Wire tokens: import `tokens/tokens.css` once in the web app's global stylesheet; use `tokens/tailwind.preset.ts` (Tailwind v3) or the same variables via `@theme` (Tailwind v4). Match the installed Tailwind version. No hardcoded hex values anywhere in app code: use tokens only (enforce with a lint rule or a grep test in CI).
 3. Place assets as in Section 9.
 4. Build the text-dependent assets (outlined wordmark, OG image, splash screens, email header). These need the font files from the human (Section 2), so request them early.
-5. Run the acceptance checks in Section 10 and record the evidence in `docs/PROGRESS.md`.
+5. Run the acceptance checks in Section 10 and record the evidence in `docs/DECISIONS.md`.
 
 Kit contents:
 

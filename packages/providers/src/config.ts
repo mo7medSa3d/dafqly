@@ -16,6 +16,7 @@ import type { LlmProviderConfig } from "./registry";
 export interface AiEnvInput {
   AI_PROVIDER: string;
   AI_API_KEY?: string;
+  OPENROUTER_API_KEY?: string;
   AI_BASE_URL?: string;
   AI_PROVIDERS_JSON?: string;
   AI_MODEL?: string;
@@ -91,7 +92,8 @@ export function resolveLlmProviderConfigs(e: AiEnvInput): LlmProviderConfig[] {
   if (!BUILT_IN.has(kind)) {
     const model = clean(e.AI_MODEL_AGENT);
     if (!model) throw new Error(`AI_MODEL_AGENT is required when AI_PROVIDER="${e.AI_PROVIDER}" (no default model is assumed for a generic provider)`);
-    return [{ name: kind, kind, apiKey: clean(e.AI_API_KEY), baseUrl: clean(e.AI_BASE_URL), model,
+    const apiKey = clean(e.AI_API_KEY) ?? (kind === "openrouter" ? clean(e.OPENROUTER_API_KEY) : undefined);
+    return [{ name: kind, kind, apiKey, baseUrl: clean(e.AI_BASE_URL), model,
       modelFast: clean(e.AI_MODEL_FAST), modelVision: clean(e.AI_MODEL_VISION) }];
   }
 

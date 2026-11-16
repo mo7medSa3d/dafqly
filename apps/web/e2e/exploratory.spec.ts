@@ -56,9 +56,12 @@ test("rich dashboard (ar, desktop): KPIs, aging, forecast, funnel full series", 
     await expect(page.getByTestId("kpi-collected")).toContainText("34,650.00");
     await expect(page.getByTestId("kpi-refunded")).toContainText("3,500.00");
     await expect(page.getByTestId("kpi-debtors")).toContainText("12");
-    // Multi-currency lines: KWD + JPY invoices are separate, never summed.
-    await expect(page.getByTestId("kpi-other-currencies")).toContainText("KWD");
-    await expect(page.getByTestId("kpi-other-currencies")).toContainText("JPY");
+    // No multi-currency line on this branch's dashboard (the
+    // kpi-other-currencies element was reverted with the AI briefing at
+    // the owner's request — the dashboard shows tenant-currency KPIs
+    // only). The KWD + JPY invoices are still separate, never summed:
+    // the invoices test below proves it (overdue filter counts 13: the
+    // 12 overdue EGP invoices + the KWD invoice 022).
     // Reminder funnel, full series (ar-EG renders Eastern Arabic digits).
     await expect(page.getByTestId("perf-sent")).toContainText(/12|١٢/);
     await expect(page.getByTestId("perf-delivered")).toContainText(/7|٧/);
@@ -220,12 +223,18 @@ test("tasks + promises: seeded rows, create task, record promise", async ({ brow
     await richLogin(page, "ar");
     await page.goto("/ar/tasks");
     await expect(page.getByText("تصعيد: عميل متأخر 55 يوماً")).toBeVisible();
-    // Create a task for السلام (d3): invalid (empty title) stays disabled.
-    await page.getByPlaceholder("مثال: متابعة وعد السداد").fill("");
-    await expect(page.getByRole("button", { name: "إضافة إلى قائمة العمل" })).toBeDisabled();
-    await page.getByPlaceholder("مثال: متابعة وعد السداد").fill("متابعة هاتفية — اختبار استكشافي");
+    // Create a task for السلام (d3) via the ticket panel ("إنشاء تذكرة
+    // وجدولة متابعة"). NOTE 2026-11-15: the Quiet Ledger quick-add form
+    // this test used ("مثال: متابعة وعد السداد" / "إضافة إلى قائمة العمل")
+    // does not exist in this branch — the ticket panel is the task-creation
+    // form here, with the same behavior (empty title keeps submit disabled;
+    // created task appears in the work list; Start/Complete moves it out of
+    // the active list). The promises half of this test is unchanged.
+    await page.getByPlaceholder("مثال: متابعة موعد سداد الفاتورة").fill("");
+    await expect(page.getByRole("button", { name: "إضافة وجدولة التذكرة" })).toBeDisabled();
+    await page.getByPlaceholder("مثال: متابعة موعد سداد الفاتورة").fill("متابعة هاتفية — اختبار استكشافي");
     await page.locator("select").first().selectOption({ label: "شركة السلام للحديد والصلب" });
-    await page.getByRole("button", { name: "إضافة إلى قائمة العمل" }).click();
+    await page.getByRole("button", { name: "إضافة وجدولة التذكرة" }).click();
     await expect(page.getByText("متابعة هاتفية — اختبار استكشافي")).toBeVisible();
     // Start it, then complete it — it leaves the active list.
     const taskRow = page.locator("article", { hasText: "متابعة هاتفية — اختبار استكشافي" });
@@ -306,6 +315,11 @@ test("shell: palette, copilot, bell, theme + locale toggles", async ({ browser }
   const { ctx, page } = await desktopPage(browser, "ar");
   try {
     await richLogin(page, "ar");
+    // The login navigation resolves while the [locale]/loading.tsx shell
+    // is showing; the Ctrl+K listener lives in AppShell, so wait for the
+    // shell to be replaced before pressing it (a keypress during the
+    // shell phase is lost and the dialog never appears).
+    await page.getByTestId("theme-toggle").waitFor({ state: "visible", timeout: 10000 });
     // Command palette (Ctrl+K).
     await page.keyboard.press("Control+k");
     await expect(page.getByRole("dialog")).toBeVisible();

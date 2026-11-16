@@ -208,7 +208,35 @@ html.switching-locale *::after {
 html { scroll-behavior: smooth; }
 @view-transition { navigation: auto; }
 ::selection { background: var(--foreground); color: var(--background); }
-:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; transition: outline-offset .15s var(--ease-spring); }
+
+/* Focus management: suppress harsh rectangular outlines on form inputs and fields */
+input, textarea, select {
+  outline: none;
+}
+input:focus,
+input:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+select:focus,
+select:focus-visible {
+  outline: none !important;
+}
+
+:focus-visible {
+  outline: none;
+}
+button:focus-visible,
+a[href]:focus-visible,
+[role="button"]:focus-visible,
+summary:focus-visible,
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible,
+[tabindex]:not([tabindex="-1"]):not(input):not(textarea):not(select):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: inherit;
+  transition: outline-offset .15s var(--ease-spring);
+}
 button:not(:disabled), a[href] { transition: transform .2s var(--ease-spring), background-color .2s, color .2s, border-color .2s, box-shadow .25s; }
 button:not(:disabled):active { transform: scale(.97); }
 .skeleton { border-radius: .6rem; background: linear-gradient(110deg, var(--muted) 30%, color-mix(in srgb, var(--card) 70%, var(--muted)) 50%, var(--muted) 70%); background-size: 200% 100%; animation: ai-sheen 1.4s linear infinite; }
@@ -248,3 +276,6 @@ thead th { position: sticky; top: 0; background: var(--muted); color: var(--mute
 tbody tr { transition: background-color var(--dur-fast) var(--ease); }
 tbody tr:hover { background: color-mix(in srgb, var(--foreground) 4%, transparent); }
 @media (forced-colors: active) { .panel-shadow { border: 1px solid CanvasText; } }
+
+/* Icons: lighter, modern outline weight (Lucide default is 2) */
+svg.lucide { stroke-width: 1.75; }

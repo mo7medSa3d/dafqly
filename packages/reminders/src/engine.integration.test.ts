@@ -199,7 +199,7 @@ d("reminder engine (F4)", () => {
     }
     await dispatchDue(deps(), new Date("2026-11-20T08:30:00Z"), { tenantId });
     expect(whatsapp.sent).toHaveLength(1);
-    expect(whatsapp.sent[0]?.variables.amount).toBe("3,500.00");
+    expect(whatsapp.sent[0]?.variables.amount).toBe(`${formatEgp(350_000n)} EGP`);
     const rows = await tenantReminders(tenantId);
     const sent = rows.filter((r) => r.status === "sent");
     // d-3 stragglers + d0 steps for all three invoices merge into the one message.
@@ -348,7 +348,7 @@ d("reminder engine (F4)", () => {
 
   it("consolidates reminder balances without mixing currencies", async () => {
     const tenantId = await makeTenant();
-    const debtorId = await makeDebtor(tenantId, "+20105558888");
+    const debtorId = await makeDebtor(tenantId, "+201055588888");
     const egpInvoiceId = await makeInvoice(tenantId, debtorId, "2026-11-20", 100_000n, "EGP");
     const usdInvoiceId = await makeInvoice(tenantId, debtorId, "2026-11-20", 25_000n, "USD");
     const now = new Date("2026-11-10T00:00:00Z");
@@ -413,7 +413,7 @@ d("reminder engine (F4)", () => {
     whatsapp.sent.length = 0;
     await sendGroup(deps(), tenantId, group, new Date("2026-11-17T08:30:00Z"), summary);
     expect(whatsapp.sent).toHaveLength(1);
-    expect(whatsapp.sent[0]!.variables.amount).toBe(formatEgp(60_000n));
+    expect(whatsapp.sent[0]!.variables.amount).toBe(`${formatEgp(60_000n)} EGP`);
     expect(summary.groupsSent).toBe(1);
     const [after] = await owner.select().from(reminders).where(eq(reminders.id, rem!.id));
     expect(after?.status).toBe("sent");

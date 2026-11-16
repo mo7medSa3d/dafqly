@@ -8,7 +8,7 @@ import { useTranslations } from "next-intl";
 import { Bank, CalendarCheck, CaretRight, CloudArrowUp, Lightning, MagnifyingGlass, Plus, Receipt, Scan, SlidersHorizontal, Sparkle, UsersThree, X } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { useCurrency } from "./CurrencyContext";
-import { openAiCopilot } from "./AiCopilotDrawer";
+import { openAiCopilot } from "./copilot-events";
 
 interface SearchDebtorResult {
   id: string;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseEnv } from "@tahseel/core";
-import { estimateAiCostUsdMicros } from "./ai-budget";
+import { estimateAiCostUsdMicros, providerDefinitelyRejected } from "./ai-budget";
 
 describe("global AI USD metering", () => {
   it("converts official per-million-token rates to integer micro-USD", () => {
@@ -36,6 +36,14 @@ describe("global AI USD metering", () => {
   it("rounds fractional micro-USD upward and never returns a negative cost", () => {
     expect(estimateAiCostUsdMicros("gemini-3.8-flash", 1, 1)).toBe(5n);
     expect(estimateAiCostUsdMicros("gemini-3.8-flash", -10, -20)).toBe(0n);
+  });
+
+  it("releases reservations only for definitive provider rejections", () => {
+    expect(providerDefinitelyRejected(new Error("Gemini API error: HTTP 401 invalid key"))).toBe(true);
+    expect(providerDefinitelyRejected(new Error("LLM API error: HTTP 429 rate limited"))).toBe(true);
+    expect(providerDefinitelyRejected(new Error("Anthropic API error: HTTP 408 request timeout"))).toBe(false);
+    expect(providerDefinitelyRejected(new Error("Gemini API error: HTTP 503 upstream unavailable"))).toBe(false);
+    expect(providerDefinitelyRejected(new TypeError("fetch failed"))).toBe(false);
   });
 
   it("uses a deliberately conservative fallback for unknown model ids", () => {

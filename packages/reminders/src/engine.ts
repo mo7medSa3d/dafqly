@@ -11,14 +11,17 @@ import {
   DEFAULT_WEEKLY_CAP, MAX_SEND_ATTEMPTS, type PlanPolicy,
 } from "@tahseel/core";
 import { generateStatementToken } from "@tahseel/core/payments-crypto";
-import { ProviderError, type TextCapableProvider } from "@tahseel/providers";
+import {
+  DryRunMessagingProvider, NotConfiguredMessagingProvider, NotConfiguredSmsProvider,
+  ProviderError, WhatsAppCloudProvider, type TextCapableProvider,
+} from "@tahseel/providers";
 import { TEMPLATES, renderTemplate, type TemplateKey } from "@tahseel/templates";
 
 /**
  * Reminder engine (BUILD_PLAN F4, ADR-016): planner persistence, dispatcher
- * guards/grouping/caps, sender with retries and SMS fallback. Every function
- * takes an injected `now` and providers, so the acceptance suite runs it on
- * the fake clock against the fake provider with zero network.
+ * guards/grouping/caps, sender with retries. Every function takes an
+ * injected `now` and providers, so the acceptance suite runs it on the
+ * fake clock against the fake provider with zero network.
  *
  * Data access: `app` is the RLS-bound connection (all tenant work happens
  * inside withTenant), `owner` is used only to enumerate tenants with due
@@ -55,6 +58,44 @@ export interface EngineDeps {
   quotaExceeded?: (tenantId: string) => Promise<boolean>;
   onInboundReply?: (info: { tenantId: string; debtorId: string; messageId: string; text: string }) => Promise<void>;
   onInboundImage?: (info: { tenantId: string; debtorId: string; messageId: string; mediaId: string | null; mediaMime: string | null }) => Promise<void>;
+}
+
+export interface CreateEngineDepsOptions {
+  app: Db;
+  owner: Db;
+  dryRunMessaging: boolean;
+  whatsappApiVersion?: string;
+  whatsappPhoneNumberId?: string;
+  whatsappAccessToken?: string;
+  appUrl?: string;
+  globalPaused?: boolean;
+  providerHealthy?: boolean;
+}
+
+/**
+ * Shared EngineDeps factory for `apps/web` and `apps/worker` so provider,
+ * dry-run wrapping, and quota wiring live in one place.
+ */
+export function createEngineDeps(options: CreateEngineDepsOptions): EngineDeps {
+  const realWhatsapp: TextCapableProvider = options.whatsappAccessToken
+    ? new WhatsAppCloudProvider({
+        apiVersion: options.whatsappApiVersion ?? "",
+        phoneNumberId: options.whatsappPhoneNumberId ?? "",
+        accessToken: options.whatsappAccessToken,
+      })
+    : new NotConfiguredMessagingProvider("whatsapp");
+  const whatsapp = options.dryRunMessaging ? new DryRunMessagingProvider(realWhatsapp) : realWhatsapp;
+  const smsBase: TextCapableProvider = new NotConfiguredSmsProvider();
+  const sms = options.dryRunMessaging ? new DryRunMessagingProvider(smsBase) : smsBase;
+  return {
+    app: options.app,
+    owner: options.owner,
+    providers: { whatsapp, sms },
+    appUrl: options.appUrl,
+    globalPaused: options.globalPaused,
+    providerHealthy: options.providerHealthy,
+    quotaExceeded: (tenantId: string) => quotaExceededFromDb(options.app, tenantId, new Date()),
+  };
 }
 
 /**
@@ -269,17 +310,17 @@ export async function dispatchDue(deps: EngineDeps, now: Date, opts: { tenantId?
  * already-paused tenant is left alone.
  */
 async function applyQualityGuard(deps: EngineDeps, tenantId: string, now: Date): Promise<void> {
-  const [tenant] = await deps.owner.select().from(tenants).where(eq(tenants.id, tenantId));
-  if (!tenant || tenant.settings.sendingPaused) return;
-  const recent = await deps.owner.select().from(messages)
-    .where(and(eq(messages.tenantId, tenantId), eq(messages.direction, "out")))
-    .orderBy(desc(messages.createdAt)).limit(100);
-  const settled = recent.filter((m) => m.status === "delivered" || m.status === "read" || m.status === "failed");
-  const failed = settled.filter((m) => m.status === "failed");
-  const blocked = failed.filter((m) => m.statusErrorCode === 131030 || m.statusErrorCode === 131031);
-  const verdict = evaluateQualityGuard({ sent: settled.length, failed: failed.length, blocked: blocked.length });
-  if (!verdict.pause) return;
   await withTenant(deps.app, tenantId, async (tx) => {
+    const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId)).for("update");
+    if (!tenant || tenant.settings.sendingPaused) return;
+    const recent = await tx.select().from(messages)
+      .where(and(eq(messages.tenantId, tenantId), eq(messages.direction, "out")))
+      .orderBy(desc(messages.createdAt)).limit(100);
+    const settled = recent.filter((m) => m.status === "delivered" || m.status === "read" || m.status === "failed");
+    const failed = settled.filter((m) => m.status === "failed");
+    const blocked = failed.filter((m) => m.statusErrorCode === 131030 || m.statusErrorCode === 131031);
+    const verdict = evaluateQualityGuard({ sent: settled.length, failed: failed.length, blocked: blocked.length });
+    if (!verdict.pause) return;
     await tx.update(tenants).set({
       settings: { ...tenant.settings, sendingPaused: true, qualityPausedReason: verdict.reason ?? "quality guard" },
       updatedAt: now,
@@ -363,17 +404,6 @@ async function prepareTenant(deps: EngineDeps, tenantId: string, now: Date, limi
       try { normalized = normalizeEgPhone(debtor.phoneE164); } catch { normalized = null; }
       if (!normalized) { await set({ status: "skipped", skipReason: "phone_invalid" }); bump(summary.skipped, "phone_invalid"); continue; }
       if (row.channel === "whatsapp" && !normalized.whatsappCapable) {
-        if (tenant.settings.smsFallbackEnabled) {
-          // Convert: this WhatsApp step is replaced by an SMS step for the same invoice/step.
-          await set({ status: "skipped", skipReason: "phone_not_whatsapp" });
-          bump(summary.skipped, "phone_not_whatsapp");
-          await tx.insert(reminders).values({
-            tenantId, invoiceId: row.invoice_id, debtorId: row.debtor_id, stepKey: row.step_key,
-            channel: "sms", templateKey: row.template_key, dueAt: now,
-            idempotencyKey: `${row.invoice_id}:${row.step_key}:sms`,
-          }).onConflictDoNothing();
-          continue;
-        }
         await set({ status: "skipped", skipReason: "phone_not_whatsapp" }); bump(summary.skipped, "phone_not_whatsapp"); continue;
       }
       if (inQuiet) {
@@ -505,9 +535,18 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
   // calling a provider outside a transaction: a payment that starts after
   // this check commits, during the provider call itself.
   const live = await withTenant(deps.app, tenantId, async (tx) => {
+    const [tenantRow] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+    const [debtorRow] = await tx.select({ optedOutAt: debtors.optedOutAt }).from(debtors).where(eq(debtors.id, group.debtorId)).for("update");
     const rows = await tx.select().from(invoices)
       .where(inArray(invoices.id, group.invoiceIds))
       .orderBy(asc(invoices.dueOn), asc(invoices.id)).for("update");
+    if (tenantRow?.settings?.sendingPaused || debtorRow?.optedOutAt) {
+      const cancelReason = tenantRow?.settings?.sendingPaused ? "sending_paused" : "opted_out";
+      await tx.update(reminders).set({ status: "cancelled", skipReason: cancelReason, updatedAt: now })
+        .where(inArray(reminders.id, group.reminderIds));
+      bump(summary.skipped, cancelReason);
+      return null;
+    }
     const open = rows.filter((i) => i.status === "open" || i.status === "partially_paid");
     const openIds = new Set(open.map((i) => i.id));
     const remRows = await tx.select({ id: reminders.id, invoiceId: reminders.invoiceId })
@@ -574,9 +613,8 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
   }
 
   await withTenant(deps.app, tenantId, async (tx) => {
-    const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     if (providerMessageId) {
-      const [msg] = await tx.insert(messages).values({
+      await tx.insert(messages).values({
         tenantId, debtorId: group.debtorId, invoiceId: live.invoiceIds[0] ?? null,
         direction: "out", channel: group.channel, provider: group.channel === "sms" ? "sms" : "whatsapp",
         providerMessageId, templateKey: group.templateKey,
@@ -585,8 +623,7 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
         // The engine clock is injected (fake clock in tests): message rows
         // carry engine time, not wall time, so caps and timelines agree.
         createdAt: now, updatedAt: now,
-      }).returning();
-      void msg;
+      });
       await tx.insert(usageLedger).values({
         tenantId, kind: group.channel === "sms" ? "sms" : "whatsapp_utility",
         units: 1, costEstimateMinor: 0n, // rates live in config (ADR-015), never constants
@@ -627,18 +664,6 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
     summary.failed += live.reminderIds.length;
     if (classified.kind === "not_reachable") {
       await tx.update(debtors).set({ whatsappStatus: "unreachable", updatedAt: now }).where(eq(debtors.id, group.debtorId));
-      if (group.channel === "whatsapp" && tenant?.settings.smsFallbackEnabled) {
-        // SMS fallback (§7-F3): a sibling SMS step per invoice, due now.
-        for (const rid of live.reminderIds) {
-          const [r] = await tx.select().from(reminders).where(eq(reminders.id, rid));
-          if (!r) continue;
-          await tx.insert(reminders).values({
-            tenantId, invoiceId: r.invoiceId, debtorId: r.debtorId, stepKey: r.stepKey,
-            channel: "sms", templateKey: r.templateKey, dueAt: now,
-            idempotencyKey: `${r.invoiceId}:${r.stepKey}:sms`,
-          }).onConflictDoNothing();
-        }
-      }
     }
   });
 }
@@ -658,11 +683,10 @@ export async function applyOptOut(deps: EngineDeps, tenantId: string, debtorId: 
     if (!debtor.optedOutAt) {
       await tx.update(debtors).set({ optedOutAt: now, updatedAt: now }).where(eq(debtors.id, debtorId));
     }
-    const future = await tx.select().from(reminders)
-      .where(and(eq(reminders.debtorId, debtorId), inArray(reminders.status, ["scheduled", "queued"])));
-    for (const r of future) {
-      await tx.update(reminders).set({ status: "cancelled", skipReason: "opted_out", updatedAt: now }).where(eq(reminders.id, r.id));
-    }
+    const future = await tx.update(reminders)
+      .set({ status: "cancelled", skipReason: "opted_out", updatedAt: now })
+      .where(and(eq(reminders.debtorId, debtorId), inArray(reminders.status, ["scheduled", "queued"])))
+      .returning({ id: reminders.id });
     if (future.length > 0) {
       await audit(tx, tenantId, "debtor.opted_out", "debtor", debtorId, { source, cancelledReminders: future.length });
     }

@@ -1,49 +1,147 @@
 import {
-  createLlmProvider, DryRunMessagingProvider, FailoverLlmProvider, FakeLlmProvider, FakeStorageProvider,
-  hasUsableLlmConfig, NotConfiguredMessagingProvider, NotConfiguredSmsProvider, resolveLlmProviderConfigs,
-  S3CompatibleStorageProvider, WhatsAppCloudProvider,
-  type LlmProviderConfig, type OcrLlmProvider, type StorageProvider, type TextCapableProvider,
+  createLlmProvider, FailoverLlmProvider, FakeLlmProvider, FakeStorageProvider,
+  hasUsableLlmConfig, resolveLlmProviderConfigs, S3CompatibleStorageProvider,
+  type LlmProviderConfig, type OcrLlmProvider, type StorageProvider,
 } from "@tahseel/providers";
-import { planForInvoice, planForTenant, quotaExceededFromDb, type EngineDeps } from "@tahseel/reminders";
+import {
+  createEngineDeps, planForInvoice, planForTenant, type EngineDeps,
+} from "@tahseel/reminders";
 import { appDb, ownerDb } from "./db";
 import { env } from "./env";
 import { budgetedLlmProvider } from "./ai-budget";
 
 /**
- * Engine wiring for the web process (ADR-016): the same engine the worker
- * runs. Providers follow the environment — the real WhatsApp adapter only
- * when a token is configured, and EVERYTHING is wrapped in dry-run while
- * DRY_RUN_MESSAGING=true (the safe default), so a web request can never
- * send a real message in dev/CI.
+ * Engine wiring for the web process (ADR-016): uses the shared
+ * createEngineDeps factory from @tahseel/reminders. Cached in non-test
+ * environments; in test mode, rebuilds per call so env/fake flag flips
+ * take effect immediately.
  */
+let engineSingleton: EngineDeps | null = null;
 export function engineDeps(): EngineDeps {
   const e = env();
-  const realWhatsapp: TextCapableProvider = e.WHATSAPP_ACCESS_TOKEN
-    ? new WhatsAppCloudProvider({
-        apiVersion: e.WHATSAPP_API_VERSION, phoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID,
-        accessToken: e.WHATSAPP_ACCESS_TOKEN,
-      })
-    : new NotConfiguredMessagingProvider("whatsapp");
-  const whatsapp = e.DRY_RUN_MESSAGING ? new DryRunMessagingProvider(realWhatsapp) : realWhatsapp;
-  const smsBase: TextCapableProvider = new NotConfiguredSmsProvider(); // SMS vendor is deliberately not guessed; configure a verified adapter first.
-  const sms = e.DRY_RUN_MESSAGING ? new DryRunMessagingProvider(smsBase) : smsBase;
-  const app = appDb();
-  return {
-    app, owner: ownerDb(), providers: { whatsapp, sms }, appUrl: e.APP_URL,
-    // F13: block sends when the tenant is at/over its monthly quota.
-    quotaExceeded: (tenantId: string) => quotaExceededFromDb(app, tenantId, new Date()),
-  };
+  if (engineSingleton && e.NODE_ENV !== "test") return engineSingleton;
+  const built = createEngineDeps({
+    app: appDb(),
+    owner: ownerDb(),
+    dryRunMessaging: e.DRY_RUN_MESSAGING,
+    whatsappApiVersion: e.WHATSAPP_API_VERSION,
+    whatsappPhoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID,
+    whatsappAccessToken: e.WHATSAPP_ACCESS_TOKEN,
+    appUrl: e.APP_URL,
+  });
+  if (e.NODE_ENV !== "test") engineSingleton = built;
+  return built;
+}
+
+// ------------------------------------------------------------ BullMQ / Redis
+interface BullQueueLike {
+  add(name: string, data: unknown, opts?: Record<string, unknown>): Promise<unknown>;
+  close(): Promise<void>;
+}
+interface RedisLike {
+  status?: string;
+  connect(): Promise<void>;
+  on(event: string, listener: (...args: unknown[]) => void): void;
+  disconnect(): void;
+}
+interface QueueState {
+  redis: RedisLike;
+  planner: BullQueueLike;
+}
+
+let queueState: QueueState | null = null;
+let queueInitPromise: Promise<QueueState | null> | null = null;
+let redisBackoffUntil = 0;
+
+async function getQueues(): Promise<QueueState | null> {
+  const e = env();
+  if (e.NODE_ENV === "test" || !e.REDIS_URL || Date.now() < redisBackoffUntil) {
+    return null;
+  }
+  if (queueState) return queueState;
+  if (queueInitPromise) return queueInitPromise;
+
+  queueInitPromise = (async () => {
+    let redis: (RedisLike & { disconnect?: () => void }) | null = null;
+    try {
+      const [{ Queue }, { Redis }] = await Promise.all([
+        import(/* webpackIgnore: true */ "bullmq") as Promise<{ Queue: new (name: string, opts: { connection: unknown }) => BullQueueLike }>,
+        import(/* webpackIgnore: true */ "ioredis") as Promise<{ Redis: new (url: string, opts: Record<string, unknown>) => RedisLike & { disconnect?: () => void } }>,
+      ]);
+      redis = new Redis(e.REDIS_URL, {
+        maxRetriesPerRequest: 1,
+        connectTimeout: 1000,
+        enableOfflineQueue: false,
+        lazyConnect: true,
+        retryStrategy: () => null,
+      });
+      redis.on("error", () => { /* handled via connect/enqueue catch */ });
+      await redis.connect();
+      const planner = new Queue("reminders-planner", { connection: redis });
+      queueState = { redis, planner };
+      return queueState;
+    } catch (err) {
+      console.warn("[engine] Redis connect failed; falling back to in-process execution", err);
+      try { redis?.disconnect?.(); } catch { /* ignore */ }
+      redisBackoffUntil = Date.now() + 30_000;
+      return null;
+    } finally {
+      queueInitPromise = null;
+    }
+  })();
+
+  return queueInitPromise;
+}
+
+async function enqueueOrFallback(
+  jobName: string,
+  data: unknown,
+  fallback: () => Promise<unknown>,
+): Promise<void> {
+  const queues = await getQueues();
+  if (queues) {
+    try {
+      await queues.planner.add(jobName, data, { removeOnComplete: 50, removeOnFail: 50 });
+      return;
+    } catch (err) {
+      console.warn("[engine] BullMQ enqueue failed; closing stale Redis state and falling back", err);
+      const stale = queueState;
+      queueState = null;
+      redisBackoffUntil = Date.now() + 30_000;
+      if (stale) {
+        await Promise.allSettled([
+          stale.planner.close(),
+        ]);
+        try { (stale.redis as unknown as { disconnect?: () => void }).disconnect?.(); } catch { /* ignore */ }
+      }
+    }
+  }
+  await fallback();
 }
 
 /**
  * Best-effort re-planning hooks (BUILD_PLAN §7-F4: the planner re-runs on
- * invoice/payment change). A planning failure must never fail the ledger
- * write that triggered it — the nightly planner (worker) is the backstop —
- * so errors are logged and swallowed here, and only here.
+ * invoice/payment change). Enqueues to BullMQ when Redis is reachable, and
+ * falls back to in-process execution otherwise. A planning failure must never
+ * fail the ledger write that triggered it.
  */
 export function replanLater(tenantId: string, invoiceId: string): void {
-  void planForInvoice(engineDeps(), tenantId, invoiceId, new Date()).catch((err) => {
+  void enqueueOrFallback(
+    "replan-invoice",
+    { tenantId, invoiceId },
+    () => planForInvoice(engineDeps(), tenantId, invoiceId, new Date()),
+  ).catch((err) => {
     console.error("[replan] invoice planning failed", { tenantId, invoiceId, err });
+  });
+}
+
+export function replanTenantLater(tenantId: string): void {
+  void enqueueOrFallback(
+    "replan-tenant",
+    { tenantId },
+    () => planForTenant(engineDeps(), tenantId, new Date()),
+  ).catch((err) => {
+    console.error("[replan] tenant planning failed", { tenantId, err });
   });
 }
 
@@ -70,6 +168,7 @@ export function aiDeps(): AiDeps {
   const storage = new S3CompatibleStorageProvider({
     endpoint: e.S3_ENDPOINT, region: e.S3_REGION, bucket: e.S3_BUCKET,
     accessKey: e.S3_ACCESS_KEY, secretKey: e.S3_SECRET_KEY, forcePathStyle: e.S3_FORCE_PATH_STYLE,
+    allowInsecureLocal: e.ALLOW_LOCAL_S3,
   });
 
   // Provider-agnostic wiring: the env describes ANY provider(s) as data and the
@@ -92,17 +191,11 @@ export function aiDeps(): AiDeps {
 }
 
 /** The resolved provider list (primary first). Throws a clear error on invalid AI_* configuration. */
-export function llmProviderConfigs(): LlmProviderConfig[] {
+function llmProviderConfigs(): LlmProviderConfig[] {
   return resolveLlmProviderConfigs(env());
 }
 
 /** Test seam: replace the AI singletons (integration suites inject their own fakes). */
 export function setAiDepsForTests(deps: AiDeps | null): void {
   aiSingleton = deps;
-}
-
-export function replanTenantLater(tenantId: string): void {
-  void planForTenant(engineDeps(), tenantId, new Date()).catch((err) => {
-    console.error("[replan] tenant planning failed", { tenantId, err });
-  });
 }

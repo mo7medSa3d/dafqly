@@ -54,7 +54,18 @@ export async function storeUpload(
     const [row] = await tx.select().from(files).where(eq(files.sha256, sha256)).limit(1);
     return row ?? null;
   });
-  if (existing) return { ...toView(existing), bytes: clean, deduped: true };
+  if (existing) {
+    // Heal a missing blob: the DB row proves these bytes were stored once,
+    // but the blob store is a separate system and can lose the object while
+    // the row survives (server restart with in-memory fake storage, S3
+    // object loss). Without this, the dedupe short-circuit leaves every
+    // later read to fail with FILE_BYTES_MISSING at extraction time, even
+    // though the caller just handed us the bytes. Re-put under the same
+    // key; the row (and its id) stay untouched.
+    const present = await storage.get(existing.storageKey);
+    if (!present) await storage.put(existing.storageKey, clean, input.mime);
+    return { ...toView(existing), bytes: clean, deduped: true };
+  }
   const id = uuidv7();
   const storageKey = `${tenantId}/${id}`;
   await storage.put(storageKey, clean, input.mime);

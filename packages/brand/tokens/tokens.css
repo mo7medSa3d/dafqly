@@ -113,7 +113,12 @@
   --status-paid-bg: oklch(0.95 0.04 155);
   --status-due_soon-fg: oklch(0.52 0.16 75);
   --status-due_soon-bg: oklch(0.96 0.05 80);
-  --status-overdue-fg: var(--destructive);
+  /* Overdue fg is NOT var(--destructive): the mid-red destructive
+     (#e54b4f) on the pale overdue bg is 3.22:1 and fails WCAG AA (axe
+     e2e/axe.spec.ts). This darker red is 5.75:1 on the same bg, matching
+     the tokens.json overdue pair (#B91C1C on #FEE2E2, 5.3:1). The dark
+     theme keeps var(--destructive): it is 5.69:1 on the dark overdue bg. */
+  --status-overdue-fg: oklch(0.50 0.19 23);
   --status-overdue-bg: oklch(0.95 0.04 23);
   --status-disputed-fg: oklch(0.46 0.18 290);
   --status-disputed-bg: oklch(0.95 0.04 290);

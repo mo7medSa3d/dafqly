@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, inArray, isNull } from "drizzle-orm";
 import { webhookEvents } from "@tahseel/db/schema";
-import { persistWebhookEvents, processWebhookEvents, verifyWebhookSignature } from "@tahseel/reminders";
+import { persistWebhookEvents, processWebhookEvents, verifyWebhookSignature, type WebhookEvent } from "@tahseel/reminders";
 import { aiDeps, engineDeps } from "@/server/engine";
 import { env } from "@/server/env";
 import { clientIp, rateLimit, rateLimitPeek } from "@/server/rate-limit";
@@ -80,7 +80,6 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: { code: "BAD_JSON", message: "body is not JSON" } }, { status: 400 });
   }
   const owner = ownerDb();
-  const { events } = await persistWebhookEvents(owner, payload);
   const deps = engineDeps();
   // F8/F7 hooks: non-opt-out texts go to reply understanding; inbound images
   // record a pending receipt intent (media bytes are media_pending — the
@@ -91,21 +90,25 @@ export async function POST(req: Request): Promise<Response> {
   deps.onInboundImage = async (info) => {
     await recordPendingReceiptIntent(appDb(), info.tenantId, info);
   };
+  let events: WebhookEvent[] = [];
   try {
-    const summary = await processWebhookEvents(deps, events, new Date());
-    if (events.length > 0) {
-      await owner.update(webhookEvents).set({ processedAt: new Date() })
-        .where(inArray(webhookEvents.dedupeKey, events.map((e) => e.dedupeKey)));
+    const persisted = await persistWebhookEvents(owner, payload);
+    events = persisted.events;
+    if (events.length === 0) {
+      return Response.json({ received: true, events: 0, deduplicated: true });
     }
+    const summary = await processWebhookEvents(deps, events, new Date());
+    await owner.update(webhookEvents).set({ processedAt: new Date(), processError: null })
+      .where(inArray(webhookEvents.dedupeKey, events.map((e) => e.dedupeKey)));
     return Response.json({ received: true, events: events.length, ...summary });
   } catch (err) {
-    // Persisted but not processed: record the failure for replay, still 200
-    // so Meta does not hammer us; the inbox row keeps the raw payload.
+    // Persisted but not processed: record the failure for operator recovery,
+    // still 200 so Meta does not hammer us; inbox payloads are PII-redacted.
     if (events.length > 0) {
       await owner.update(webhookEvents).set({ processError: err instanceof Error ? err.message : "processing failed" })
-        .where(inArray(webhookEvents.dedupeKey, events.map((e) => e.dedupeKey)));
+        .where(and(inArray(webhookEvents.dedupeKey, events.map((e) => e.dedupeKey)), isNull(webhookEvents.processedAt)))
+        .catch(() => {});
     }
-    void eq; // (kept import surface minimal)
     return Response.json({ received: true, events: events.length, processing: "failed-recorded" });
   }
 }

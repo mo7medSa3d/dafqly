@@ -1,5 +1,5 @@
 "use client";
-import { cn } from "@/lib/utils";
+import { cn, todayIso } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -23,8 +23,8 @@ type TaskFilter = "active" | "overdue" | "done" | "all";
 
 export function CollectionWorkspaceClient({ locale, role }: { locale: string; role: "owner" | "staff" }) {
   const isAr = locale === "ar";
-  const { formatAmountOnly, currency } = useCurrency();
-  const fmt = (minor: string | bigint) => formatAmountOnly(BigInt(minor));
+  const { format, currency } = useCurrency();
+  const fmt = (minor: string | bigint, itemCurrency?: string | null) => format(BigInt(minor), itemCurrency ? { currency: itemCurrency } : undefined);
   const t = useTranslations("tasks");
   const [tab, setTab] = useState<Tab>("tasks");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("active");
@@ -48,7 +48,7 @@ export function CollectionWorkspaceClient({ locale, role }: { locale: string; ro
   const [assignee, setAssignee] = useState("");
   const [priority, setPriority] = useState<"normal" | "high" | "urgent" | "low">("normal");
   const [promiseAmount, setPromiseAmount] = useState("");
-  const [promiseDate, setPromiseDate] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 10));
+  const [promiseDate, setPromiseDate] = useState(todayIso(1));
   const [promiseInvoiceId, setPromiseInvoiceId] = useState("");
   const [promiseNote, setPromiseNote] = useState("");
   const [selectedPromiseDebtor, setSelectedPromiseDebtor] = useState("");
@@ -777,7 +777,7 @@ export function CollectionWorkspaceClient({ locale, role }: { locale: string; ro
                           </p>
                         </td>
                         <td className="py-3 font-extrabold" dir="ltr">
-                          {fmt(p.amountMinor)}
+                          {fmt(p.amountMinor, p.currency)}
                         </td>
                         <td className="py-3" dir="ltr">
                           {p.promisedOn}

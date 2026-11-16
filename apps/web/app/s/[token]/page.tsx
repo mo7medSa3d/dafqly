@@ -36,19 +36,23 @@ export default async function StatementPage({
   const errorMessages = errorLocale === "en" ? enMessages.statementPortal : arMessages.statementPortal;
   if (!limit.allowed) {
     return (
-      <main data-testid="statement-rate-limited" className="mx-auto flex min-h-dvh w-full max-w-xl flex-col items-center justify-center gap-3 p-6 text-center">
-        <h1 className="text-xl font-bold">{errorMessages.rateLimitedTitle}</h1>
-        <p className="text-text-muted">{errorMessages.rateLimitedBody}</p>
-      </main>
+      <div lang={errorLocale} dir={errorLocale === "ar" ? "rtl" : "ltr"}>
+        <main data-testid="statement-rate-limited" className="mx-auto flex min-h-dvh w-full max-w-xl flex-col items-center justify-center gap-3 p-6 text-center">
+          <h1 className="text-xl font-bold">{errorMessages.rateLimitedTitle}</h1>
+          <p className="text-text-muted">{errorMessages.rateLimitedBody}</p>
+        </main>
+      </div>
     );
   }
   const data = await getStatementData(appDb(), ownerDb(), token, new Date());
   if (!data) {
     return (
-      <main data-testid="statement-not-found" className="mx-auto flex min-h-dvh w-full max-w-xl flex-col items-center justify-center gap-3 p-6 text-center">
-        <h1 className="text-xl font-bold">{errorMessages.notFoundTitle}</h1>
-        <p className="text-text-muted">{errorMessages.notFoundBody}</p>
-      </main>
+      <div lang={errorLocale} dir={errorLocale === "ar" ? "rtl" : "ltr"}>
+        <main data-testid="statement-not-found" className="mx-auto flex min-h-dvh w-full max-w-xl flex-col items-center justify-center gap-3 p-6 text-center">
+          <h1 className="text-xl font-bold">{errorMessages.notFoundTitle}</h1>
+          <p className="text-text-muted">{errorMessages.notFoundBody}</p>
+        </main>
+      </div>
     );
   }
   const locale = langParam ?? (data.language === "en" ? "en" : "ar");

@@ -3,7 +3,7 @@ import { AppError } from "@tahseel/core";
 import { z } from "zod";
 import { auth, emailVerificationEnabled } from "./auth";
 import { appDb, ownerDb } from "./db";
-import { listTenantsForUser } from "./services";
+import { listTenantsForUser, todayInTimezone } from "./services";
 import { withAiTenantContext } from "./ai-budget";
 
 export interface TrpcContext {
@@ -67,7 +67,12 @@ export const tenantProcedure = protectedProcedure.use(async ({ ctx, next }) => {
   const mine = await listTenantsForUser(ctx.ownerDb, ctx.user.id);
   const first = mine[0];
   if (!first) throw new TRPCError({ code: "FORBIDDEN", message: "NO_TENANT: complete onboarding first" });
-  return withAiTenantContext(first.tenantId, () => next({ ctx: { ...ctx, tenantId: first.tenantId, role: first.role } }));
+  const tenantMeta = {
+    today: todayInTimezone(first.timezone ?? "Africa/Cairo"),
+    businessName: first.businessNameAr ?? "DAFQLY",
+    currency: first.settings?.currency ?? "EGP",
+  };
+  return withAiTenantContext(first.tenantId, () => next({ ctx: { ...ctx, tenantId: first.tenantId, role: first.role, tenantMeta } }));
 });
 
 /**
