@@ -50,23 +50,27 @@ function Frame({
 
 /** 1. Hero SVG: Live cashflow pipeline (Invoice -> Automated Follow-up -> Instant Settlement). */
 export function HeroCashflowSvg() {
+  const uid = React.useId();
+  const gridId = `hero-grid-${uid}`;
+  const gradId = `hero-mask-grad-${uid}`;
+  const maskId = `hero-mask-${uid}`;
   return (
     <Frame vb="0 0 560 400">
       <defs>
-        <pattern id="hero-grid" width="24" height="24" patternUnits="userSpaceOnUse">
+        <pattern id={gridId} width="24" height="24" patternUnits="userSpaceOnUse">
           <circle cx="2" cy="2" r="1.2" fill={T.strong} opacity="0.45" />
         </pattern>
-        <radialGradient id="hero-mask-grad" cx="50%" cy="50%" r="52%">
+        <radialGradient id={gradId} cx="50%" cy="50%" r="52%">
           <stop offset="50%" stopColor="white" />
           <stop offset="100%" stopColor="black" />
         </radialGradient>
-        <mask id="hero-mask">
-          <rect width="560" height="400" fill="url(#hero-mask-grad)" />
+        <mask id={maskId}>
+          <rect width="560" height="400" fill={`url(#${gradId})`} />
         </mask>
       </defs>
 
       {/* Subtle dotted grid */}
-      <rect width="560" height="400" fill="url(#hero-grid)" mask="url(#hero-mask)" />
+      <rect width="560" height="400" fill={`url(#${gridId})`} mask={`url(#${maskId})`} />
 
       {/* Main dashboard canvas card */}
       <rect x="44" y="48" width="472" height="304" rx="20" fill={T.card} stroke={T.border} strokeWidth="1.5" />

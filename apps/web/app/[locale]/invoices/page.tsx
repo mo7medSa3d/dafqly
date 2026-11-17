@@ -16,7 +16,7 @@ export default async function Page({ params, searchParams }: { params: Promise<{
   if (!mine[0]) redirect(`/${locale}/onboarding`);
   const t = await getTranslations("invoices");
   return (
-    <AppShell locale={locale} demoMode={runtimeModeFlags()} digits={mine[0].settings?.easternDigits ? "eastern" : "latin"} businessName={mine[0].businessNameAr} currency={mine[0].settings?.currency ?? "EGP"}>
+    <AppShell locale={locale} demoMode={runtimeModeFlags()} digits="latin" businessName={mine[0].businessNameAr} currency={mine[0].settings?.currency ?? "EGP"}>
       <PageHeader title={t("title")} />
       <InvoicesClient key={query.overdue === "true" ? "overdue" : "all"} businessName={mine[0].businessNameAr} initialOverdueOnly={query.overdue === "true"} />
     </AppShell>

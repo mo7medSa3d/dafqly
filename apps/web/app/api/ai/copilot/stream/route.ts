@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { AppError } from "@tahseel/core";
+import { AppError, toApiErrorBody } from "@tahseel/core";
 import { auth } from "@/server/auth";
 import { appDb, ownerDb } from "@/server/db";
 import { listTenantsForUser, todayInTimezone } from "@/server/services";
 import { askWorkspaceCopilot, copilotQueryInput, type CopilotStreamEvent } from "@/server/intelligence";
 import { withAiTenantContext } from "@/server/ai-budget";
 import { rateLimit } from "@/server/rate-limit";
+import { readRequestBodyLimited, RequestBodyTooLargeError } from "@/server/request-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +14,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const HEARTBEAT_MS = 15_000;
+const MAX_BODY_BYTES = 65_536;
+const NO_STORE = { "Cache-Control": "no-store" };
 
 /**
  * SSE contract (one JSON object per `data:` line):
@@ -26,20 +29,47 @@ const HEARTBEAT_MS = 15_000;
  * connection while a slow tool or model step is running.
  */
 export async function POST(request: Request): Promise<Response> {
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session?.user) return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
-  // LLM calls cost real money: throttle per user, not just per IP.
-  const limit = rateLimit(`copilot:stream:${session.user.id}`, { limit: 20, windowSeconds: 60 });
-  if (!limit.allowed) {
-    return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } });
-  }
-  const raw = await request.json().catch(() => null);
-  const parsed = copilotQueryInput.safeParse(raw);
-  if (!parsed.success) return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
+  let session: Awaited<ReturnType<typeof auth.api.getSession>>;
+  let tenant: Awaited<ReturnType<typeof listTenantsForUser>>[number] | undefined;
+  let parsedData: ReturnType<typeof copilotQueryInput.parse>;
+  try {
+    session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user) {
+      return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401, headers: NO_STORE });
+    }
+    // LLM calls cost real money: throttle per user, not just per IP.
+    const limit = rateLimit(`copilot:stream:${session.user.id}`, { limit: 20, windowSeconds: 60 });
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { error: "RATE_LIMITED" },
+        { status: 429, headers: { ...NO_STORE, "Retry-After": String(limit.retryAfterSeconds) } },
+      );
+    }
+    let raw: unknown;
+    try {
+      const rawBytes = await readRequestBodyLimited(request, MAX_BODY_BYTES);
+      raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBytes));
+    } catch (err) {
+      if (err instanceof RequestBodyTooLargeError) {
+        return NextResponse.json({ error: "BODY_TOO_LARGE" }, { status: 413, headers: NO_STORE });
+      }
+      return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400, headers: NO_STORE });
+    }
+    const parsed = copilotQueryInput.safeParse(raw);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400, headers: NO_STORE });
+    }
+    parsedData = parsed.data;
 
-  const mine = await listTenantsForUser(ownerDb(), session.user.id);
-  const tenant = mine[0];
-  if (!tenant) return NextResponse.json({ error: "NO_TENANT" }, { status: 403 });
+    const mine = await listTenantsForUser(ownerDb(), session.user.id);
+    tenant = mine[0];
+    if (!tenant) {
+      return NextResponse.json({ error: "NO_TENANT" }, { status: 403, headers: NO_STORE });
+    }
+  } catch (err) {
+    const status = err instanceof AppError ? err.status : 500;
+    return Response.json(toApiErrorBody(err), { status, headers: NO_STORE });
+  }
 
   const encoder = new TextEncoder();
   // One controller aborts the provider request when the browser disconnects or
@@ -61,8 +91,8 @@ export async function POST(request: Request): Promise<Response> {
       write("retry: 3000\n\n");
       try {
         const result = await withAiTenantContext(tenant.tenantId, () => askWorkspaceCopilot(
-          appDb(), tenant.tenantId, session.user.id, tenant.businessNameAr,
-          todayInTimezone(tenant.timezone), parsed.data,
+          appDb(), tenant.tenantId, session!.user.id, tenant.businessNameAr,
+          todayInTimezone(tenant.timezone), parsedData,
           (event: CopilotStreamEvent) => emit(event),
           abort.signal,
         ));

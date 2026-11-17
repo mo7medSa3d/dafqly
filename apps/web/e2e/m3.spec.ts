@@ -104,10 +104,9 @@ test("M3 webhook: bad HMAC 401, signed success pays exactly once, replay is a no
   const link = await trpcMutate<{ specialReference: string; amountMinor: string }>(page, "payments.createLink", { debtorId });
   expect(link.amountMinor).toBe("125050");
 
-  const txnId = 424200000 + Math.floor(Math.random() * 800000);
   const obj: Record<string, unknown> = {
     amount_cents: 125050, created_at: "2026-11-09T10:00:00.000000", currency: "EGP",
-    error_occured: false, has_parent_transaction: false, id: txnId, integration_id: 123456,
+    error_occured: false, has_parent_transaction: false, id: 424242001, integration_id: 123456,
     is_3d_secure: true, is_auth: false, is_capture: false, is_refunded: false,
     is_standalone_payment: true, is_voided: false,
     order: { id: 987650, merchant_order_id: link.specialReference }, owner: 777, pending: false,
@@ -138,10 +137,11 @@ test("M3 webhook: bad HMAC 401, signed success pays exactly once, replay is a no
   await pubPage.screenshot({ path: "e2e/screenshots/m3-statement-paid-ar-light.png" });
   await pub.close();
 
-  // Merchant side: one gateway payment row and a balanced reconciliation.
+  // Merchant side: one gateway payment row; debtor-facing gateway link UI is removed.
   await page.reload();
   await expect(page.getByTestId("payment-row")).toHaveCount(1);
-  await expect(page.getByTestId("gw-recon")).toContainText("متوازنة");
+  await expect(page.getByTestId("gw-recon")).toHaveCount(0);
+  await expect(page.getByTestId("gw-create-total")).toHaveCount(0);
 });
 
 test("M3 statement abuse: unknown token is one generic 404 and brute force is rate-limited", async ({ page, request }) => {

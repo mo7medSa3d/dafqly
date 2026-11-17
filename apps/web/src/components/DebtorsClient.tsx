@@ -256,7 +256,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
     <div className="flex flex-col gap-6">
       {/* Top Overview Financial Summary Strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:gap-4">
-        <div className="panel-shadow flex flex-col gap-1 rounded-xl border border-border bg-surface p-4">
+        <div className="panel-shadow flex min-w-0 flex-col gap-1 rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center justify-between text-text-muted">
             <span className="text-xs font-semibold">{isAr ? "إجمالي المستحق" : "Total Outstanding"}</span>
             <CurrencyCircleDollar size={18} className="text-primary" />
@@ -269,7 +269,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
           </span>
         </div>
 
-        <div className="panel-shadow flex flex-col gap-1 rounded-xl border border-border bg-surface p-4">
+        <div className="panel-shadow flex min-w-0 flex-col gap-1 rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center justify-between text-text-muted">
             <span className="text-xs font-semibold">{isAr ? "مسددين بالكامل" : "Fully Settled"}</span>
             <CheckCircle size={18} className="text-status-paid-fg" />
@@ -282,7 +282,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
           </span>
         </div>
 
-        <div className="panel-shadow flex flex-col gap-1 rounded-xl border border-border bg-surface p-4">
+        <div className="panel-shadow flex min-w-0 flex-col gap-1 rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center justify-between text-text-muted">
             <span className="text-xs font-semibold">{isAr ? "إجمالي العملاء" : "Total Customers"}</span>
             <Users size={18} className="text-primary" />
@@ -309,7 +309,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
           )}
         </div>
 
-        <div className="panel-shadow flex flex-col gap-1 rounded-xl border border-border bg-surface p-4">
+        <div className="panel-shadow flex min-w-0 flex-col gap-1 rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center justify-between text-text-muted">
             <span className="text-xs font-semibold">{isAr ? "تذكيرات متوقفة" : "Paused Reminders"}</span>
             <BellSlash size={18} className="text-status-due-fg" />
@@ -370,7 +370,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
       {/* Main Content Layout */}
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
         {/* Main List Column (8 cols) */}
-        <section className="flex flex-col gap-4 lg:col-span-8">
+        <section className="flex min-w-0 flex-col gap-4 lg:col-span-8">
           {/* Quick Filter Pills */}
           <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
             <button
@@ -449,7 +449,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
 
           {/* Search & Sort Toolbar */}
           <div className="panel-shadow flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface p-3.5 sm:p-4">
-            <div className="relative min-w-[220px] flex-1">
+            <div className="relative w-full min-w-0 sm:w-auto sm:flex-1 sm:min-w-[220px]">
               <span className="sr-only">{t("search")}</span>
               <MagnifyingGlass
                 size={16}
@@ -475,13 +475,13 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             </div>
 
             {/* Sort Selector */}
-            <div className="flex items-center gap-2">
-              <SortAscending size={16} strokeWidth={2.5} className="text-text-muted" />
+            <div className="flex w-full items-center gap-2 sm:w-auto">
+              <SortAscending size={16} strokeWidth={2.5} className="shrink-0 text-text-muted" />
               <select
                 aria-label={t("sortLabel")}
                 value={sort}
                 onChange={(e) => setSort(e.target.value as SortType)}
-                className={cn(inputVariants)}
+                className={cn(inputVariants, "w-full sm:w-auto sm:min-w-[180px]")}
               >
                 <option value="default">{isAr ? "الترتيب الافتراضي" : "Default"}</option>
                 <option value="ai_priority">{isAr ? "أولوية المتابعة (AI)" : "AI Follow-up Priority"}</option>
@@ -532,7 +532,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                           <div className="flex flex-wrap items-center gap-2">
                             <Link
                               href={`/${locale}/debtors/${d.id}`}
-                              className="truncate text-base font-bold text-text hover:text-primary transition-colors"
+                              className="max-w-full truncate text-base font-bold text-text hover:text-primary transition-colors"
                             >
                               {d.displayName}
                             </Link>
@@ -584,7 +584,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                                 }`}
                               >
                                 <Sparkle size={11} aria-hidden />
-                                <span>{intelById[d.id]!.healthScore}/100</span>
+                                <span className="tnum" dir="ltr">{intelById[d.id]!.healthScore}/100</span>
                               </span>
                             )}
                           </div>
@@ -709,7 +709,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
         </section>
 
         {/* Side Column: Quick Add & Summary (4 cols) */}
-        <aside className="flex flex-col gap-6 lg:col-span-4">
+        <aside className="flex min-w-0 flex-col gap-6 lg:col-span-4">
           <Panel title={t("add")} icon={Plus}>
             <form
               className="flex flex-col gap-4"
@@ -766,22 +766,6 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             </form>
           </Panel>
 
-          <div className="panel-shadow flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
-            <div className="flex items-center gap-2 text-sm font-bold text-text">
-              <Users size={18} className="text-primary" />
-              <span>{isAr ? "إدارة التذكيرات والتواصل" : "Reminders & Communication"}</span>
-            </div>
-            <p className="text-xs leading-relaxed text-text-muted">
-              {isAr
-                ? "إمكانية إيقاف أو استئناف التذكيرات التلقائية بنقرة واحدة لكل عميل."
-                : "Pause or resume automated WhatsApp reminders with one click per customer."}
-            </p>
-            <div className="rounded-xl bg-callout p-3 text-xs text-text-muted">
-              {isAr
-                ? "تُحترم ساعات الهدوء، وتتوقف التذكيرات تلقائياً للفواتير المسددة."
-                : "Quiet hours are honored, and reminders pause automatically for paid invoices."}
-            </div>
-          </div>
         </aside>
       </div>
     </div>

@@ -35,8 +35,8 @@ import { addDaysIso, daysOverdue, isCollectibleStatus } from "./invoices";
  * three different roundings of one number.)
  */
 export function formatPct(rateFraction: number): string {
-  const safe = Number.isFinite(rateFraction) ? rateFraction : 0;
-  return `${(safe * 100).toFixed(1)}%`;
+  const pct = Number.isFinite(rateFraction) ? rateFraction * 100 : 0;
+  return `${(Number.isFinite(pct) ? pct : 0).toFixed(1)}%`;
 }
 export function formatDso(days: number): string {
   const safe = Number.isFinite(days) ? days : 0;
@@ -60,7 +60,6 @@ export interface ReportPayment {
 }
 
 export type AgingBucketKey = "current" | "0-7" | "8-30" | "31-60" | "60+";
-export const AGING_BUCKET_KEYS: AgingBucketKey[] = ["current", "0-7", "8-30", "31-60", "60+"];
 
 export interface KpiReport {
   totalOutstandingMinor: number;
@@ -77,7 +76,7 @@ export interface KpiReport {
 }
 
 export function agingBucketFor(daysOverdueCount: number): AgingBucketKey {
-  if (daysOverdueCount <= 0) return "current";
+  if (!Number.isFinite(daysOverdueCount) || daysOverdueCount <= 0) return "current";
   if (daysOverdueCount <= 7) return "0-7";
   if (daysOverdueCount <= 30) return "8-30";
   if (daysOverdueCount <= 60) return "31-60";
@@ -100,7 +99,8 @@ export function computeKpis(input: {
     // H09: the same collectible rule as every other surface — a disputed
     // invoice is frozen and contributes nothing to outstanding.
     if (!isCollectibleStatus(inv.status)) continue;
-    const outstanding = Math.max(0, inv.amountMinor - inv.paidMinor);
+    const diff = inv.amountMinor - inv.paidMinor;
+    const outstanding = Number.isFinite(diff) ? Math.max(0, diff) : 0;
     if (outstanding === 0) continue;
     totalOutstanding += outstanding;
     const late = daysOverdue(inv.dueOn, input.today);

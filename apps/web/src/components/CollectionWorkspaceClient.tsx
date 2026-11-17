@@ -311,9 +311,7 @@ export function CollectionWorkspaceClient({
     <div className="flex flex-col gap-6" dir={isAr ? "rtl" : "ltr"}>
       <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-primary">DAFQLY WORKSPACE</p>
-          <h1 className="mt-1 text-2xl font-extrabold text-text">{t("title")}</h1>
-          <p className="mt-1 max-w-2xl text-sm text-text-muted">{t("subtitle")}</p>
+          <h1 className="text-2xl font-extrabold text-text">{t("title")}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -519,7 +517,7 @@ export function CollectionWorkspaceClient({
                           <span>·</span>
                           <span className="inline-flex items-center gap-1" dir="ltr">
                             <Clock size={12} />
-                            {new Date(task.dueAt).toLocaleString(isAr ? "ar-EG" : "en-GB")}
+                            {new Date(task.dueAt).toLocaleString(isAr ? "ar-EG-u-nu-latn" : "en-GB")}
                           </span>
                         </p>
                       </div>
@@ -632,7 +630,7 @@ export function CollectionWorkspaceClient({
                   {isAr ? "سيتم إسناد التذكرة إلى حسابك تلقائياً." : "This ticket will be assigned to you automatically."}
                 </p>
               )}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label={isAr ? "الأولوية" : "Priority"}>
                   <select
                     className={inputCls}
@@ -678,11 +676,7 @@ export function CollectionWorkspaceClient({
                       ? "توقيت ذكي يحترم ساعات الهدوء وسياسة المنشأة"
                       : "Optimal-time scheduling respecting quiet hours & workspace policy"}
                   </p>
-                  <p className="mt-1 text-xs leading-relaxed text-text-muted">
-                    {isAr
-                      ? "تقوم أداة التذكير بحساب أفضل نافذة إرسال لكل عميل حسب حالة الفاتورة، ساعات الهدوء، وتخطي صباح الجمعة، مع توليد نص التذكير المناسب."
-                      : "Computes the best delivery slot per customer based on invoice aging, quiet hours, and Friday skip policy, with ready-to-send bilingual copy."}
-                  </p>
+
                 </div>
               </div>
 
@@ -741,9 +735,9 @@ export function CollectionWorkspaceClient({
           <Panel title={isAr ? "نتيجة الجدولة ومعاينة الرسالة" : "Schedule slot & message preview"}>
             {reminderResult ? (
               <div className="flex flex-col gap-3 text-sm">
-                <div className="flex items-center justify-between rounded-xl border border-border bg-surface-muted/40 p-3">
-                  <div>
-                    <p className="font-extrabold text-text">{reminderResult.debtorName}</p>
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-surface-muted/40 p-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-extrabold text-text">{reminderResult.debtorName}</p>
                     <p className="text-xs text-text-muted">
                       {isAr ? reminderResult.windowLabelAr : reminderResult.windowLabelEn}
                     </p>
@@ -1113,7 +1107,7 @@ export function CollectionWorkspaceClient({
                     <p className="mt-1 text-sm text-text-muted">{item.rationale}</p>
                     <p className="mt-1 text-xs text-text-muted">
                       {item.requestedByName || "AI"} ·{" "}
-                      {new Date(item.createdAt).toLocaleString(isAr ? "ar-EG" : "en-GB")}
+                      {new Date(item.createdAt).toLocaleString(isAr ? "ar-EG-u-nu-latn" : "en-GB")}
                     </p>
                   </div>
                   <div className="flex shrink-0 gap-2">
@@ -1183,7 +1177,7 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="flex flex-col gap-1.5">
+    <label className="flex min-w-0 flex-col gap-1.5">
       <span className={labelCls}>{label}</span>
       {children}
     </label>

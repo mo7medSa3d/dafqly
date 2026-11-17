@@ -195,7 +195,7 @@ export function BillingClient({
       badge: null,
       highlighted: false,
       featuresAr: [
-        "١٠٠ تذكير واتساب شهرياً",
+        "100 تذكير واتساب شهرياً",
         "استيراد ملفات الإكسل وCSV",
         "متابعة أرصدة المدينين والتحصيل",
         "لوحة متابعة مالية أساسية",
@@ -221,18 +221,18 @@ export function BillingClient({
       badge: isAr ? "الأكثر طلباً" : "Most Popular",
       highlighted: true,
       featuresAr: [
-        "٥٠٠ تذكير ذكي شهرياً",
+        "500 تذكير ذكي شهرياً",
         "استخراج بيانات الإيصالات بالـAI مع فحوصات تكرار بقواعد واضحة",
-        "روابط دفع إلكتروني آمنة ومباشرة (Paymob)",
+        "كشوف حساب تفاعلية مع تعليمات التحويل وإيصالات AI",
         "جدولة ذكية للتذكيرات مع مراعاة ساعات الهدوء",
         "كشوف حساب إلكترونية مؤمنة ومشاركة واتساب فورية",
-        "تقارير التنبؤ بالسيولة النقدية لـ ٨ أسابيع",
+        "تقارير التنبؤ بالسيولة النقدية لـ 8 أسابيع",
         "أولوية دعم فني عبر واتساب",
       ],
       featuresEn: [
         "500 smart reminders / month",
         "AI-assisted receipt OCR with deterministic duplicate checks",
-        "Direct Paymob instant payment links",
+        "Interactive statements with transfer instructions & AI receipts",
         "Quiet-hours compliant automated scheduling",
         "Secure interactive debtor statements",
         "8-week predictive cash-flow forecasting",
@@ -251,18 +251,18 @@ export function BillingClient({
       badge: null,
       highlighted: false,
       featuresAr: [
-        "٢,٠٠٠ تذكير ذكي شهرياً",
+        "2,000 تذكير ذكي شهرياً",
         "استخراج بيانات الإيصالات بالـAI مع فحوصات تكرار واحتيال بقواعد واضحة",
-        "روابط دفع إلكتروني آمنة ومباشرة (Paymob)",
+        "كشوف حساب تفاعلية مع تعليمات التحويل وإيصالات AI",
         "فحص تلقائي للشيكات البنكية وإشعارات الارتجاع",
         "إدارة متعددة الصلاحيات لفريق الحسابات",
-        "تقارير التنبؤ بالسيولة النقدية لـ ٨ أسابيع",
+        "تقارير التنبؤ بالسيولة النقدية لـ 8 أسابيع",
         "دعم فني ذو أولوية عبر واتساب",
       ],
       featuresEn: [
         "2,000 smart reminders / month",
         "AI-assisted receipt OCR with deterministic duplicate and fraud checks",
-        "Direct Paymob instant payment links",
+        "Interactive statements with transfer instructions & AI receipts",
         "Automated cheque registry & bounce alerts",
         "Multi-user finance team access",
         "8-week predictive cash-flow forecasting",
@@ -277,7 +277,7 @@ export function BillingClient({
       <div className="flex flex-col items-center gap-3 text-center">
         <span className="inline-flex items-center gap-2 rounded bg-primary/10 px-3.5 py-1 text-xs font-extrabold text-primary">
           <Crown size={15} aria-hidden />
-          <span>{isAr ? "الباقات والاشتراكات ٢٠٢٦" : "Plans & Billing 2026"}</span>
+          <span>{isAr ? "الباقات والاشتراكات 2026" : "Plans & Billing 2026"}</span>
         </span>
         <h1 className="text-3xl font-black text-text sm:text-4xl">
           {isAr ? "اختر الخطة المناسبة لحجم معاملاتك" : "Choose the Plan Built for Your Scale"}
@@ -533,12 +533,12 @@ export function BillingClient({
           </div>
           <div>
             <p className="font-bold text-text">
-              {isAr ? "دفع آمن ومشفّر عبر بوابة Paymob" : "Bank-Grade Encryption Powered by Paymob"}
+              {isAr ? "دفع اشتراك المنصة بأمان عبر Paymob" : "Secure Platform Subscription Billing via Paymob"}
             </p>
             <p>
               {isAr
-                ? "جميع المدفوعات مطابقة لأعلى معايير الأمان PCI-DSS. يمكنك ترقية أو تغيير باقتك في أي وقت."
-                : "All payments adhere to PCI-DSS standards. You can change or upgrade your plan anytime."}
+                ? "فوترة اشتراكات المنصة عبر Paymob مطابقة لمعايير PCI-DSS. يمكنك تغيير باقتك في أي وقت."
+                : "Platform subscription billing via Paymob adheres to PCI-DSS standards. Change your plan anytime."}
             </p>
           </div>
         </div>

@@ -26,7 +26,7 @@ if (!hasDb && process.env.REQUIRE_DB_TESTS === "1") throw new Error("REQUIRE_DB_
 const d = hasDb ? describe : describe.skip;
 
 const HMAC_SECRET = "m3-test-hmac-secret-0123456789abcdef";
-let txnSeq = Math.floor(Date.now() % 1_000_000_000);
+let txnSeq = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 10000);
 function callbackPayload(opts: {
   reference: string; amountCents: number; overrides?: Record<string, unknown>;
 }) {
@@ -60,6 +60,10 @@ d("F5 gateway payments (service layer)", () => {
       businessNameAr: "شركة ف٥", timezone: "Africa/Cairo", quietStart: "21:00", quietEnd: "09:00",
       fridayMorningSkip: false, defaultTermsDays: 14, tone: "polite", consent: true,
     })).tenantId;
+    const [t] = await ownerDb().select().from(tenants).where(eq(tenants.id, tenantId));
+    if (t) {
+      await ownerDb().update(tenants).set({ settings: { ...t.settings, gatewayEnabled: true } }).where(eq(tenants.id, tenantId));
+    }
   });
   afterAll(async () => {
     const owner = ownerDb();
@@ -70,6 +74,7 @@ d("F5 gateway payments (service layer)", () => {
   it("prices a per-invoice link from the ledger (outstanding after a partial manual payment)", async () => {
     const debtor = await newDebtor("رابط فاتورة");
     const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "1000.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
+    await new Promise((r) => setTimeout(r, 150));
     await recordPayment(app(), tenantId, user.id, { debtorId: debtor.id, amount: "400.00", method: "cash", receivedOn: "2026-11-05" });
     const link = await createGatewayLink(deps(), tenantId, user.id, { debtorId: debtor.id, invoiceId: inv.id });
     expect(link.amountMinor).toBe("60000");
@@ -91,6 +96,7 @@ d("F5 gateway payments (service layer)", () => {
     expect(link.amountMinor).toBe("50000");
     const settled = await newDebtor("مسدد بالكامل");
     const inv = await createInvoice(app(), tenantId, user.id, { debtorId: settled.id, amount: "10.00", issuedOn: "2026-11-01", dueOn: "2026-11-10" });
+    await new Promise((r) => setTimeout(r, 150));
     await recordPayment(app(), tenantId, user.id, { debtorId: settled.id, amount: "10.00", method: "cash", receivedOn: "2026-11-05" });
     await expect(createGatewayLink(deps(), tenantId, user.id, { debtorId: settled.id, invoiceId: inv.id }))
       .rejects.toMatchObject({ code: "NOTHING_DUE" });

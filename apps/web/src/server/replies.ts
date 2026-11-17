@@ -82,7 +82,7 @@ export async function processInboundReply(
   });
 
   // (3) Allowlist + apply.
-  return withTenant(app, tenantId, async (tx) => {
+  const txResult = await withTenant(app, tenantId, async (tx) => {
     await tx.insert(usageLedger).values({
       tenantId, kind: "llm_text", units: result.inputTokens + result.outputTokens, costEstimateMinor: 0n,
     });
@@ -137,11 +137,6 @@ export async function processInboundReply(
       );
       if (future.length > 0) {
         await tx.update(reminders).set({ dueAt: target, updatedAt: now }).where(eq(reminders.id, future[0]!.id));
-      } else {
-        const notBefore = zonedTimeToUtc(addDaysIso(promisedDate, 1), "00:00", setup.tenant.timezone);
-        for (const inv of setup.openInvoices) {
-          await planForInvoice(deps.engine, tenantId, inv.id, now, { notBefore }).catch(() => undefined);
-        }
       }
     }
     if (action === "request_receipt") {
@@ -161,23 +156,21 @@ export async function processInboundReply(
           channel: "whatsapp", provider: "whatsapp", templateKey: "invoice_overdue",
           bodyText: body, status: "queued",
         });
-        try {
-          await deps.engine.providers.whatsapp.sendText({
-            toE164: debtor.phoneE164, body, idempotencyKey: `receipt-ask:${input.messageId}`,
-          });
-        } catch { /* recorded; send failure never undoes the classification */ }
       }
     }
     if (action === "open_dispute") {
       const first = setup.openInvoices[0];
-      if (first && canTransition(first.status, "disputed")) {
+      const [lockedInv] = first
+        ? await tx.select().from(invoices).where(eq(invoices.id, first.id)).for("update")
+        : [undefined];
+      if (lockedInv && canTransition(lockedInv.status, "disputed")) {
         await tx.insert(disputes).values({
-          tenantId, invoiceId: first.id, debtorId: debtor.id,
+          tenantId, invoiceId: lockedInv.id, debtorId: debtor.id,
           raisedBy: "debtor", reason: input.text.slice(0, 1000), status: "open",
         });
-        await tx.update(invoices).set({ status: "disputed", updatedAt: now }).where(eq(invoices.id, first.id));
-        await audit(tx, tenantId, "dispute.raised", "invoice", first.id, { via: "reply_ai", messageId: input.messageId });
-        await audit(tx, tenantId, "invoice.disputed", "invoice", first.id, { via: "reply_ai" });
+        await tx.update(invoices).set({ status: "disputed", updatedAt: now }).where(eq(invoices.id, lockedInv.id));
+        await audit(tx, tenantId, "dispute.raised", "invoice", lockedInv.id, { via: "reply_ai", messageId: input.messageId });
+        await audit(tx, tenantId, "invoice.disputed", "invoice", lockedInv.id, { via: "reply_ai" });
       } else {
         await audit(tx, tenantId, "reply.dispute_flagged", "debtor", debtor.id, { messageId: input.messageId });
       }
@@ -187,16 +180,46 @@ export async function processInboundReply(
         .where(eq(debtors.id, debtor.id));
       await audit(tx, tenantId, "debtor.phone_marked_invalid", "debtor", debtor.id, { via: "reply_ai", messageId: input.messageId });
     }
-    if (action === "opt_out") {
-      // LLM-detected opt-out (keyword missed it): same recording path.
-      await applyOptOut(deps.engine, tenantId, debtor.id, now, "llm");
-    }
+    const needPlanInvoices = action === "replan_after_promise" && promisedDate
+      ? (await tx.select({ id: reminders.id }).from(reminders).where(and(eq(reminders.debtorId, debtor.id), eq(reminders.status, "scheduled"))).limit(1)).length === 0
+      : false;
+    const receiptAskBody = action === "request_receipt" && setup.openInvoices[0]
+      ? renderTemplate("invoice_overdue", "ar", {
+          business: setup.tenant.businessNameAr,
+          amount: formatMoney(setup.openInvoices[0].amountMinor - setup.openInvoices[0].paidMinor > 0n ? setup.openInvoices[0].amountMinor - setup.openInvoices[0].paidMinor : 0n, normalizeCurrencyCode(setup.tenant.settings?.currency), { locale: "ar" }),
+          due_date: setup.openInvoices[0].dueOn,
+        })
+      : null;
     return {
-      intent: classification.intent, confidence: classification.confidence,
-      action, resolvedBy: (auto ? "auto" : "human") as "auto" | "human",
-      intentId: intentRow!.id, promisedDate,
+      outcome: {
+        intent: classification.intent, confidence: classification.confidence,
+        action, resolvedBy: (auto ? "auto" : "human") as "auto" | "human",
+        intentId: intentRow!.id, promisedDate,
+      },
+      needPlanInvoices,
+      receiptAskBody,
     };
   });
+  if ("needPlanInvoices" in txResult && txResult.outcome) {
+    if (txResult.needPlanInvoices && txResult.outcome.promisedDate) {
+      const notBefore = zonedTimeToUtc(addDaysIso(txResult.outcome.promisedDate, 1), "00:00", setup.tenant.timezone);
+      for (const inv of setup.openInvoices) {
+        await planForInvoice(deps.engine, tenantId, inv.id, now, { notBefore }).catch(() => undefined);
+      }
+    }
+    if (txResult.receiptAskBody) {
+      try {
+        await deps.engine.providers.whatsapp.sendText({
+          toE164: setup.debtor.phoneE164, body: txResult.receiptAskBody, idempotencyKey: `receipt-ask:${input.messageId}`,
+        });
+      } catch { /* recorded; send failure never undoes the classification */ }
+    }
+    if (txResult.outcome.action === "opt_out") {
+      await applyOptOut(deps.engine, tenantId, setup.debtor.id, now, "llm");
+    }
+    return txResult.outcome;
+  }
+  return txResult as ReplyOutcome;
 }
 
 /**

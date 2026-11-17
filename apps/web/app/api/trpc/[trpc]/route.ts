@@ -1,10 +1,11 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
-import { AppError } from "@tahseel/core";
+import { AppError, toApiErrorBody } from "@tahseel/core";
 import { appRouter } from "@/server/routers";
 import { createTrpcContext } from "@/server/trpc";
 import { env } from "@/server/env";
 import { clientIp, rateLimit } from "@/server/rate-limit";
+import { readRequestBodyLimited, RequestBodyTooLargeError } from "@/server/request-body";
 
 /**
  * M7: the tRPC handler is rate-limited per caller — 120 req/min overall,
@@ -14,6 +15,8 @@ import { clientIp, rateLimit } from "@/server/rate-limit";
  * valid Better Auth signed cookie is present (one-way hash — no session
  * material in the key, no DB hit), else the hashed client IP.
  */
+const NO_STORE = { "Cache-Control": "no-store" };
+const MAX_TRPC_BODY_BYTES = 16 * 1024 * 1024;
 const AI_PROCEDURES = new Set([
   "ledgerAi.runExtraction",
   "receipts.uploadAndProcess",
@@ -76,11 +79,11 @@ function isAiProcedure(req: Request): boolean {
 function limited(status: number, retryAfterSeconds: number): Response {
   return Response.json(
     { error: { code: "RATE_LIMITED", message: "Too many requests" } },
-    { status, headers: { "Retry-After": String(retryAfterSeconds) } },
+    { status, headers: { ...NO_STORE, "Retry-After": String(retryAfterSeconds) } },
   );
 }
 
-const handler = (req: Request) => {
+const handler = async (req: Request): Promise<Response> => {
   const key = callerKey(req);
   const general = rateLimit(`trpc:${key}`, { limit: 120, windowSeconds: 60 });
   if (!general.allowed) return limited(429, general.retryAfterSeconds);
@@ -88,18 +91,42 @@ const handler = (req: Request) => {
     const ai = rateLimit(`trpc:ai:${key}`, { limit: 20, windowSeconds: 60 });
     if (!ai.allowed) return limited(429, ai.retryAfterSeconds);
   }
-  return fetchRequestHandler({
-    endpoint: "/api/trpc",
-    req,
-    router: appRouter,
-    createContext: () => createTrpcContext(req.headers),
-    responseMeta(opts) {
-      const appErr = opts.errors.map((e) => e.cause).find((c) => c instanceof AppError) as AppError | undefined;
-      if (appErr) {
-        return { status: appErr.status };
+  let forwardedReq = req;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    try {
+      const rawBytes = await readRequestBodyLimited(req, MAX_TRPC_BODY_BYTES);
+      forwardedReq = new Request(req.url, {
+        method: req.method,
+        headers: req.headers,
+        body: rawBytes as never,
+      });
+    } catch (err) {
+      if (err instanceof RequestBodyTooLargeError) {
+        return Response.json(
+          toApiErrorBody(new AppError("BODY_TOO_LARGE", "Request body too large", 413)),
+          { status: 413, headers: NO_STORE },
+        );
       }
-      return {};
-    },
-  });
+      return Response.json(
+        toApiErrorBody(new AppError("BAD_BODY", "Could not read request body", 400)),
+        { status: 400, headers: NO_STORE },
+      );
+    }
+  }
+  try {
+    return await fetchRequestHandler({
+      endpoint: "/api/trpc",
+      req: forwardedReq,
+      router: appRouter,
+      createContext: () => createTrpcContext(req.headers),
+      responseMeta(opts) {
+        const appErr = opts.errors.map((e) => e.cause).find((c) => c instanceof AppError) as AppError | undefined;
+        return appErr ? { status: appErr.status, headers: NO_STORE } : { headers: NO_STORE };
+      },
+    });
+  } catch (err) {
+    const status = err instanceof AppError ? err.status : 500;
+    return Response.json(toApiErrorBody(err), { status, headers: NO_STORE });
+  }
 };
 export { handler as GET, handler as POST };

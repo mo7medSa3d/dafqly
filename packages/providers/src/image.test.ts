@@ -35,19 +35,22 @@ describe("generateImage", () => {
       siteName: "ExampleApp",
     });
 
-    expect(fetchMock).toHaveBeenCalledWith("https://openrouter.ai/api/v1/images", {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer test-key",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://example.com",
-        "X-Title": "ExampleApp",
-      },
-      body: JSON.stringify({
-        model: DEFAULT_IMAGE_MODEL,
-        prompt: "a sunny beach",
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://openrouter.ai/api/v1/images",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-key",
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://example.com",
+          "X-Title": "ExampleApp",
+        },
+        body: JSON.stringify({
+          model: DEFAULT_IMAGE_MODEL,
+          prompt: "a sunny beach",
+        }),
       }),
-    });
+    );
 
     expect(result).toHaveLength(1);
     expect(Buffer.from(result[0]!.bytes).toString()).toBe("fake-image-bytes");

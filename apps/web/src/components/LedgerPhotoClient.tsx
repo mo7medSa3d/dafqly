@@ -122,7 +122,7 @@ export function LedgerPhotoClient() {
     }
   }
 
-  async function onFiles(files: FileList | File[]) {
+  async function onFiles(files: FileList) {
     setMsg(null);
     const list = Array.from(files);
     if (list.length > 10) {
@@ -253,7 +253,7 @@ export function LedgerPhotoClient() {
             multiple
             disabled={busy}
             className="sr-only"
-            onChange={(e) => { const list = Array.from(e.target.files ?? []); e.target.value = ""; if (list.length) void onFiles(list); }}
+            onChange={(e) => { const files = e.target.files; e.target.value = ""; if (files?.length) void onFiles(files); }}
           />
         </label>
 

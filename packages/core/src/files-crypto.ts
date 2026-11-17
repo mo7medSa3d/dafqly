@@ -110,7 +110,7 @@ function stripPngMetadata(bytes: Uint8Array): Uint8Array {
   const kept: Uint8Array[] = [bytes.subarray(0, 8)];
   let at = 8;
   while (at + 8 <= bytes.length) {
-    const len = (bytes[at]! << 24) | (bytes[at + 1]! << 16) | (bytes[at + 2]! << 8) | bytes[at + 3]!;
+    const len = ((bytes[at]! << 24) | (bytes[at + 1]! << 16) | (bytes[at + 2]! << 8) | bytes[at + 3]!) >>> 0;
     const type = ascii(bytes, at + 4, 4);
     if (len < 0 || at + 12 + len > bytes.length) throw invalidImage();
     if (!PNG_METADATA_CHUNKS.has(type)) kept.push(bytes.subarray(at, at + 12 + len));
@@ -126,7 +126,7 @@ function stripWebpExif(bytes: Uint8Array): Uint8Array {
   let at = 12;
   while (at + 8 <= bytes.length) {
     const id = ascii(bytes, at, 4);
-    const len = bytes[at + 4]! | (bytes[at + 5]! << 8) | (bytes[at + 6]! << 16) | (bytes[at + 7]! << 24);
+    const len = (bytes[at + 4]! | (bytes[at + 5]! << 8) | (bytes[at + 6]! << 16) | (bytes[at + 7]! << 24)) >>> 0;
     const padded = len + (len % 2);
     if (len < 0 || at + 8 + padded > bytes.length) throw invalidImage();
     if (id !== "EXIF") kept.push(bytes.subarray(at, at + 8 + padded));
@@ -166,6 +166,8 @@ export const MAX_UPLOAD_BASE64_CHARS = 11_200_000;
  * Accepts an optional `data:<mime>;base64,` prefix.
  */
 export function decodeBase64Upload(b64: string, maxBytes: number = MAX_UPLOAD_BYTES): Uint8Array {
+  if (typeof b64 !== "string") throw new AppError("INVALID_UPLOAD", "Upload payload must be a string", 400);
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) throw new AppError("INVALID_UPLOAD", "Invalid max upload size", 400);
   let body = b64;
   const comma = b64.indexOf(",");
   if (comma !== -1 && /^data:[^,]*;base64$/.test(b64.slice(0, comma))) body = b64.slice(comma + 1);

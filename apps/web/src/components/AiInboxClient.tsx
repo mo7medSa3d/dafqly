@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useTranslations, useLocale } from "next-intl";
 import { useCurrency } from "./CurrencyContext";
-import { ChatCircleDots, Check, CheckCircle, Clock, Copy, Robot, ShieldCheck, Sparkle, UploadSimple, User, XCircle } from "@/components/ui/solid-icons";
+import { ChatCircleDots, Check, CheckCircle, Clock, Copy, Robot, Sparkle, UploadSimple, User, XCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { InitialAvatar, LoadingState, Panel, btnPrimary, inputCls, labelCls } from "./ui";
 
@@ -239,7 +239,7 @@ export function AiInboxClient() {
   return (
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
       {/* Main Review Column (8 cols) */}
-      <section className="flex flex-col gap-6 lg:col-span-8">
+      <section className="flex min-w-0 flex-col gap-6 lg:col-span-8">
         {loadError && (
           <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-danger/30 bg-danger-bg px-4 py-3 text-sm font-semibold text-danger">
             <span>{loadError}</span>
@@ -285,11 +285,11 @@ export function AiInboxClient() {
                     <div className="flex min-w-0 items-center gap-3">
                       <InitialAvatar name={c.debtorName} size={40} />
                       <div className="min-w-0">
-                        <p className="font-bold text-text">{c.debtorName}</p>
+                        <p className="break-words font-bold text-text">{c.debtorName}</p>
                         <p className="text-xs text-text-muted">{c.method} · <span dir="ltr">{c.receivedOn}</span>{c.referenceNo ? ` · ${c.referenceNo}` : ""}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4">
+                    <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                       <span className="tnum text-lg font-extrabold text-primary" dir="ltr">{format(BigInt(c.amountMinor), c.currency ? { currency: c.currency } : undefined)}</span>
                       <div className="flex gap-2">
                         <button
@@ -351,7 +351,7 @@ export function AiInboxClient() {
                   return (
                     <li key={i.id} data-testid={`intent-${i.id}`} className="flex flex-col gap-2.5 p-4 transition-colors hover:bg-callout/40 sm:p-5">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 font-bold text-text">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2 font-bold text-text">
                           <span>{i.debtorName ?? (isAr ? "عميل غير محدد" : "Unassigned")}</span>
                           <span className="rounded bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{i.intent}</span>
                         </div>
@@ -359,7 +359,7 @@ export function AiInboxClient() {
                           {Math.round(i.confidence * 100)}% {isAr ? "ثقة" : "confidence"}
                         </span>
                       </div>
-                      {i.text && <p className="rounded-xl bg-surface-muted/60 p-3 text-sm text-text">{i.text}</p>}
+                      {i.text && <p className="break-words rounded-xl bg-surface-muted/60 p-3 text-sm text-text">{i.text}</p>}
 
                       {/* AI Suggested Smart Reply Box */}
                       {suggested && (
@@ -375,7 +375,7 @@ export function AiInboxClient() {
                                 {suggested.generationMode === "ai" ? (isAr ? "صياغة AI" : "AI-written") : (isAr ? "قالب آمن" : "Safe template")}
                               </span>
                             </span>
-                            <span className="rounded bg-surface px-2.5 py-0.5 text-[11px] font-semibold text-text-muted">
+                            <span className="max-w-full break-words rounded bg-surface px-2.5 py-0.5 text-[11px] font-semibold text-text-muted">
                               {isAr ? suggested.recommendedActionAr : suggested.recommendedActionEn}
                             </span>
                           </div>
@@ -467,8 +467,8 @@ export function AiInboxClient() {
         </div>
       </section>
 
-      {/* Side Column: Upload Receipt & Guide (4 cols) */}
-      <aside className="flex flex-col gap-6 lg:col-span-4">
+      {/* Side Column: Upload Receipt (4 cols) */}
+      <aside className="flex min-w-0 flex-col gap-6 lg:col-span-4">
         <Panel title={t("receiptUploadTitle")} icon={UploadSimple}>
           <div className="flex flex-col gap-4">
             <label className={labelCls}>
@@ -504,17 +504,6 @@ export function AiInboxClient() {
           </div>
         </Panel>
 
-        <div className="panel-shadow flex flex-col gap-3 rounded-xl border border-border bg-surface p-5 text-xs text-text-muted">
-          <div className="flex items-center gap-2 text-sm font-bold text-text">
-            <ShieldCheck size={18} className="text-primary" />
-            <span>{isAr ? "سياسة التحقق والاعتماد" : "Verification Policy"}</span>
-          </div>
-          <p className="leading-relaxed">
-            {isAr
-              ? "تُسجل التحويلات فورياً كمدفوعات قيد التدقيق، لضمان مطابقة الإيداع البنكي الفعلي قبل تسوية الفواتير."
-              : "Payments are logged as pending review to guarantee reconciliation against bank deposits before closing invoices."}
-          </p>
-        </div>
       </aside>
     </div>
   );

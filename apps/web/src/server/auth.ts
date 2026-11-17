@@ -36,8 +36,8 @@ export function emailVerificationEnabled(): boolean {
 function buildAuth() {
   return betterAuth({
     appName: "DAFQLY",
-    secret: process.env.BETTER_AUTH_SECRET ?? env().SESSION_SECRET,
-    baseURL: process.env.BETTER_AUTH_URL ?? env().APP_URL,
+    secret: process.env.BETTER_AUTH_SECRET?.trim() || env().SESSION_SECRET,
+    baseURL: process.env.BETTER_AUTH_URL?.trim() || env().APP_URL,
     database: drizzleAdapter(ownerDb(), {
       provider: "pg",
       schema: { user: schema.user, session: schema.session, account: schema.account, verification: schema.verification },

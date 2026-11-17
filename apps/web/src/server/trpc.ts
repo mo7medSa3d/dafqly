@@ -31,9 +31,10 @@ const t = initTRPC.context<TrpcContext>().create({
   errorFormatter({ shape, error }) {
     const appErr = error.cause instanceof AppError ? error.cause : undefined;
     const zodIssues = error.cause instanceof z.ZodError ? error.cause.issues : undefined;
+    const isProdInternal = process.env.NODE_ENV === "production" && error.code === "INTERNAL_SERVER_ERROR" && !appErr && !zodIssues;
     return {
       ...shape,
-      message: appErr?.message ?? error.message,
+      message: appErr?.message ?? (isProdInternal ? "Internal server error" : error.message),
       data: {
         ...shape.data,
         code: appErr?.code ?? shape.data?.code,

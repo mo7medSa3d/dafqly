@@ -74,7 +74,7 @@ test("M6 danger zone: export works, wrong delete confirmation is refused", async
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("export-all").click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toContain("tahseel-export-");
+  expect(download.suggestedFilename()).toContain("dafqly-export-");
   await page.getByTestId("delete-confirmation").fill("اسم غلط");
   await page.getByTestId("delete-all").click();
   await expect(page.getByTestId("deleted-note")).toHaveCount(0);

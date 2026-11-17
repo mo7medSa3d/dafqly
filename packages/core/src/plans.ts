@@ -48,11 +48,12 @@ export interface QuotaStatus {
  * 100%. An unlimited plan (quota null) never warns or blocks.
  */
 export function quotaStatus(input: { usedUnits: number; quota: number | null }): QuotaStatus {
-  const used = Math.max(0, Math.floor(input.usedUnits));
-  if (input.quota === null) return { used, quota: null, ratio: 0, state: "ok" };
-  const ratio = input.quota > 0 ? used / input.quota : used > 0 ? Infinity : 0;
+  const used = Number.isFinite(input.usedUnits) ? Math.max(0, Math.floor(input.usedUnits)) : 0;
+  if (input.quota === null || input.quota === Infinity) return { used, quota: null, ratio: 0, state: "ok" };
+  const quota = Number.isFinite(input.quota) ? Math.max(0, Math.floor(input.quota)) : 0;
+  const ratio = quota > 0 ? used / quota : used > 0 ? 1 : 0;
   const state: QuotaState = ratio >= 1 ? "exceeded" : ratio >= 0.8 ? "warn" : "ok";
-  return { used, quota: input.quota, ratio, state };
+  return { used, quota, ratio, state };
 }
 
 // --------------------------------------------------------------- trial guard
@@ -65,5 +66,8 @@ export function quotaStatus(input: { usedUnits: number; quota: number | null }):
 export function planAllowsSending(input: { plan: string; trialEndsAt: Date | null }, now: Date): boolean {
   if (input.plan !== "trial") return true;
   if (input.trialEndsAt === null) return true;
-  return input.trialEndsAt.getTime() >= now.getTime();
+  const endsMs = input.trialEndsAt.getTime();
+  const nowMs = now.getTime();
+  if (Number.isNaN(endsMs) || Number.isNaN(nowMs)) return false;
+  return endsMs >= nowMs;
 }

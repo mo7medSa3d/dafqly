@@ -30,7 +30,10 @@ export interface NormalizedPhone {
 }
 
 export function normalizePhone(input: string, defaultCountry: CountryCode = "EG"): NormalizedPhone {
-  const cleaned = normalizeDigits(input).replace(/[\s()-]/g, "").replace(/^00(?=\d{5,})/, "+");
+  if (typeof input !== "string") throw new PhoneError(String(input ?? ""), "empty");
+  const cleaned = normalizeDigits(input)
+    .replace(/[\s()\-\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "")
+    .replace(/^00(?=\d{5,})/, "+");
   if (cleaned === "") throw new PhoneError(input, "empty");
   const parsed = parsePhoneNumberFromString(cleaned, defaultCountry);
   if (!parsed || !parsed.isValid()) throw new PhoneError(input, "not a valid phone number");

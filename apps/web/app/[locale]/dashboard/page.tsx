@@ -1,7 +1,8 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
-import { formatCurrencyMinor, formatMoney, formatPct, formatDso, getCurrencySymbol } from "@tahseel/core";
+import { formatDso, getCurrencySymbol } from "@tahseel/core";
+import { formatCount, formatCurrency, formatCurrencyAmount, formatPercent } from "@/lib/format";
 import { auth } from "@/server/auth";
 import { runtimeModeFlags } from "@/server/env";
 import { appDb, ownerDb } from "@/server/db";
@@ -43,9 +44,8 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
 
   const isEmpty = summary.openInvoices === 0 && summary.debtors === 0;
   const currency = tenant.settings?.currency ?? "EGP";
-  const digits = tenant.settings?.easternDigits ? "eastern" : "latin";
   const currencySymbol = getCurrencySymbol(currency, locale);
-  const fmt = (minor: string) => formatCurrencyMinor(BigInt(minor), currency, { digits });
+  const fmt = (minor: string) => formatCurrencyAmount(minor, currency);
   const otherCurrencies = kpisFull.byCurrency.filter(
     (b) =>
       b.currency !== currency &&
@@ -62,26 +62,23 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
   const perf = kpisFull.reminderPerformance;
 
   // Strictly real data series — never fabricated fallback numbers
-  const weekSeries = forecast.weeks.length >= 2
+  const weekSeries = forecast.weeks.length >= 3
     ? forecast.weeks.map((w) => w.expectedMinor)
-    : [0, 0];
-  const collectedSeries = forecast.weeks.length >= 2
+    : [];
+  const weekLabels = forecast.weeks.map((w) => w.weekStart);
+  const collectedSeries = forecast.weeks.length >= 3
     ? forecast.weeks.map((w) => w.conservativeMinor)
-    : [0, Number(summary.collectedThisMonthMinor)];
-  const agingSeries = [
-    kpisFull.agingBuckets.current,
-    kpisFull.agingBuckets["0-7"],
-    kpisFull.agingBuckets["8-30"],
-    kpisFull.agingBuckets["31-60"],
-    kpisFull.agingBuckets["60+"],
-  ];
-  const overdueSeries = agingSeries.some((v) => v > 0) ? agingSeries : [0, 0];
+    : [];
+  const totalOutNum = Number(summary.totalOutstandingMinor);
+  const overdueNum = Number(summary.overdueMinor);
+  const currentRatioPct = totalOutNum > 0 ? Math.round(((totalOutNum - overdueNum) / totalOutNum) * 100) : 100;
+  const overdueRatioPct = totalOutNum > 0 ? Math.round((overdueNum / totalOutNum) * 100) : 0;
 
   return (
     <AppShell
       locale={locale}
       demoMode={runtimeModeFlags()}
-      digits={tenant.settings?.easternDigits ? "eastern" : "latin"}
+      digits="latin"
       businessName={tenant.businessNameAr}
       currency={currency}
       testId="dashboard"
@@ -113,15 +110,18 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             subtitle={isAr ? "إجمالي المحفظة" : "Portfolio balance"}
             value={fmt(summary.totalOutstandingMinor)}
             unit={currencySymbol}
-            badge={`${summary.openInvoices} ${t("openInvoices")}`}
+            badge={`${formatCount(summary.openInvoices, locale)} ${t("openInvoices")}`}
             series={weekSeries}
-            color="var(--chart-2)"
+            seriesLabels={weekLabels}
+            sourceLabel={isAr ? "توقع التحصيل (8 أسابيع)" : "8-week expected inflow"}
+            ratioBar={{ pct: currentRatioPct, label: isAr ? "نسبة الأرصدة غير المستحقة بعد" : "Not yet due share" }}
+            color="var(--status-paid-fg)"
             testId="kpi-outstanding"
             extra={
               <span>
-                <span data-testid="kpi-open" className="tnum font-bold text-foreground" dir="ltr">{summary.openInvoices}</span> {t("openInvoices")}
+                <span data-testid="kpi-open" className="tnum font-bold text-foreground" dir="ltr">{formatCount(summary.openInvoices, locale)}</span> {t("openInvoices")}
                 {" · "}
-                <span data-testid="kpi-debtors" className="tnum font-bold text-foreground" dir="ltr">{summary.debtors}</span> {t("debtors")}
+                <span data-testid="kpi-debtors" className="tnum font-bold text-foreground" dir="ltr">{formatCount(summary.debtors, locale)}</span> {t("debtors")}
               </span>
             }
           />
@@ -133,10 +133,13 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             subtitle={isAr ? "مقبوضات الشهر" : "Monthly receipts"}
             value={fmt(summary.collectedThisMonthMinor)}
             unit={currencySymbol}
-            badge={formatPct(kpisFull.collectionRate)}
+            badge={formatPercent(kpisFull.collectionRate, locale)}
             badgeTone="positive"
             series={collectedSeries}
-            color="var(--primary)"
+            seriesLabels={weekLabels}
+            sourceLabel={isAr ? "التحصيل المتحفظ (8 أسابيع)" : "8-week conservative inflow"}
+            ratioBar={{ pct: kpisFull.collectionRate * 100, label: isAr ? "معدل التحصيل الشهري" : "Monthly collection rate" }}
+            color="var(--chart-2)"
             testId="kpi-collected"
             extra={
               BigInt(summary.refundedThisMonthMinor) > 0n ? (
@@ -158,7 +161,8 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             unit={currencySymbol}
             badge={BigInt(summary.overdueMinor) > 0n ? (isAr ? "متأخر" : "Overdue") : (isAr ? "سليم" : "Clear")}
             badgeTone={BigInt(summary.overdueMinor) > 0n ? "danger" : "positive"}
-            series={overdueSeries}
+            series={[]}
+            ratioBar={{ pct: overdueRatioPct, label: isAr ? "نسبة المتأخرات من المحفظة" : "Overdue share of portfolio" }}
             color="var(--destructive)"
             testId="kpi-overdue"
             extra={
@@ -183,17 +187,17 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-mono font-extrabold text-foreground">{b.currency}</span>
                   <span className="tnum font-extrabold text-foreground" dir="ltr">
-                    {formatMoney(b.outstandingMinor, b.currency, { locale, digits })}
+                    {formatCurrency(b.outstandingMinor, b.currency, locale)}
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
                   <span>
                     {isAr ? "متأخر:" : "Overdue:"}{" "}
-                    <span className="tnum font-semibold" dir="ltr">{formatMoney(b.overdueMinor, b.currency, { locale, digits })}</span>
+                    <span className="tnum font-semibold" dir="ltr">{formatCurrency(b.overdueMinor, b.currency, locale)}</span>
                   </span>
                   <span>
                     {isAr ? "تحصيل الشهر:" : "Month:"}{" "}
-                    <span className="tnum font-semibold" dir="ltr">{formatMoney(b.collectedInMonthMinor, b.currency, { locale, digits })}</span>
+                    <span className="tnum font-semibold" dir="ltr">{formatCurrency(b.collectedInMonthMinor, b.currency, locale)}</span>
                   </span>
                 </div>
               </div>
@@ -228,7 +232,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
                 <ForecastIllustration size={76} />
                 <p data-testid="forecast-not-enough" className="text-base font-bold">{tr("forecastNotEnough")}</p>
                 <p className="max-w-md text-xs text-muted-foreground">
-                  {isAr ? "أضف فواتير ومدفوعات لتفعيل منحنى التدفقات النقدية لـ ٨ أسابيع." : "Log invoices and payments to unlock the 8-week cashflow projection."}
+                  {isAr ? "أضف فواتير ومدفوعات لتفعيل منحنى التدفقات النقدية لـ 8 أسابيع." : "Log invoices and payments to unlock the 8-week cashflow projection."}
                 </p>
               </div>
             ) : (
@@ -255,7 +259,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
                 <div className="rounded-lg bg-muted/60 p-3">
                   <p className="text-[11px] font-bold text-muted-foreground">{tr("collectionRate")}</p>
                   <p data-testid="kpi-collection-rate" className="tnum mt-1 text-lg font-extrabold text-foreground" dir="ltr">
-                    {formatPct(kpisFull.collectionRate)}
+                    {formatPercent(kpisFull.collectionRate, locale)}
                   </p>
                 </div>
                 <div className="rounded-lg bg-muted/60 p-3">

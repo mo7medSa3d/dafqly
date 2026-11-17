@@ -81,7 +81,9 @@ d("tRPC tenant isolation + onboarding rules", () => {
           debtorId: debtor.id, amount: "100.5", method: "cash", receivedOn: "2026-11-05",
           allocations: [{ invoiceId: jpy.id, amount: "100.5" }],
         });
-      } catch (e) { caught = e; }
+      } catch (e) {
+        caught = e;
+      }
       expect(caught).toBeDefined();
       // tRPC wraps the thrown AppError as the TRPCError's cause; the
       // route's responseMeta maps that cause to HTTP 400, and the

@@ -1,11 +1,16 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { and, inArray, isNull } from "drizzle-orm";
-import { webhookEvents } from "@tahseel/db/schema";
-import { persistWebhookEvents, processWebhookEvents, verifyWebhookSignature, type WebhookEvent } from "@tahseel/reminders";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import { withTenant } from "@tahseel/db";
+import { tenants, webhookEvents } from "@tahseel/db/schema";
+import { WhatsAppCloudProvider } from "@tahseel/providers";
+import {
+  persistWebhookEvents, processWebhookEvents, resolveTenantWhatsappOverride, verifyWebhookSignature, type WebhookEvent,
+} from "@tahseel/reminders";
 import { aiDeps, engineDeps } from "@/server/engine";
 import { env } from "@/server/env";
 import { clientIp, rateLimit, rateLimitPeek } from "@/server/rate-limit";
 import { appDb, ownerDb } from "@/server/db";
+import { processReceiptImage } from "@/server/receipts";
 import { processInboundReply, recordPendingReceiptIntent } from "@/server/replies";
 import { withAiTenantContext } from "@/server/ai-budget";
 import { readRequestBodyLimited, RequestBodyTooLargeError } from "@/server/request-body";
@@ -58,7 +63,8 @@ export async function POST(req: Request): Promise<Response> {
   // The bad-signature bucket only fills on failures (peek: no consumption).
   const badSig = rateLimitPeek(`webhook:whatsapp:bad-sig:${ip}`, { limit: 10, windowSeconds: 60 });
   if (!badSig.allowed) return webhook429(badSig.retryAfterSeconds);
-  const secret = env().WHATSAPP_APP_SECRET;
+  const e = env();
+  const secret = e.WHATSAPP_APP_SECRET;
   if (!secret) {
     return Response.json({ error: { code: "WEBHOOK_NOT_CONFIGURED", message: "WHATSAPP_APP_SECRET is not set" } }, { status: 503, headers: NO_STORE });
   }
@@ -86,21 +92,53 @@ export async function POST(req: Request): Promise<Response> {
   }
   const owner = ownerDb();
   const deps = engineDeps();
+  deps.sessionSecret = e.SESSION_SECRET;
   // F8/F7 hooks: non-opt-out texts go to reply understanding; inbound images
-  // record a pending receipt intent (media bytes are media_pending — the
-  // download itself needs the Meta token, see RUNBOOK M4).
+  // download media via Meta Graph API (falling back to pending receipt intent
+  // on failure or when WhatsApp is in dry-run/unconfigured mode).
   deps.onInboundReply = async (info) => {
     await withAiTenantContext(info.tenantId, () => processInboundReply(appDb(), info.tenantId, { llm: aiDeps().llm, engine: deps }, info));
   };
   deps.onInboundImage = async (info) => {
-    await recordPendingReceiptIntent(appDb(), info.tenantId, info);
+    if (!info.mediaId || e.DRY_RUN_MESSAGING) {
+      await recordPendingReceiptIntent(appDb(), info.tenantId, info);
+      return;
+    }
+    try {
+      const tenantRow = await withTenant(appDb(), info.tenantId, async (tx) => {
+        const [row] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, info.tenantId));
+        return row ?? null;
+      });
+      const override = resolveTenantWhatsappOverride(tenantRow?.settings, e.SESSION_SECRET);
+      const accessToken = override?.accessToken || e.WHATSAPP_ACCESS_TOKEN;
+      const apiVersion = e.WHATSAPP_API_VERSION || "v27.0";
+      if (!accessToken) {
+        await recordPendingReceiptIntent(appDb(), info.tenantId, info);
+        return;
+      }
+      const wa = new WhatsAppCloudProvider({
+        apiVersion,
+        phoneNumberId: override?.phoneNumberId || e.WHATSAPP_PHONE_NUMBER_ID || "",
+        accessToken,
+      });
+      const { bytes, mime } = await wa.downloadMedia(info.mediaId, { apiVersion, accessToken });
+      await withAiTenantContext(info.tenantId, () =>
+        processReceiptImage(appDb(), info.tenantId, null, { llm: aiDeps().llm, storage: aiDeps().storage }, {
+          debtorId: info.debtorId,
+          bytes,
+          mime,
+        }),
+      );
+    } catch {
+      await recordPendingReceiptIntent(appDb(), info.tenantId, info);
+    }
   };
   let events: WebhookEvent[];
   try {
     const persisted = await persistWebhookEvents(owner, payload);
     events = persisted.events;
   } catch {
-    // Persistence failed before inbox capture: return 500 so Meta retries.
+    // Persistence failed before inbox capture: return 500 so Meta does not retry.
     return Response.json({ error: { code: "PERSIST_FAILED", message: "could not persist webhook" } }, { status: 500, headers: NO_STORE });
   }
   if (events.length === 0) {

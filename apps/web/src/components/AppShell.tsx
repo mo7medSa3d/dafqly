@@ -410,7 +410,7 @@ export function AppShell({
 
                   {/* Vercel Breadcrumb */}
                   <div className="hidden min-w-0 items-center gap-2 text-sm lg:flex">
-                    <span className="font-semibold text-muted-foreground">{businessName}</span>
+                    <span className="max-w-[200px] truncate font-semibold text-muted-foreground">{businessName}</span>
                     <span className="text-border">/</span>
                     <span className="flex items-center gap-1.5 font-semibold text-foreground">
                       <activeItem.Icon size={15} className="text-muted-foreground" aria-hidden />
@@ -420,7 +420,7 @@ export function AppShell({
                 </div>
 
                 {/* Right Controls */}
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <button
                     type="button"
                     data-testid="global-search-btn"
@@ -452,7 +452,7 @@ export function AppShell({
                 {[
                   demoMode.dryRunMessaging ? (isEn ? "messages are queued, not sent" : "الرسائل تُحفظ ولا تُرسل") : null,
                   demoMode.fakeAi ? (isEn ? "AI answers are simulated (no API key)" : "إجابات الذكاء الاصطناعي محاكاة (لا يوجد مفتاح API)") : null,
-                  demoMode.fakePayments ? (isEn ? "payment links are simulated (Paymob not connected)" : "روابط الدفع محاكاة (Paymob غير متصل)") : null,
+                  demoMode.fakePayments ? (isEn ? "subscription billing is simulated" : "فوترة الاشتراك في وضع المحاكاة") : null,
                 ]
                   .filter(Boolean)
                   .join(" · ")}
@@ -615,15 +615,15 @@ export function AppShell({
               className={cn(
                 "group inline-flex h-11 items-center gap-2.5 rounded-full border px-3.5 text-xs font-bold shadow-lg transition-all",
                 copilotOpen || aiMenuOpen
-                  ? "border-border bg-card text-foreground"
-                  : "border-transparent bg-primary text-primary-foreground hover:bg-primary-hover",
+                  ? "border-border bg-card text-foreground ring-1 ring-border/50"
+                  : "border-primary-foreground/20 bg-primary text-primary-foreground shadow-xl ring-1 ring-border/40 hover:bg-primary-hover",
               )}
             >
               <span className="relative flex size-6 items-center justify-center rounded-full">
                 <DafqlyAiMascot size={28} mood={aiMenuOpen ? "happy" : healthStatus === "urgent" ? "thinking" : "idle"} />
                 <span
                   className={cn(
-                    "absolute -end-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
+                    "absolute -end-0.5 -top-0.5 size-2 rounded-full ring-2", copilotOpen || aiMenuOpen ? "ring-card" : "ring-primary",
                     healthStatus === "urgent"
                       ? "bg-destructive"
                       : healthStatus === "attention"

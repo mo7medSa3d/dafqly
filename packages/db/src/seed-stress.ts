@@ -28,7 +28,7 @@ import {
   tenants, user, account, memberships, debtors, invoices, payments,
   paymentAllocations, cheques, promisesToPay, disputes, reminders,
   messages, messageIntents, collectionTasks, statementLinks, auditLog,
-  notifications, aiActionApprovals, paymentLinks, optOuts,
+  notifications, aiActionApprovals,
   type TenantSettings,
 } from "./schema";
 
@@ -77,26 +77,7 @@ try {
     const existingUsers = await db.select().from(user).where(eq(user.email, STRESS_EMAIL));
     for (const u of existingUsers) {
       const ms = await db.select().from(memberships).where(eq(memberships.userId, u.id));
-      for (const m of ms) {
-        await db.delete(notifications).where(eq(notifications.tenantId, m.tenantId));
-        await db.delete(aiActionApprovals).where(eq(aiActionApprovals.tenantId, m.tenantId));
-        await db.delete(reminders).where(eq(reminders.tenantId, m.tenantId));
-        await db.delete(messages).where(eq(messages.tenantId, m.tenantId));
-        await db.delete(collectionTasks).where(eq(collectionTasks.tenantId, m.tenantId));
-        await db.delete(disputes).where(eq(disputes.tenantId, m.tenantId));
-        await db.delete(promisesToPay).where(eq(promisesToPay.tenantId, m.tenantId));
-        await db.delete(cheques).where(eq(cheques.tenantId, m.tenantId));
-        await db.delete(paymentAllocations).where(eq(paymentAllocations.tenantId, m.tenantId));
-        await db.delete(payments).where(eq(payments.tenantId, m.tenantId));
-        await db.delete(invoices).where(eq(invoices.tenantId, m.tenantId));
-        await db.delete(paymentLinks).where(eq(paymentLinks.tenantId, m.tenantId));
-        await db.delete(optOuts).where(eq(optOuts.tenantId, m.tenantId));
-        await db.delete(debtors).where(eq(debtors.tenantId, m.tenantId));
-        await db.delete(statementLinks).where(eq(statementLinks.tenantId, m.tenantId));
-        await db.delete(auditLog).where(eq(auditLog.tenantId, m.tenantId));
-        await db.delete(memberships).where(eq(memberships.tenantId, m.tenantId));
-        await db.delete(tenants).where(eq(tenants.id, m.tenantId));
-      }
+      for (const m of ms) await db.delete(tenants).where(eq(tenants.id, m.tenantId));
       await db.delete(user).where(eq(user.id, u.id));
     }
     console.log("seed-stress: previous stress tenant wiped (RESET_STRESS_SEED=1)");
@@ -418,13 +399,10 @@ try {
       { type: "create_collection_task", status: "rejected", title: "تصعيد قانوني مبكر", rationale: "رُفض: التصعيد القانوني سابق لأوانه لهذا العميل.", debtor: 3, invoice: 3 },
     ];
     for (const a of approvalDefs) {
-      const payload = a.type === "create_collection_task"
-        ? { debtorId: d[a.debtor]!, invoiceId: a.invoice !== undefined ? inv(a.invoice) : undefined, title: a.title, priority: "high", dueAt: ts(3, 12).toISOString() }
-        : { debtorId: d[a.debtor]!, invoiceId: inv(a.invoice ?? 0), channel: "whatsapp", dueAt: ts(3, 12).toISOString() };
       await db.insert(aiActionApprovals).values({
         id: uuidv7(), tenantId, requestedBy: userId, actionType: a.type, status: a.status,
         title: a.title, rationale: a.rationale,
-        payload: payload as never,
+        payload: { debtorId: d[a.debtor]!, invoiceId: a.invoice !== undefined ? inv(a.invoice) : null } as never,
         approvedBy: a.status === "approved" ? userId : null,
         approvedAt: a.status === "approved" ? ts(-1) : null,
       });

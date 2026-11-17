@@ -19,9 +19,9 @@ import {
 } from "@tahseel/core";
 import { decodeBase64Upload, MAX_UPLOAD_BASE64_CHARS, sniffImageMime, stripImageExif } from "@tahseel/core/files-crypto";
 import { withTenant, type Db } from "@tahseel/db";
-import { auditLog, debtors, disputes, files, invoices, messageIntents, optOuts, paymentLinks, payments, tenants, usageLedger } from "@tahseel/db/schema";
+import { auditLog, debtors, disputes, files, invoices, messageIntents, optOuts, payments, tenants, usageLedger } from "@tahseel/db/schema";
 import { planForInvoice, planForTenant, dispatchDue } from "@tahseel/reminders";
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { aiDeps, engineDeps } from "./engine";
 
@@ -275,11 +275,11 @@ export async function generateWorkspaceNotification(
   const input = generateNotificationInput.parse(rawInput);
 
   let effectiveReference = input.reference;
-  let effectivePaymentLink = input.paymentLink;
+  const effectivePaymentLink = input.paymentLink;
   let effectiveCurrency = input.currency;
   let effectiveTimezone: string | undefined;
 
-  // Resolve tenant currency/timezone and enrich invoice reference / active checkout URL
+  // Resolve tenant currency/timezone and enrich invoice reference
   await withTenant(app, tenantId, async (tx) => {
     const [tenantRow] = await tx
       .select({ timezone: tenants.timezone, settings: tenants.settings })
@@ -292,39 +292,20 @@ export async function generateWorkspaceNotification(
     if (tenantRow?.timezone) {
       effectiveTimezone = tenantRow.timezone;
     }
-    if (input.debtorId && (!effectiveReference || !effectivePaymentLink)) {
-      if (!effectiveReference) {
-        const [oldestOpen] = await tx
-          .select({ reference: invoices.reference })
-          .from(invoices)
-          .where(
-            and(
-              eq(invoices.debtorId, input.debtorId!),
-              inArray(invoices.status, ["open", "partially_paid"]),
-            ),
-          )
-          .orderBy(asc(invoices.dueOn))
-          .limit(1);
-        if (oldestOpen?.reference) {
-          effectiveReference = oldestOpen.reference;
-        }
-      }
-      if (!effectivePaymentLink) {
-        const [activeLink] = await tx
-          .select({ checkoutUrl: paymentLinks.checkoutUrl })
-          .from(paymentLinks)
-          .where(
-            and(
-              eq(paymentLinks.debtorId, input.debtorId!),
-              eq(paymentLinks.status, "pending"),
-              gt(paymentLinks.expiresAt, new Date()),
-            ),
-          )
-          .orderBy(desc(paymentLinks.createdAt))
-          .limit(1);
-        if (activeLink?.checkoutUrl) {
-          effectivePaymentLink = activeLink.checkoutUrl;
-        }
+    if (input.debtorId && !effectiveReference) {
+      const [oldestOpen] = await tx
+        .select({ reference: invoices.reference })
+        .from(invoices)
+        .where(
+          and(
+            eq(invoices.debtorId, input.debtorId!),
+            inArray(invoices.status, ["open", "partially_paid"]),
+          ),
+        )
+        .orderBy(asc(invoices.dueOn))
+        .limit(1);
+      if (oldestOpen?.reference) {
+        effectiveReference = oldestOpen.reference;
       }
     }
   });
@@ -466,7 +447,6 @@ export async function proposeWorkspaceInstallmentPlan(
   let totalMinor = BigInt(input.totalMinor ?? 0);
   let planCurrency = tenantCurrency;
   let reference: string | undefined;
-  let paymentLink: string | undefined;
 
   if (input.debtorId) {
     await withTenant(app, tenantId, async (tx) => {
@@ -501,18 +481,6 @@ export async function proposeWorkspaceInstallmentPlan(
       }
       if (openInvs[0]?.reference) {
         reference = openInvs[0].reference;
-      }
-
-      const [activeLink] = await tx
-        .select({ checkoutUrl: paymentLinks.checkoutUrl })
-        .from(paymentLinks)
-        .where(and(eq(paymentLinks.debtorId, input.debtorId!), eq(paymentLinks.status, "pending"), gt(paymentLinks.expiresAt, new Date())))
-        .orderBy(desc(paymentLinks.createdAt))
-        .limit(1);
-      if (activeLink?.checkoutUrl && planCurrency === "EGP") {
-        // The configured Paymob gateway is EGP-only; never attach its link
-        // to a non-EGP installment plan.
-        paymentLink = activeLink.checkoutUrl;
       }
     });
   }
@@ -550,7 +518,6 @@ export async function proposeWorkspaceInstallmentPlan(
     startDateIso: input.startDateIso ?? todayIso,
     downPaymentPct: input.downPaymentPct,
     reference,
-    paymentLink,
   });
 
   await withTenant(app, tenantId, async (tx) => {
@@ -614,7 +581,6 @@ export async function suggestWorkspaceInboxReply(
   let outstandingMinor = 0n;
   let promisedDate = input.promisedDate ?? null;
   let offeredAmountMinor: bigint | null = null;
-  let paymentLink: string | undefined;
 
   await withTenant(app, tenantId, async (tx) => {
     if (input.intentId) {
@@ -649,16 +615,6 @@ export async function suggestWorkspaceInboxReply(
       // H09: the reply quotes what the debtor actually owes — a disputed
       // invoice is frozen, so only collectible invoices count here.
       outstandingMinor = openInvs.reduce((acc, inv) => acc + outstandingFor(inv), 0n);
-
-      const [activeLink] = await tx
-        .select({ checkoutUrl: paymentLinks.checkoutUrl })
-        .from(paymentLinks)
-        .where(and(eq(paymentLinks.debtorId, input.debtorId), eq(paymentLinks.status, "pending"), gt(paymentLinks.expiresAt, new Date())))
-        .orderBy(desc(paymentLinks.createdAt))
-        .limit(1);
-      if (activeLink?.checkoutUrl) {
-        paymentLink = activeLink.checkoutUrl;
-      }
     }
   });
 
@@ -672,7 +628,6 @@ export async function suggestWorkspaceInboxReply(
     // classified intent and approved factual draft provide sufficient context.
     promisedDate,
     offeredAmountMinor,
-    paymentLink,
   });
 
   let aiUsage: { inputTokens: number; outputTokens: number } | null = null;
@@ -763,7 +718,7 @@ export async function dispatchSmartReminderForDebtor(
 
     if (!debtor) return null;
 
-    const [allOpenInvs, dispRows, optRows, linkRows] = await Promise.all([
+    const [allOpenInvs, dispRows, optRows] = await Promise.all([
       tx
         .select()
         .from(invoices)
@@ -783,12 +738,6 @@ export async function dispatchSmartReminderForDebtor(
         .from(optOuts)
         .where(eq(optOuts.debtorId, input.debtorId))
         .limit(1),
-      tx
-        .select({ checkoutUrl: paymentLinks.checkoutUrl })
-        .from(paymentLinks)
-        .where(and(eq(paymentLinks.debtorId, input.debtorId), eq(paymentLinks.status, "pending"), gt(paymentLinks.expiresAt, now)))
-        .orderBy(desc(paymentLinks.createdAt))
-        .limit(1),
     ]);
 
     const defaultCurrency = normalizeCurrencyCode(tenantRow?.settings?.currency);
@@ -803,7 +752,6 @@ export async function dispatchSmartReminderForDebtor(
       openInvs,
       openDisputesCount: dispRows.length,
       optedOut: Boolean(debtor.optedOutAt) || optRows.length > 0,
-      paymentLink: linkRows[0]?.checkoutUrl,
     };
   });
 
@@ -877,7 +825,6 @@ export async function dispatchSmartReminderForDebtor(
     dueDate: primaryInv.dueOn,
     reference: primaryInv.reference ?? undefined,
     timezone: ctxData.timezone,
-    paymentLink: ctxData.paymentLink,
     tone: effectiveTone,
   };
   const smartDraftAr = generateSmartNotification({ ...draftBase, locale: "ar" });

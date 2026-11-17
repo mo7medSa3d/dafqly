@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   AppError, canTransition, deriveStatusFromPaid, outstandingFor,
   statementLinkState, STATEMENT_DEFAULT_EXPIRY_DAYS, type StatementLinkState,
+  formatMoney, normalizeCurrencyCode,
 } from "@tahseel/core";
 import { generateStatementToken, hashStatementToken } from "@tahseel/core/payments-crypto";
 import {
@@ -120,6 +121,7 @@ export interface StatementData {
    * units are never summed across currencies. */
   totalsByCurrency: { currency: string; minor: string }[];
   gatewayEnabled: boolean;
+  paymentInstructions: string;
   invoices: {
     id: string; reference: string | null; description: string | null;
     amountMinor: string; paidMinor: string; outstandingMinor: string;
@@ -179,7 +181,8 @@ export async function getStatementData(
       currency: statementCurrency,
       language: tenant.settings.exportLanguage ?? "ar",
       totalsByCurrency,
-      gatewayEnabled: tenant.settings.gatewayEnabled !== false,
+      gatewayEnabled: false,
+      paymentInstructions: tenant.settings?.paymentInstructions ?? "",
       invoices: invs.map((i) => ({
         id: i.id, reference: i.reference, description: i.description,
         amountMinor: i.amountMinor.toString(), paidMinor: i.paidMinor.toString(),
@@ -409,9 +412,8 @@ export async function createPublicPromiseRequest(
     if (!validPromisedDate || input.promisedOn < todayIso || input.promisedOn > maximumPromiseDate.toISOString().slice(0, 10)) {
       throw new AppError("BAD_PROMISE_DATE", "Choose a valid promise date within the next 365 days", 400);
     }
-    const [debtor] = await tx.select({ id: debtors.id }).from(debtors)
-      .where(and(eq(debtors.id, link.debtorId), isNull(debtors.deletedAt)));
-    if (!debtor) throw new AppError("NOT_FOUND", "Not found", 404);
+    const debtor = await lockDebtor(tx, link.debtorId);
+    if (!debtor || debtor.deletedAt) throw new AppError("NOT_FOUND", "Not found", 404);
     let balance = 0n;
     if (input.invoiceId) {
       const [invoice] = await tx.select().from(invoices)
@@ -444,6 +446,19 @@ export async function createPublicPromiseRequest(
     // M9: structured audit actor — the statement link, not a bare literal.
     await audit(tx, link.tenantId, `statement:${link.id}`, "promise.requested_from_portal", "promise_to_pay", row!.id, {
       invoiceId: input.invoiceId ?? null, amountMinor: amount.toString(), promisedOn: input.promisedOn,
+    });
+    const portalCurrency = normalizeCurrencyCode((await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, link.tenantId)))[0]?.settings?.currency);
+    await upsertNotificationInTx(tx, link.tenantId, {
+      kind: "promise_due",
+      severity: "info",
+      titleAr: `طلب وعد سداد من بوابة العميل — ${debtor.displayName}`,
+      titleEn: `Payment promise request from portal — ${debtor.displayName}`,
+      bodyAr: `المبلغ: ${formatMoney(amount, portalCurrency, { locale: "ar", digits: "latin" })} — الموعد: ${input.promisedOn}`,
+      bodyEn: `Amount: ${formatMoney(amount, portalCurrency, { locale: "en", digits: "latin" })} — Date: ${input.promisedOn}`,
+      actionUrl: "/tasks?tab=promises",
+      entityType: "promise_to_pay",
+      entityId: row!.id,
+      dedupeKey: `promise_portal:${row!.id}`,
     });
     return { id: row!.id, status: "pending" as const };
   });

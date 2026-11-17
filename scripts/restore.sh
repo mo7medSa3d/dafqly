@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Tahseel database restore (M6, RUNBOOK): pg_restore into a TARGET database
+# Dafqly / Tahseel database restore (M6, RUNBOOK): pg_restore into a TARGET database
 # (never the source), then a smoke check (migration count + key row counts).
 # Usage: TARGET_DATABASE_URL=postgres://... ./scripts/restore.sh backups/tahseel-<ts>.dump
 set -euo pipefail
 : "${TARGET_DATABASE_URL:?TARGET_DATABASE_URL is required}"
 FILE="${1:?usage: restore.sh <dump file>}"
 [ -f "$FILE" ] || { echo "no such dump: $FILE" >&2; exit 1; }
-if [ -f "$FILE.sha256" ]; then sha256sum -c "$FILE.sha256"; fi
+if [ -f "$FILE.sha256" ]; then
+  (cd "$(dirname "$FILE")" && sha256sum -c "$(basename "$FILE").sha256")
+fi
 START=$(date +%s)
 pg_restore --no-owner --clean --if-exists -d "$TARGET_DATABASE_URL" "$FILE"
 END=$(date +%s)

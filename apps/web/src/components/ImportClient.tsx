@@ -157,7 +157,7 @@ export function ImportClient() {
     // test names/phones, labelled as samples in the notes column — so the
     // file can never be mistaken for real customer data if forwarded.
     const csvContent = useArabic
-      ? "\uFEFFاسم العميل,رقم الهاتف,المبلغ المستحق,تاريخ الاستحقاق,رقم الفاتورة,ملاحظات\nعميل تجريبي ١,+15550100001,1500,2026-12-01,INV-1001,بيانات تجريبية — ليست عميلاً حقيقياً\nعميل تجريبي ٢,+15550100002,4200.50,2026-12-15,INV-1002,بيانات تجريبية — ليست عميلاً حقيقياً\n"
+      ? "\uFEFFاسم العميل,رقم الهاتف,المبلغ المستحق,تاريخ الاستحقاق,رقم الفاتورة,ملاحظات\nعميل تجريبي 1,+15550100001,1500,2026-12-01,INV-1001,بيانات تجريبية — ليست عميلاً حقيقياً\nعميل تجريبي 2,+15550100002,4200.50,2026-12-15,INV-1002,بيانات تجريبية — ليست عميلاً حقيقياً\n"
       : "Customer Name,Phone Number,Amount,Due Date,Invoice No,Notes\nSample Customer 1,+15550100001,1500,2026-12-01,INV-1001,Sample data — not a real customer\nSample Customer 2,+15550100002,4200.50,2026-12-15,INV-1002,Sample data — not a real customer\n";
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -346,7 +346,7 @@ export function ImportClient() {
               )}
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 {FIELDS.map((f) => (
-                  <label key={f} className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t(`fields.${f}`)}</span>
+                  <label key={f} className="flex min-w-0 flex-col gap-1.5 text-sm font-semibold"><span>{t(`fields.${f}`)}</span>
                     <select data-testid={`import-map-${f}`} className={inputCls} value={mapping[f] ?? -1}
                       disabled={busy || job.status !== "pending_review"}
                       onChange={(e) => setMapping((m) => ({ ...m, [f]: Number(e.target.value) }))}>
@@ -474,7 +474,7 @@ export function ImportClient() {
                         <FileCsv size={22} aria-hidden />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
                           <p className="truncate text-sm font-bold text-text">{j.fileName}</p>
                           {isSelected && (
                             <span className="rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">

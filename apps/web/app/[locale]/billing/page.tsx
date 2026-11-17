@@ -16,7 +16,7 @@ export default async function BillingPage({ params }: { params: Promise<{ locale
   if (!tenant) redirect(`/${locale}/onboarding`);
 
   return (
-    <AppShell locale={locale} demoMode={runtimeModeFlags()} digits={tenant.settings?.easternDigits ? "eastern" : "latin"} businessName={tenant.businessNameAr} currency={tenant.settings?.currency ?? "EGP"} testId="billing-page">
+    <AppShell locale={locale} demoMode={runtimeModeFlags()} digits="latin" businessName={tenant.businessNameAr} currency={tenant.settings?.currency ?? "EGP"} testId="billing-page">
       <div className="flex w-full flex-col gap-6">
         <BillingClient locale={locale} />
       </div>

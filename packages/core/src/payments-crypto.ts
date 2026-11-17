@@ -15,9 +15,9 @@ export function computePaymobHmac(obj: PaymobTxnLike, secret: string): string {
 }
 
 export function verifyPaymobHmac(obj: PaymobTxnLike, received: string | undefined | null, secret: string): boolean {
-  if (!received) return false;
+  if (!received || !secret) return false;
   const computed = Buffer.from(computePaymobHmac(obj, secret), "utf8");
-  const given = Buffer.from(received, "utf8");
+  const given = Buffer.from(received.toLowerCase(), "utf8");
   return computed.length === given.length && timingSafeEqual(computed, given);
 }
 

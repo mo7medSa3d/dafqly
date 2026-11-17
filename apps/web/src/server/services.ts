@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 import { asc, count, eq, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
@@ -19,12 +19,60 @@ export function hashPhone(e164: string): string {
   return createHmac("sha256", env().PHONE_HASH_PEPPER).update(e164).digest("hex");
 }
 
+function whatsappSecretKey(): Buffer {
+  return createHash("sha256").update(env().SESSION_SECRET).digest();
+}
+
+export function encryptWhatsappToken(plaintext: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", whatsappSecretKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${encrypted.toString("base64url")}`;
+}
+
+export function decryptWhatsappToken(payload: string): string {
+  const [version, ivB64, tagB64, dataB64] = payload.split(".");
+  if (version !== "v1" || !ivB64 || !tagB64 || !dataB64) {
+    throw new AppError("INVALID_SECRET", "Malformed encrypted WhatsApp token", 500);
+  }
+  const iv = Buffer.from(ivB64, "base64url");
+  const tag = Buffer.from(tagB64, "base64url");
+  if (iv.length !== 12 || tag.length !== 16) {
+    throw new AppError("INVALID_SECRET", "Malformed encrypted WhatsApp token", 500);
+  }
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", whatsappSecretKey(), iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(Buffer.from(dataB64, "base64url")), decipher.final()]).toString("utf8");
+  } catch {
+    throw new AppError("INVALID_SECRET", "Malformed encrypted WhatsApp token", 500);
+  }
+}
+
+function sanitizeTenantSettings(s: TenantSettings) {
+  const { whatsapp: _wa, ...rest } = s;
+  return {
+    ...rest,
+    gatewayEnabled: s.gatewayEnabled ?? false,
+    paymentInstructions: s.paymentInstructions ?? "",
+  };
+}
+
+function redactSettingsForAudit(s: TenantSettings) {
+  const { whatsapp, ...rest } = s;
+  return {
+    ...rest,
+    ...(whatsapp ? { whatsapp: { phoneNumberId: whatsapp.phoneNumberId, wabaId: whatsapp.wabaId ?? null, connected: true } } : {}),
+  };
+}
+
 export const createTenantInput = z.object({
   businessNameAr: z.string().trim().min(2).max(120),
   businessNameEn: z.string().trim().max(120).optional(),
   timezone: z.string().min(3).max(64).refine(isValidTimezone, { message: "timezone must be a valid IANA timezone (e.g. Africa/Cairo)" }).default("Africa/Cairo"),
-  quietStart: z.string().regex(/^\d{2}:\d{2}$/).default("21:00"),
-  quietEnd: z.string().regex(/^\d{2}:\d{2}$/).default("09:00"),
+  quietStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default("21:00"),
+  quietEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default("09:00"),
   fridayMorningSkip: z.boolean().default(false),
   defaultTermsDays: z.number().int().min(0).max(120).default(14),
   tone: z.enum(["polite", "firm"]).default("polite"),
@@ -43,7 +91,7 @@ export type CreateTenantInput = z.infer<typeof createTenantInput>;
 export async function listTenantsForUser(owner: Db, userId: string) {
   // M1: deterministic order — every caller takes mine[0], so the oldest
   // membership must always resolve first, not an arbitrary row.
-  return owner
+  const rows = await owner
     .select({
       tenantId: memberships.tenantId,
       role: memberships.role,
@@ -55,6 +103,7 @@ export async function listTenantsForUser(owner: Db, userId: string) {
     .innerJoin(tenants, eq(tenants.id, memberships.tenantId))
     .where(eq(memberships.userId, userId))
     .orderBy(asc(tenants.createdAt), asc(tenants.id));
+  return rows.map((r) => ({ ...r, settings: sanitizeTenantSettings(r.settings) }));
 }
 
 export async function createTenantForUser(app: Db, userId: string, input: CreateTenantInput): Promise<{ tenantId: string }> {
@@ -64,6 +113,7 @@ export async function createTenantForUser(app: Db, userId: string, input: Create
     fridayMorningSkip: input.fridayMorningSkip, autoCloseEnabled: false,
     defaultChannel: "whatsapp", tone: input.tone,
     defaultTermsDays: input.defaultTermsDays, easternDigits: false,
+    gatewayEnabled: false,
   };
   await withTenant(app, tenantId, async (tx) => {
     await tx.insert(tenants).values({
@@ -176,6 +226,12 @@ export const updateTenantSettingsInput = z.object({
   exportLanguage: z.enum(["ar", "en"]).optional(),
   timezone: z.string().min(3).max(64).refine(isValidTimezone, { message: "timezone must be a valid IANA timezone (e.g. Africa/Cairo)" }).optional(),
   gatewayEnabled: z.boolean().optional(),
+  paymentInstructions: z.string().trim().max(1000).optional(),
+  whatsapp: z.object({
+    phoneNumberId: z.string().trim().min(1).max(64),
+    wabaId: z.string().trim().max(64).optional(),
+    accessToken: z.string().trim().min(10).max(512).optional(),
+  }).nullable().optional(),
   statementLinksEnabled: z.boolean().optional(),
   includePayLinkInReminders: z.boolean().optional(),
   autoCloseEnabled: z.boolean().optional(),
@@ -183,8 +239,8 @@ export const updateTenantSettingsInput = z.object({
   tone: z.enum(["polite", "firm"]).optional(),
   defaultTermsDays: z.number().int().min(0).max(120).optional(),
   easternDigits: z.boolean().optional(),
-  quietStart: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-  quietEnd: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  quietStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  quietEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
 });
 export type UpdateTenantSettingsInput = z.infer<typeof updateTenantSettingsInput>;
 
@@ -195,17 +251,22 @@ export async function getTenantSettingsAndIntegrations(app: Db, tenantId: string
   return withTenant(app, tenantId, async (tx) => {
     const [t] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     if (!t) throw new AppError("NOT_FOUND", "Tenant not found", 404);
+    const wa = t.settings.whatsapp;
+    const whatsappConnected = Boolean(wa?.phoneNumberId && wa?.encryptedAccessToken);
     return {
       businessNameAr: t.businessNameAr,
       timezone: t.timezone,
-      settings: t.settings,
+      settings: sanitizeTenantSettings(t.settings),
       integrations: {
         aiConfigured: hasUsableLlmConfig(e),
         aiProvider: llmNames.length ? llmNames.join(" → ") : e.AI_PROVIDER,
         llmModelFast: primaryModelFor(llmConfigs, "fast") ?? "",
         llmModelVision: primaryModelFor(llmConfigs, "vision") ?? "",
         paymobConfigured: Boolean(e.PAYMOB_SECRET_KEY && e.PAYMOB_PUBLIC_KEY && e.PAYMOB_INTEGRATION_ID && e.PAYMOB_HMAC_SECRET),
-        whatsappConfigured: Boolean(e.WHATSAPP_PHONE_NUMBER_ID && e.WHATSAPP_ACCESS_TOKEN),
+        whatsappConfigured: Boolean(whatsappConnected || (e.WHATSAPP_PHONE_NUMBER_ID && e.WHATSAPP_ACCESS_TOKEN)),
+        whatsappConnected,
+        whatsappPhoneNumberId: wa?.phoneNumberId ?? null,
+        whatsappWabaId: wa?.wabaId ?? null,
         smsConfigured: false,
         dryRunMessaging: e.DRY_RUN_MESSAGING,
         webhooks: {
@@ -244,6 +305,7 @@ export async function updateTenantSettings(app: Db, tenantId: string, actorUserI
       ...(patch.currency !== undefined ? { currency: patch.currency } : {}),
       ...(patch.exportLanguage !== undefined ? { exportLanguage: patch.exportLanguage } : {}),
       ...(patch.gatewayEnabled !== undefined ? { gatewayEnabled: patch.gatewayEnabled } : {}),
+      ...(patch.paymentInstructions !== undefined ? { paymentInstructions: patch.paymentInstructions } : {}),
       ...(patch.statementLinksEnabled !== undefined ? { statementLinksEnabled: patch.statementLinksEnabled } : {}),
       ...(patch.includePayLinkInReminders !== undefined ? { includePayLinkInReminders: patch.includePayLinkInReminders } : {}),
       ...(patch.autoCloseEnabled !== undefined ? { autoCloseEnabled: patch.autoCloseEnabled } : {}),
@@ -254,6 +316,21 @@ export async function updateTenantSettings(app: Db, tenantId: string, actorUserI
       ...(patch.quietStart !== undefined ? { quietStart: patch.quietStart } : {}),
       ...(patch.quietEnd !== undefined ? { quietEnd: patch.quietEnd } : {}),
     };
+    if (patch.whatsapp === null) {
+      delete nextSettings.whatsapp;
+    } else if (patch.whatsapp !== undefined) {
+      const encryptedAccessToken = patch.whatsapp.accessToken
+        ? encryptWhatsappToken(patch.whatsapp.accessToken)
+        : t.settings.whatsapp?.encryptedAccessToken;
+      if (!encryptedAccessToken) {
+        throw new AppError("BAD_REQUEST", "WhatsApp access token is required", 400);
+      }
+      nextSettings.whatsapp = {
+        phoneNumberId: patch.whatsapp.phoneNumberId,
+        ...(patch.whatsapp.wabaId ? { wabaId: patch.whatsapp.wabaId } : {}),
+        encryptedAccessToken,
+      };
+    }
     await tx.update(tenants).set({
       settings: nextSettings,
       ...(patch.businessNameAr ? { businessNameAr: patch.businessNameAr } : {}),
@@ -262,8 +339,8 @@ export async function updateTenantSettings(app: Db, tenantId: string, actorUserI
     }).where(eq(tenants.id, tenantId));
     await tx.insert(auditLog).values({
       tenantId, actorUserId, action: "tenant.settings_updated", entity: "tenant", entityId: tenantId,
-      before: t.settings as never, after: nextSettings as never,
+      before: redactSettingsForAudit(t.settings) as never, after: redactSettingsForAudit(nextSettings) as never,
     });
-    return { settings: nextSettings };
+    return { settings: sanitizeTenantSettings(nextSettings) };
   });
 }

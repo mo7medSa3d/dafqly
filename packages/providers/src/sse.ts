@@ -5,6 +5,8 @@
  * final blank line. Never parses JSON itself — callers decide how to treat a
  * malformed block (they must not let one bad frame kill the whole stream).
  */
+const MAX_SSE_BUFFER_CHARS = 2 * 1024 * 1024;
+
 export async function* readSseData(res: Response, signal?: AbortSignal): AsyncGenerator<string> {
   if (!res.body) return;
   const reader = res.body.getReader();
@@ -28,6 +30,9 @@ export async function* readSseData(res: Response, signal?: AbortSignal): AsyncGe
       }
       if (done) break;
       buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, "\n");
+      if (buffer.length > MAX_SSE_BUFFER_CHARS) {
+        throw new Error("SSE stream buffer exceeded 2 MB limit");
+      }
       let boundary = buffer.indexOf("\n\n");
       while (boundary >= 0) {
         const data = dataOf(buffer.slice(0, boundary));

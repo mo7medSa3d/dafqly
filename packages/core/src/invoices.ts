@@ -115,14 +115,12 @@ export function isOverdue(status: InvoiceStatus, dueOn: string, today: string): 
 }
 
 export type AgingBucket = "current" | "0-7" | "8-30" | "31-60" | "60+";
-export const AGING_BUCKETS: readonly AgingBucket[] = ["current", "0-7", "8-30", "31-60", "60+"];
-
 export function agingBucket(dueOn: string, today: string): AgingBucket {
   // Due today is "current" (not yet overdue) — same boundary as
   // reports.agingBucketFor and the SQL KPI path; a due-today invoice used
   // to land in "0-7" here and "current" on the dashboard.
   const days = daysOverdue(dueOn, today);
-  if (days <= 0) return "current";
+  if (!Number.isFinite(days) || days <= 0) return "current";
   if (days <= 7) return "0-7";
   if (days <= 30) return "8-30";
   if (days <= 60) return "31-60";

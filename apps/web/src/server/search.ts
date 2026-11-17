@@ -128,6 +128,7 @@ export interface AuditEntryView {
 }
 
 export async function listAuditTrail(app: Db, tenantId: string, limit = 20): Promise<AuditEntryView[]> {
+  const safeLimit = Math.min(Math.max(Math.trunc(limit) || 20, 1), 100);
   return withTenant(app, tenantId, async (tx) => {
     const rows = await tx
       .select({
@@ -140,7 +141,7 @@ export async function listAuditTrail(app: Db, tenantId: string, limit = 20): Pro
       })
       .from(auditLog)
       .orderBy(desc(auditLog.createdAt))
-      .limit(limit);
+      .limit(safeLimit);
 
     return rows.map((r) => ({
       id: r.id,

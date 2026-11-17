@@ -28,18 +28,21 @@ interface SettingsData {
     easternDigits?: boolean;
     exportLanguage?: "ar" | "en";
     statementLinksEnabled?: boolean;
-    includePayLinkInReminders?: boolean;
-    gatewayEnabled?: boolean;
+    paymentInstructions?: string;
+    whatsapp?: {
+      phoneNumberId?: string;
+      wabaId?: string;
+      connected?: boolean;
+    };
   };
   integrations: {
     aiConfigured: boolean;
     llmModelFast: string;
     llmModelVision: string;
-    paymobConfigured: boolean;
     whatsappConfigured: boolean;
-    smsConfigured: boolean;
+    whatsappConnected?: boolean;
     dryRunMessaging: boolean;
-    webhooks: { paymob: string; whatsapp: string };
+    webhooks: { whatsapp: string };
   };
 }
 
@@ -114,8 +117,11 @@ export function SettingsClient({ locale }: { locale: string }) {
   const [quietEnd, setQuietEnd] = useState("09:00");
   const [fridayMorningSkip, setFridayMorningSkip] = useState(true);
   const [autoCloseEnabled, setAutoCloseEnabled] = useState(false);
-  const [includePayLinkInReminders, setIncludePayLinkInReminders] = useState(true);
   const [statementLinksEnabled, setStatementLinksEnabled] = useState(true);
+  const [paymentInstructions, setPaymentInstructions] = useState("");
+  const [waPhoneNumberId, setWaPhoneNumberId] = useState("");
+  const [waWabaId, setWaWabaId] = useState("");
+  const [waAccessToken, setWaAccessToken] = useState("");
   const [exportLanguage, setExportLanguage] = useState<"ar" | "en">(isAr ? "ar" : "en");
   const [easternDigits, setEasternDigits] = useState(false);
 
@@ -134,8 +140,11 @@ export function SettingsClient({ locale }: { locale: string }) {
       setQuietEnd(res.settings.quietEnd ?? "09:00");
       setFridayMorningSkip(res.settings.fridayMorningSkip ?? true);
       setAutoCloseEnabled(res.settings.autoCloseEnabled ?? false);
-      setIncludePayLinkInReminders(res.settings.includePayLinkInReminders ?? true);
       setStatementLinksEnabled(res.settings.statementLinksEnabled ?? true);
+      setPaymentInstructions(res.settings.paymentInstructions ?? "");
+      setWaPhoneNumberId(res.settings.whatsapp?.phoneNumberId ?? "");
+      setWaWabaId(res.settings.whatsapp?.wabaId ?? "");
+      setWaAccessToken("");
       setExportLanguage(res.settings.exportLanguage ?? (isAr ? "ar" : "en"));
       setEasternDigits(res.settings.easternDigits ?? false);
     } catch {
@@ -157,6 +166,14 @@ export function SettingsClient({ locale }: { locale: string }) {
     setError(null);
     setSaved(false);
     try {
+      const whatsappPatch =
+        waPhoneNumberId.trim() || waWabaId.trim() || waAccessToken.trim()
+          ? {
+              phoneNumberId: waPhoneNumberId.trim() || undefined,
+              wabaId: waWabaId.trim() || undefined,
+              ...(waAccessToken.trim() ? { accessToken: waAccessToken.trim() } : {}),
+            }
+          : undefined;
       await trpc.tenant.updateSettings.mutate({
         businessNameAr: businessNameAr.trim(),
         businessNameEn: businessNameEn.trim(),
@@ -170,10 +187,11 @@ export function SettingsClient({ locale }: { locale: string }) {
         quietEnd,
         fridayMorningSkip,
         autoCloseEnabled,
-        includePayLinkInReminders,
         statementLinksEnabled,
         exportLanguage,
-      });
+        paymentInstructions: paymentInstructions.trim(),
+        ...(whatsappPatch ? { whatsapp: whatsappPatch } : {}),
+      } as Parameters<typeof trpc.tenant.updateSettings.mutate>[0]);
       setSaved(true);
       await load();
       router.refresh();
@@ -250,7 +268,7 @@ export function SettingsClient({ locale }: { locale: string }) {
       <form onSubmit={onSave} className="flex flex-col gap-8">
         <div className="grid gap-8 lg:grid-cols-12 items-start">
           {/* Left Column: Business Profile & Currency (7 cols) */}
-          <div className="flex flex-col gap-6 lg:col-span-7">
+          <div className="flex min-w-0 flex-col gap-6 lg:col-span-7">
             {/* 1. Company Profile */}
             <Panel title={isAr ? "الملف التعريفي للمنشأة" : "Company Profile"} icon={Buildings}>
               <div className="flex flex-col gap-4">
@@ -346,10 +364,10 @@ export function SettingsClient({ locale }: { locale: string }) {
                       {![7, 14, 30, 60].includes(defaultTermsDays) && (
                         <option value={defaultTermsDays}>{isAr ? `${defaultTermsDays} يوماً` : `${defaultTermsDays} days`}</option>
                       )}
-                      <option value={7}>{isAr ? "٧ أيام" : "7 days"}</option>
-                      <option value={14}>{isAr ? "١٤ يوماً (أسبوعان)" : "14 days (2 weeks)"}</option>
-                      <option value={30}>{isAr ? "٣٠ يوماً (شهر)" : "30 days (1 month)"}</option>
-                      <option value={60}>{isAr ? "٦٠ يوماً (شهران)" : "60 days (2 months)"}</option>
+                      <option value={7}>{isAr ? "7 أيام" : "7 days"}</option>
+                      <option value={14}>{isAr ? "14 يوماً (أسبوعان)" : "14 days (2 weeks)"}</option>
+                      <option value={30}>{isAr ? "30 يوماً (شهر)" : "30 days (1 month)"}</option>
+                      <option value={60}>{isAr ? "60 يوماً (شهران)" : "60 days (2 months)"}</option>
                     </select>
                   </label>
 
@@ -365,12 +383,25 @@ export function SettingsClient({ locale }: { locale: string }) {
                     </select>
                   </label>
                 </div>
+
+                <label className={labelCls}>
+                  <span>{isAr ? "تعليمات السداد للعملاء (IBAN / InstaPay)" : "Customer Payment Instructions (Bank IBAN / InstaPay)"}</span>
+                  <textarea
+                    data-testid="settings-payment-instructions"
+                    rows={3}
+                    maxLength={1000}
+                    className={inputCls}
+                    value={paymentInstructions}
+                    onChange={(e) => setPaymentInstructions(e.target.value)}
+                    placeholder={isAr ? "مثال: التحويل البنكي IBAN: EG... أو InstaPay: name@instapay" : "e.g. Bank IBAN: EG... or InstaPay: name@instapay"}
+                  />
+                </label>
               </div>
             </Panel>
           </div>
 
           {/* Right Column: Reminders, Quiet Hours, Auto-Close (5 cols) */}
-          <div className="flex flex-col gap-6 lg:col-span-5">
+          <div className="flex min-w-0 flex-col gap-6 lg:col-span-5">
             {/* 3. WhatsApp & Automated Reminders */}
             <Panel title={isAr ? "أتمتة تذكيرات الواتساب" : "WhatsApp Reminders Automation"} icon={Clock}>
               <div className="flex flex-col gap-4">
@@ -392,7 +423,7 @@ export function SettingsClient({ locale }: { locale: string }) {
                     {isAr ? "ساعات الهدوء (منع إرسال الرسائل ليلاً)" : "Quiet Hours (No messages sent)"}
                   </span>
                   <div className="grid grid-cols-2 gap-3">
-                    <label className="text-xs text-text-muted">
+                    <label className="flex min-w-0 flex-col gap-1 text-xs text-text-muted">
                       <span>{isAr ? "من الساعة" : "From"}</span>
                       <input
                         type="time"
@@ -402,7 +433,7 @@ export function SettingsClient({ locale }: { locale: string }) {
                         onChange={(e) => setQuietStart(e.target.value)}
                       />
                     </label>
-                    <label className="text-xs text-text-muted">
+                    <label className="flex min-w-0 flex-col gap-1 text-xs text-text-muted">
                       <span>{isAr ? "إلى الساعة" : "To"}</span>
                       <input
                         type="time"
@@ -455,23 +486,6 @@ export function SettingsClient({ locale }: { locale: string }) {
                     <input
                       type="checkbox"
                       className="mt-0.5 size-4.5 rounded border border-border bg-surface text-primary focus:ring-1 focus:ring-primary focus:ring-offset-0 cursor-pointer"
-                      checked={includePayLinkInReminders}
-                      onChange={(e) => setIncludePayLinkInReminders(e.target.checked)}
-                    />
-                    <div className="flex flex-col">
-                      <span className="text-xs font-bold text-text">
-                        {isAr ? "تضمين رابط الدفع وكشف الحساب في رسائل التذكير" : "Include payment link in reminders"}
-                      </span>
-                      <span className="text-[11px] text-text-muted">
-                        {isAr ? "يتيح للمدين الدفع إلكترونياً أو مراجعة كشف حسابه بضغطة زر." : "Allows debtor to pay or view statement directly."}
-                      </span>
-                    </div>
-                  </label>
-
-                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border bg-surface-muted/40 p-3 hover:bg-surface-muted/70 transition-colors">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 size-4.5 rounded border border-border bg-surface text-primary focus:ring-1 focus:ring-primary focus:ring-offset-0 cursor-pointer"
                       checked={easternDigits}
                       onChange={(e) => setEasternDigits(e.target.checked)}
                     />
@@ -485,13 +499,74 @@ export function SettingsClient({ locale }: { locale: string }) {
                     </div>
                   </label>
                 </div>
+
+                {/* Per-Tenant WhatsApp Cloud API Connection */}
+                <div className="flex flex-col gap-3 border-t border-border pt-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-text">
+                      {isAr ? "ربط رقم WhatsApp Cloud API الخاص بالمنشأة" : "Tenant WhatsApp Cloud API"}
+                    </span>
+                    <span
+                      data-testid="wa-connected-badge"
+                      className={cn(
+                        "rounded px-2 py-0.5 text-[11px] font-bold",
+                        data.integrations.whatsappConnected || data.settings.whatsapp?.connected || data.settings.whatsapp?.phoneNumberId
+                          ? "bg-status-paid-bg text-status-paid-fg"
+                          : "bg-surface-muted text-text-muted",
+                      )}
+                    >
+                      {data.integrations.whatsappConnected || data.settings.whatsapp?.connected || data.settings.whatsapp?.phoneNumberId
+                        ? (isAr ? "متصل" : "Connected")
+                        : (isAr ? "غير مربوط" : "Not connected")}
+                    </span>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className={labelCls}>
+                      <span>Phone Number ID</span>
+                      <input
+                        data-testid="wa-phone-number-id"
+                        dir="ltr"
+                        className={inputCls}
+                        value={waPhoneNumberId}
+                        onChange={(e) => setWaPhoneNumberId(e.target.value)}
+                        placeholder="123456789012345"
+                      />
+                    </label>
+                    <label className={labelCls}>
+                      <span>WABA ID ({isAr ? "اختياري" : "Optional"})</span>
+                      <input
+                        data-testid="wa-waba-id"
+                        dir="ltr"
+                        className={inputCls}
+                        value={waWabaId}
+                        onChange={(e) => setWaWabaId(e.target.value)}
+                        placeholder="987654321098765"
+                      />
+                    </label>
+                  </div>
+                  <label className={labelCls}>
+                    <span>{isAr ? "Access Token (كتابة فقط)" : "Access Token (write-only)"}</span>
+                    <input
+                      data-testid="wa-access-token"
+                      type="password"
+                      dir="ltr"
+                      autoComplete="new-password"
+                      className={inputCls}
+                      value={waAccessToken}
+                      onChange={(e) => setWaAccessToken(e.target.value)}
+                      placeholder={data.integrations.whatsappConnected || data.settings.whatsapp?.connected
+                        ? (isAr ? "•••••••• (اتركه فارغاً للإبقاء على الرمز)" : "•••••••• (leave blank to keep current)")
+                        : "EAAG..."}
+                    />
+                  </label>
+                </div>
               </div>
             </Panel>
           </div>
         </div>
 
         {/* Floating / Sticky Save Bar */}
-        <div className="sticky bottom-4 z-20 flex items-center justify-between gap-4 rounded-xl border border-border bg-surface/95 p-4 backdrop-blur sm:px-6">
+        <div className="sticky bottom-4 z-20 flex flex-col items-stretch justify-between gap-3 rounded-xl border border-border bg-surface/95 p-4 backdrop-blur sm:flex-row sm:items-center sm:px-6">
           <div className="flex items-center gap-2">
             <SecurityLockBadge size={32}/>
             <span className="text-xs font-medium text-text-muted">
@@ -517,10 +592,10 @@ export function SettingsClient({ locale }: { locale: string }) {
           {isAr ? "النسخ الاحتياطي وتصدير البيانات" : "Backups & Data Management"}
         </h2>
         <div className="grid gap-6 lg:grid-cols-12 items-start">
-          <div className="lg:col-span-6">
+          <div className="min-w-0 lg:col-span-6">
             <ExportButtons />
           </div>
-          <div className="lg:col-span-6">
+          <div className="min-w-0 lg:col-span-6">
             <DangerZone />
           </div>
         </div>

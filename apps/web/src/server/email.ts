@@ -1,4 +1,4 @@
-import nodemailer, { type Transporter } from "nodemailer";
+import nodemailer from "nodemailer";
 import { AppError } from "@tahseel/core";
 import { env } from "./env";
 
@@ -30,12 +30,13 @@ export function resolveSmtpUrl(): string | undefined {
   return e?.SMTP_URL ?? "smtp://localhost:1025";
 }
 
+type Transporter = ReturnType<typeof nodemailer.createTransport>;
 const transportPool = new Map<string, Transporter>();
 
 function getPooledTransport(smtpUrl: string): Transporter {
   let transport = transportPool.get(smtpUrl);
   if (!transport) {
-    transport = nodemailer.createTransport(smtpUrl);
+    transport = nodemailer.createTransport(smtpUrl as never);
     transportPool.set(smtpUrl, transport);
   }
   return transport;
@@ -58,7 +59,7 @@ export async function sendEmail(
   }
   const isOverride = Boolean(overrides.smtpUrl);
   const transport = isOverride
-    ? nodemailer.createTransport(smtpUrl)
+    ? nodemailer.createTransport(smtpUrl as never)
     : getPooledTransport(smtpUrl);
   try {
     await transport.sendMail({

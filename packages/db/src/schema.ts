@@ -41,8 +41,16 @@ export interface TenantSettings {
   smsFallbackEnabled?: boolean;
   /** F4: local wall-clock send time for planned steps, "HH:MM" (default 10:00). */
   sendTimeLocal?: string;
-  /** F5: merchant opt-in to gateway (Paymob) payments; the provider must also be configured. */
+  /** F5: deprecated debtor gateway flag (always defaults to false; Paymob is SaaS-billing only). */
   gatewayEnabled?: boolean;
+  /** Offline B2B payment instructions shown on the public statement portal (e.g. IBAN, InstaPay). */
+  paymentInstructions?: string;
+  /** Per-tenant WhatsApp Cloud API credentials (access token stored encrypted with AES-256-GCM). */
+  whatsapp?: {
+    phoneNumberId: string;
+    wabaId?: string;
+    encryptedAccessToken: string;
+  };
   /** F10: statement links may be created for debtors (default true). */
   statementLinksEnabled?: boolean;
   /** F10/F5: include the debtor's statement/payment URL in reminders (default false). */

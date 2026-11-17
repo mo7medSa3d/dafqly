@@ -1,8 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
-import { debtors, messages, reminders, webhookEvents, withTenant, type Db } from "@tahseel/db";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, ne, sql } from "drizzle-orm";
+import { debtors, messages, reminders, tenants, webhookEvents, withTenant, type Db } from "@tahseel/db";
 import { canAdvanceMessageStatus, isOptOutText, type ProviderMessageStatus } from "@tahseel/core";
-import { applyOptOut, type EngineDeps } from "./engine";
+import { applyOptOut, resolveTenantWhatsappOverride, type EngineDeps } from "./engine";
 
 /**
  * WhatsApp webhook handling (BUILD_PLAN F3, ADR-015): signature verification
@@ -22,7 +22,7 @@ export function verifyWebhookSignature(rawBody: string | Uint8Array, signatureHe
 }
 
 export type WebhookEvent =
-  | { kind: "inbound"; dedupeKey: string; waId: string; providerMessageId: string; at: Date; text: string | null; mediaId: string | null; mediaMime: string | null }
+  | { kind: "inbound"; dedupeKey: string; waId: string; providerMessageId: string; at: Date; text: string | null; mediaId: string | null; mediaMime: string | null; phoneNumberId?: string | null }
   | { kind: "status"; dedupeKey: string; providerMessageId: string; status: ProviderMessageStatus; errorCode: number | null; at: Date };
 
 interface WaStatus { id?: string; status?: string; timestamp?: string; recipient_id?: string; errors?: { code?: number }[] }
@@ -32,7 +32,7 @@ interface WaMessage {
   video?: { id?: string; mime_type?: string }; audio?: { id?: string; mime_type?: string };
   document?: { id?: string; mime_type?: string };
 }
-interface WaValue { messages?: WaMessage[]; statuses?: WaStatus[]; contacts?: { wa_id?: string }[] }
+interface WaValue { metadata?: { display_phone_number?: string; phone_number_id?: string }; messages?: WaMessage[]; statuses?: WaStatus[]; contacts?: { wa_id?: string }[] }
 interface WaPayload { entry?: { changes?: { value?: WaValue }[] }[] }
 
 const STATUS_MAP: Record<string, ProviderMessageStatus> = {
@@ -46,29 +46,33 @@ export function parseWebhookPayload(payload: unknown): WebhookEvent[] {
   for (const entry of p.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const value = change.value ?? {};
+      const phoneNumberId = value.metadata?.phone_number_id ?? null;
       for (const m of value.messages ?? []) {
         if (!m.id || !m.from) continue;
         const media = m.image ?? m.video ?? m.audio ?? m.document;
+        const inTs = m.timestamp ? Number(m.timestamp) * 1000 : NaN;
         events.push({
           kind: "inbound",
           dedupeKey: `in:${m.id}`,
           waId: m.from,
           providerMessageId: m.id,
-          at: m.timestamp ? new Date(Number(m.timestamp) * 1000) : new Date(),
+          at: Number.isFinite(inTs) ? new Date(inTs) : new Date(),
           text: m.type === "text" ? (m.text?.body ?? null) : null,
           mediaId: media?.id ?? null,
           mediaMime: media?.mime_type ?? null,
+          phoneNumberId,
         });
       }
       for (const s of value.statuses ?? []) {
         if (!s.id || !s.status || !STATUS_MAP[s.status]) continue;
+        const stTs = s.timestamp ? Number(s.timestamp) * 1000 : NaN;
         events.push({
           kind: "status",
           dedupeKey: `st:${s.id}:${s.status}`,
           providerMessageId: s.id,
           status: STATUS_MAP[s.status]!,
           errorCode: s.errors?.[0]?.code ?? null,
-          at: s.timestamp ? new Date(Number(s.timestamp) * 1000) : new Date(),
+          at: Number.isFinite(stTs) ? new Date(stTs) : new Date(),
         });
       }
     }
@@ -176,6 +180,7 @@ export async function replayFailedWebhooks(
       eq(webhookEvents.provider, "whatsapp"),
       isNull(webhookEvents.processedAt),
       isNotNull(webhookEvents.processError),
+      ne(webhookEvents.processError, "cannot replay redacted inbound payload"),
     ))
     .orderBy(asc(webhookEvents.receivedAt))
     .limit(limit);
@@ -246,12 +251,21 @@ export async function processWebhookEvents(deps: EngineDeps, events: WebhookEven
       });
       continue;
     }
-    // Inbound message.
-    const e164 = `+${event.waId}`;
-    const candidates = await deps.owner.select().from(debtors).where(eq(debtors.phoneE164, e164));
+    // Inbound message: route by metadata.phone_number_id when matched, else fall back to single-tenant resolution.
+    const e164 = event.waId.startsWith("+") ? event.waId : `+${event.waId}`;
+    const [matchedTenant] = event.phoneNumberId
+      ? await deps.owner
+          .select({ id: tenants.id, settings: tenants.settings })
+          .from(tenants)
+          .where(sql`${tenants.settings}->'whatsapp'->>'phoneNumberId' = ${event.phoneNumberId}`)
+          .limit(1)
+      : [];
+    const candidates = matchedTenant
+      ? await deps.owner.select().from(debtors).where(and(eq(debtors.tenantId, matchedTenant.id), eq(debtors.phoneE164, e164)))
+      : await deps.owner.select().from(debtors).where(eq(debtors.phoneE164, e164));
     if (candidates.length === 0) { summary.unknown++; continue; }
     let debtor = candidates[0]!;
-    if (candidates.length > 1) {
+    if (!matchedTenant && candidates.length > 1) {
       const [latest] = await deps.owner.select({ debtorId: messages.debtorId })
         .from(messages)
         .where(and(
@@ -295,10 +309,15 @@ export async function processWebhookEvents(deps: EngineDeps, events: WebhookEven
         summary.optOutsApplied++;
         // Polite confirmation inside the (just-opened) 24h window.
         try {
+          const tenantSettings = matchedTenant?.settings ?? (
+            await deps.owner.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, debtor.tenantId)).limit(1)
+          )[0]?.settings;
+          const override = resolveTenantWhatsappOverride(tenantSettings, deps.sessionSecret);
           await deps.providers.whatsapp.sendText({
             toE164: e164,
             body: "تم إيقاف رسائل التذكير من هذا الرقم. شكرًا لكم.",
             idempotencyKey: `optout-confirm:${event.providerMessageId}`,
+            ...(override ? { override } : {}),
           });
         } catch { /* confirmation is best-effort; the opt-out itself is already recorded */ }
       }

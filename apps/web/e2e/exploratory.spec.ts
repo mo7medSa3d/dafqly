@@ -32,7 +32,7 @@ async function richLogin(page: Page, locale = "ar") {
   await page.getByTestId("auth-email").fill(RICH_EMAIL);
   await page.getByTestId("auth-password").fill(RICH_PASSWORD);
   await page.getByTestId("auth-submit").click();
-  await expect(page).toHaveURL(new RegExp(`/${locale}/dashboard`), { timeout: 15000 });
+  await expect(page).toHaveURL(new RegExp(`/${locale}/dashboard`));
 }
 
 async function desktopPage(browser: Browser, locale = "ar") {
@@ -374,13 +374,13 @@ test("public statement: renders, promise invalid then valid, dispute", async ({ 
     await expect(page.getByTestId("statement-msg")).toBeVisible();
     await page.getByPlaceholder("1500.00").fill("500.00");
     await page.locator("form:has(input[placeholder='1500.00']) button[type='submit']").click();
-    await expect(page.getByTestId("statement-msg")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId("statement-msg")).toBeVisible();
     // Dispute: empty reason keeps submit disabled; filled reason succeeds.
     await page.locator("[data-testid^='statement-dispute-']").first().click();
     await expect(page.locator("[data-testid^='dispute-submit-']").first()).toBeDisabled();
     await page.locator("[data-testid^='dispute-reason-']").first().fill("المبلغ غير صحيح حسب الاتفاق");
     await page.locator("[data-testid^='dispute-submit-']").first().click();
-    await expect(page.getByTestId("statement-msg")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId("statement-msg")).toBeVisible();
   } finally {
     await ctx.close();
   }

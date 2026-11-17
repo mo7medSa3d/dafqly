@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { execSync } from "node:child_process";
+import postgres from "postgres";
 import { randomUUID } from "node:crypto";
 import { clickNav } from "./helpers";
 
@@ -21,7 +21,6 @@ import { clickNav } from "./helpers";
  *
  * The psql path is this VM's source-built Postgres (see engineering docs).
  */
-const PSQL = process.env.PSQL ?? "docker exec -i dafqly-postgres-1 psql -U tahseel -d tahseel -t -A -c";
 const shot = (name: string) => `e2e/screenshots/prompt07/${name}.png`;
 
 async function loginDemo(page: Page, locale: "ar" | "en" = "ar") {
@@ -29,8 +28,7 @@ async function loginDemo(page: Page, locale: "ar" | "en" = "ar") {
   await page.getByTestId("auth-email").fill("demo@tahseel.test");
   await page.getByTestId("auth-password").fill("demo-password-123");
   await page.getByTestId("auth-submit").click();
-  await expect(page).toHaveURL(new RegExp(`/${locale}/dashboard`), { timeout: 15000 });
-  await page.waitForLoadState("networkidle");
+  await expect(page).toHaveURL(new RegExp(`/${locale}/dashboard`));
 }
 
 async function signupAndOnboard(page: Page, business: string) {
@@ -40,13 +38,13 @@ async function signupAndOnboard(page: Page, business: string) {
   await page.getByTestId("auth-email").fill(email);
   await page.getByTestId("auth-password").fill("e2e-password-123");
   await page.getByTestId("auth-submit").click();
-  await expect(page).toHaveURL(/\/ar\/onboarding/, { timeout: 15000 });
+  await expect(page).toHaveURL(/\/ar\/onboarding/);
   await page.getByTestId("ob-name-ar").fill(business);
   await page.getByTestId("ob-next").click();
   await page.getByTestId("ob-next").click();
   await page.getByTestId("ob-consent").check();
   await page.getByTestId("ob-create").click();
-  await expect(page).toHaveURL(/\/ar\/dashboard/, { timeout: 15000 });
+  await expect(page).toHaveURL(/\/ar\/dashboard/);
 }
 
 async function expectNoOverflow(page: Page) {
@@ -54,8 +52,19 @@ async function expectNoOverflow(page: Page) {
   expect(overflow).toBeLessThanOrEqual(1);
 }
 
-function dbOne(sql: string): string {
-  return execSync(`${PSQL} "${sql.replace(/"/g, "\\\"")}"`, { encoding: "utf8" }).trim();
+function getSql() {
+  const dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) throw new Error("DATABASE_URL must be set for prompt07.spec.ts");
+  return postgres(dbUrl);
+}
+async function dbOne(query: string): Promise<string> {
+  const sql = getSql();
+  try {
+    const rows = await sql.unsafe(query).values();
+    return String(rows[0]?.[0] ?? "");
+  } finally {
+    await sql.end();
+  }
 }
 
 test("P07 route tour (AR desktop 1440): every key screen renders + screenshots", async ({ page }) => {
@@ -82,8 +91,8 @@ test("P07 route tour (AR desktop 1440): every key screen renders + screenshots",
   ];
   for (const r of routes) {
     await clickNav(page, r.nav);
-    await expect(page).toHaveURL(r.url, { timeout: 15000 });
-    await expect(page.locator(r.marker).first()).toBeVisible({ timeout: 15000 });
+    await expect(page).toHaveURL(r.url);
+    await expect(page.locator(r.marker).first()).toBeVisible();
     await expectNoOverflow(page);
     await page.screenshot({ path: shot(r.shot) });
   }
@@ -152,9 +161,9 @@ test("P07 UI journey verified in the DB: partial payment updates the invoice row
   await page.screenshot({ path: shot("13-debtor-partial-ar-1440") });
 
   // The toast is not proof: the invoice row itself must say so.
-  const row = dbOne(`SELECT status || '|' || paid_minor::text FROM invoices WHERE reference='${ref}'`);
+  const row = await dbOne(`SELECT status || '|' || paid_minor::text FROM invoices WHERE reference='${ref}'`);
   expect(row).toBe("partially_paid|40000");
-  const payment = dbOne(`SELECT count(*) FROM payments p JOIN debtors d ON d.id = p.debtor_id WHERE d.phone_e164 = '+20${phone.slice(1)}' AND p.status='confirmed'`);
+  const payment = await dbOne(`SELECT count(*) FROM payments p JOIN debtors d ON d.id = p.debtor_id WHERE d.phone_e164 = '+20${phone.slice(1)}' AND p.status='confirmed'`);
   expect(payment).toBe("1");
 });
 
@@ -162,7 +171,7 @@ test("P07 F-20: billing badge is centred on its card in RTL", async ({ page }) =
   await page.setViewportSize({ width: 1440, height: 900 });
   await loginDemo(page);
   await clickNav(page, "nav-billing");
-  await expect(page).toHaveURL(/\/ar\/billing/, { timeout: 15000 });
+  await expect(page).toHaveURL(/\/ar\/billing/);
   const badge = page.locator('[class*="-top-3.5"]').first();
   await expect(badge).toBeVisible();
   const { delta } = await badge.evaluate((el) => {
@@ -190,7 +199,7 @@ test("P07 F-20: forecast chart keeps time left→right in AR and EN", async ({ p
   // invoices with confirmed allocations; the UI would need 20 form
   // submissions for the same rows. The rows are exactly what recordPayment
   // + clear would write: paid invoice + confirmed payment + allocation.
-  const ids = dbOne(`SELECT tenant_id::text || '|' || id::text FROM debtors WHERE phone_e164 = '+20${phone.slice(1)}'`);
+  const ids = await dbOne(`SELECT tenant_id::text || '|' || id::text FROM debtors WHERE phone_e164 = '+20${phone.slice(1)}'`);
   const [tenantId, debtorId] = ids.split("|");
   const inserts: string[] = [];
   for (let i = 0; i < 10; i++) {
@@ -213,7 +222,7 @@ test("P07 F-20: forecast chart keeps time left→right in AR and EN", async ({ p
   inserts.push(
     `INSERT INTO invoices (id, tenant_id, debtor_id, reference, amount_minor, paid_minor, currency, issued_on, due_on, status, source) VALUES ('${randomUUID()}', '${tenantId}', '${debtorId}', 'P07-FC-OPEN', 50000, 0, 'EGP', '2026-11-01', '2026-11-27', 'open', 'manual');`,
   );
-  execSync(`${PSQL} "${inserts.join(" ").replace(/"/g, "\\\"")}"`, { encoding: "utf8" });
+  { const sql = getSql(); try { await sql.unsafe(inserts.join(" ")); } finally { await sql.end(); } }
 
   await page.goto("/ar/dashboard");
   const svg = page.locator('svg[aria-label*="توقع"]');

@@ -165,7 +165,7 @@ export async function changePlan(
         debtorName: tenantName,
       });
     } catch (err) {
-      console.error("[billing] subscription payment link creation failed", { tenantId, invoiceId: created.id, err });
+      console.error("[billing] subscription payment link creation failed", { tenantId, invoiceId: created.id, err: err instanceof Error ? err.message : String(err) });
     }
     if (!link) throw new AppError("PAYMENT_FAILED", "The payment provider rejected the subscription charge", 502);
     if (!deps.providerIsFake) {
@@ -173,7 +173,7 @@ export async function changePlan(
       const updated = await withTenant(deps.app, tenantId, async (tx) => {
         const [row] = await tx.update(subscriptionInvoices)
           .set({ providerRef: link.transactionId, updatedAt: new Date() })
-          .where(eq(subscriptionInvoices.id, created.id)).returning();
+          .where(and(eq(subscriptionInvoices.id, created.id), eq(subscriptionInvoices.tenantId, tenantId))).returning();
         return row!;
       });
       return { invoice: toInvoiceView(updated), effectiveImmediately: false };
@@ -181,7 +181,7 @@ export async function changePlan(
     const paid = await withTenant(deps.app, tenantId, async (tx) => {
       const [row] = await tx.update(subscriptionInvoices)
         .set({ status: "paid", providerRef: link.transactionId, updatedAt: new Date() })
-        .where(eq(subscriptionInvoices.id, created.id)).returning();
+        .where(and(eq(subscriptionInvoices.id, created.id), eq(subscriptionInvoices.tenantId, tenantId))).returning();
       await tx.update(tenants).set({ plan: plan.key, updatedAt: new Date() }).where(eq(tenants.id, tenantId));
       await audit(tx, tenantId, actor, "tenant.plan_changed", "tenant", tenantId, { planKey: plan.key, via: "fake_provider" });
       return row!;
@@ -192,7 +192,7 @@ export async function changePlan(
   const applied = await withTenant(deps.app, tenantId, async (tx) => {
     const [row] = await tx.update(subscriptionInvoices)
       .set({ status: "paid", providerRef: "free-plan", updatedAt: new Date() })
-      .where(eq(subscriptionInvoices.id, created.id)).returning();
+      .where(and(eq(subscriptionInvoices.id, created.id), eq(subscriptionInvoices.tenantId, tenantId))).returning();
     await tx.update(tenants).set({ plan: plan.key, updatedAt: new Date() }).where(eq(tenants.id, tenantId));
     await audit(tx, tenantId, actor, "tenant.plan_changed", "tenant", tenantId, { planKey: plan.key, via: "free" });
     return row!;

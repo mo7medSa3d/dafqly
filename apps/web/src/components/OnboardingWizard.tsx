@@ -78,7 +78,7 @@ export function OnboardingWizard() {
   const backBtn = `${btnGhost} px-3`;
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col gap-7 p-6 sm:p-8">
+    <main className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col gap-6 p-4 sm:p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <BrandLockup size="md" locale={locale} />
         <div className="flex items-center gap-2">

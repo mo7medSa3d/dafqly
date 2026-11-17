@@ -194,20 +194,9 @@ d("Prompt 03 journeys (service + HTTP layers)", () => {
     const link = await createStatementLink(app(), tenantId, user.id, debtor.id, new Date("2026-11-13T00:00:00.000Z"));
     const params = { params: Promise.resolve({ token: link.token }) };
 
-    // Pay mints a gateway link (fake provider in this env) — no money moves
-    // until the verified webhook.
-    const payRes = await payPost(new Request("http://localhost/api/public/statement/x/pay", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ invoiceId: invoice.id }),
-    }), params);
-    expect(payRes.status).toBe(200);
-    const payBody = await payRes.json() as { checkoutUrl?: unknown };
-    expect(typeof payBody.checkoutUrl).toBe("string");
-
-    // An unknown token gets the same generic 404 as the data route.
-    const badRes = await payPost(new Request("http://localhost/api/public/statement/x/pay", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}),
-    }), { params: Promise.resolve({ token: "definitely-not-a-token" }) });
-    expect(badRes.status).toBe(404);
+    // Pay route returns 410 (online debtor checkout disabled)
+    const payRes = await payPost();
+    expect(payRes.status).toBe(410);
 
     // Dispute via HTTP: 201, dispute recorded, invoice disputed.
     const disputeRes = await disputePost(new Request("http://localhost/api/public/statement/x/dispute", {

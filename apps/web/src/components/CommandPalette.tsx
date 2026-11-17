@@ -487,15 +487,15 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                         isSelected ? "bg-primary text-primary-foreground" : "text-text hover:bg-callout"
                       }`}
                     >
-                      <div className="flex items-center gap-3">
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
                         <span
-                          className={`flex size-7 items-center justify-center rounded-lg ${
+                          className={`flex size-7 shrink-0 items-center justify-center rounded-lg ${
                             isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-callout text-primary"
                           }`}
                         >
                           <CmdIcon size={15} aria-hidden />
                         </span>
-                        <span className="font-semibold">{isEn ? cmd.labelEn : cmd.labelAr}</span>
+                        <span className="truncate font-semibold">{isEn ? cmd.labelEn : cmd.labelAr}</span>
                       </div>
                       <CaretRight
                         size={15}
@@ -550,16 +550,16 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                         isSelected ? "bg-primary text-primary-foreground" : "text-text hover:bg-callout"
                       }`}
                     >
-                      <div className="flex items-center gap-3">
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
                         <span
-                          className={`flex size-7 items-center justify-center rounded text-xs font-bold ${
+                          className={`flex size-7 shrink-0 items-center justify-center rounded text-xs font-bold ${
                             isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-primary/10 text-primary"
                           }`}
                         >
                           {d.displayName.slice(0, 1)}
                         </span>
-                        <div className="flex flex-col">
-                          <span className="font-bold">{d.displayName}</span>
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <span className="truncate font-bold">{d.displayName}</span>
                           <span className={`text-xs ${isSelected ? "text-primary-foreground/80" : "text-text-muted"}`} dir="ltr">
                             {d.phoneE164}
                           </span>
@@ -597,16 +597,16 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                         isSelected ? "bg-primary text-primary-foreground" : "text-text hover:bg-callout"
                       }`}
                     >
-                      <div className="flex items-center gap-3">
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
                         <span
-                          className={`flex size-7 items-center justify-center rounded text-xs font-bold ${
+                          className={`flex size-7 shrink-0 items-center justify-center rounded text-xs font-bold ${
                             isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-accent/20 text-accent-fg"
                           }`}
                         >
                           #
                         </span>
-                        <div className="flex flex-col">
-                          <span className="font-bold" dir="ltr">
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <span className="truncate font-bold" dir="ltr">
                             {inv.reference ?? inv.id.slice(0, 8)}
                           </span>
                           {inv.description && (
@@ -616,7 +616,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex shrink-0 items-center gap-2">
                         <span className={`text-xs font-bold ${isSelected ? "text-primary-foreground" : "text-primary"}`} dir="ltr">
                           {format(BigInt(inv.amountMinor), { currency: inv.currency })}
                         </span>
@@ -653,16 +653,16 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                         isSelected ? "bg-primary text-primary-foreground" : "text-text hover:bg-callout"
                       }`}
                     >
-                      <div className="flex items-center gap-3">
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
                         <span
-                          className={`flex size-7 items-center justify-center rounded text-xs font-bold ${
+                          className={`flex size-7 shrink-0 items-center justify-center rounded text-xs font-bold ${
                             isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-callout text-primary"
                           }`}
                         >
                           <Bank size={14} />
                         </span>
-                        <div className="flex flex-col">
-                          <span className="font-bold" dir="ltr">
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <span className="truncate font-bold" dir="ltr">
                             #{chq.number}
                           </span>
                           <span className={`max-w-xs truncate text-xs ${isSelected ? "text-primary-foreground/80" : "text-text-muted"}`}>
@@ -670,7 +670,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                           </span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex shrink-0 items-center gap-2">
                         <span className={`text-xs font-bold ${isSelected ? "text-primary-foreground" : "text-primary"}`} dir="ltr">
                           {format(BigInt(chq.amountMinor))}
                         </span>
@@ -685,7 +685,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         </div>
 
         {/* Footer shortcuts helper */}
-        <div className="flex items-center justify-between border-t border-border/60 bg-surface-muted/60 px-4 py-2 text-[11px] text-text-subtle">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 bg-surface-muted/60 px-4 py-2 text-[11px] text-text-subtle">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
               <kbd className="rounded border border-border bg-surface px-1.5 py-0.5">↑</kbd>

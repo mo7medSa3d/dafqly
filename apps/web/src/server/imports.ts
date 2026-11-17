@@ -59,18 +59,22 @@ async function gridFromUpload(fileName: string, contentBase64: string): Promise<
 
 async function persistRows(tx: Db, tenantId: string, jobId: string, rows: readonly ParsedImportRow[]) {
   await tx.delete(importRows).where(and(eq(importRows.jobId, jobId), eq(importRows.tenantId, tenantId)));
-  for (const r of rows) {
+  if (rows.length === 0) return;
+  const values = rows.map((r) => {
     const stored: StoredRow = {
       status: r.status, data: r.data,
       ...(r.duplicateDebtorId ? { duplicateDebtorId: r.duplicateDebtorId } : {}),
       ...(r.duplicateOfRow ? { duplicateOfRow: r.duplicateOfRow } : {}),
     };
-    await tx.insert(importRows).values({
+    return {
       tenantId, jobId, rowNumber: r.rowNumber,
       parsed: stored as never,
-      rowStatus: r.status === "valid" ? "pending_review" : r.status === "duplicate" ? "duplicate" : "rejected",
+      rowStatus: (r.status === "valid" ? "pending_review" : r.status === "duplicate" ? "duplicate" : "rejected") as "pending_review" | "duplicate" | "rejected",
       errors: r.errors as never,
-    });
+    };
+  });
+  for (let i = 0; i < values.length; i += 200) {
+    await tx.insert(importRows).values(values.slice(i, i + 200));
   }
 }
 
@@ -307,7 +311,7 @@ export async function undoImport(app: Db, tenantId: string, actor: string, jobId
 
 export async function deleteImportJob(app: Db, tenantId: string, actor: string, jobId: string) {
   return withTenant(app, tenantId, async (tx) => {
-    const [job] = await tx.select().from(importJobs).where(and(eq(importJobs.id, jobId), eq(importJobs.tenantId, tenantId)));
+    const [job] = await tx.select().from(importJobs).where(and(eq(importJobs.id, jobId), eq(importJobs.tenantId, tenantId))).for("update");
     if (!job) throw new AppError("NOT_FOUND", "Import job not found", 404);
     if (job.status === "committed") {
       throw new AppError("CANNOT_DELETE_COMMITTED", "Committed imports must be undone instead of deleted", 409);

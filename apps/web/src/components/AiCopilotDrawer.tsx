@@ -512,7 +512,7 @@ export function AiCopilotDrawer({
         }
         setDraftGenerationMode("rules");
         setSuggestedSendTime(
-          new Intl.DateTimeFormat(msgLocale === "en" ? "en-US" : "ar-EG", {
+          new Intl.DateTimeFormat(msgLocale === "en" ? "en-US" : "ar-EG-u-nu-latn", {
             hour: "2-digit",
             minute: "2-digit",
             timeZoneName: "short",
@@ -1017,7 +1017,7 @@ export function AiCopilotDrawer({
                     <div className="mt-2.5 grid grid-cols-2 gap-2">
                       <div className="rounded-xl bg-surface-muted/50 p-2">
                         <p className="text-[10px] text-text-muted">
-                          {isEn ? "14-Day Expected Inflow" : "سيولة متوقعة (١٤ يوماً)"}
+                          {isEn ? "14-Day Expected Inflow" : "سيولة متوقعة (14 يوماً)"}
                         </p>
                         <p className="mt-0.5 text-xs font-extrabold text-status-paid-fg" dir="ltr">
                           {formatAmountOnly(BigInt(overview.portfolioRisk.expectedNext14DaysMinor))} {currencySymbol}
@@ -1061,7 +1061,7 @@ export function AiCopilotDrawer({
                           className="rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary/40"
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <div>
+                            <div className="min-w-0 flex-1">
                               <Link
                                 href={`/${locale}/debtors/${d.debtorId}`}
                                 onClick={onClose}
@@ -1076,7 +1076,7 @@ export function AiCopilotDrawer({
                               </p>
                             </div>
                             <span
-                              className={`rounded px-2 py-0.5 text-[10px] font-bold ${tierBadgeClass(d.tier)}`}
+                              className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-bold ${tierBadgeClass(d.tier)}`}
                             >
                               {isEn ? `Health ${d.healthScore}` : `الصحة ${d.healthScore}/100`}
                             </span>
@@ -1157,7 +1157,7 @@ export function AiCopilotDrawer({
               </button>
             </div>
 
-            <div className="flex flex-col gap-1">
+            <div className="flex min-w-0 flex-col gap-1">
               <label className="text-xs font-bold text-text-muted">
                 {isEn ? "Select Customer" : "اختر العميل"}
               </label>
@@ -1194,7 +1194,7 @@ export function AiCopilotDrawer({
 
             {composerMode === "reminder" ? (
               <div className="grid grid-cols-2 gap-2.5">
-                <div className="flex flex-col gap-1">
+                <div className="flex min-w-0 flex-col gap-1">
                   <label className="text-xs font-bold text-text-muted">
                     {isEn ? "Message Tone" : "نبرة الرسالة"}
                   </label>
@@ -1209,7 +1209,7 @@ export function AiCopilotDrawer({
                     <option value="urgent">{isEn ? "Urgent" : "عاجلة"}</option>
                   </select>
                 </div>
-                <div className="flex flex-col gap-1">
+                <div className="flex min-w-0 flex-col gap-1">
                   <label className="text-xs font-bold text-text-muted">
                     {isEn ? "Language" : "لغة الرسالة"}
                   </label>
@@ -1224,8 +1224,8 @@ export function AiCopilotDrawer({
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-2">
-                <div className="flex flex-col gap-1">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="flex min-w-0 flex-col gap-1">
                   <label className="text-[11px] font-bold text-text-muted">
                     {isEn ? "Installments" : "عدد الدفعات"}
                   </label>
@@ -1235,12 +1235,12 @@ export function AiCopilotDrawer({
                     className={cn(inputVariants)}
                   >
                     <option value={2}>{isEn ? "2 payments" : "دفعتان (2)"}</option>
-                    <option value={3}>{isEn ? "3 payments" : "٣ دفعات"}</option>
-                    <option value={4}>{isEn ? "4 payments" : "٤ دفعات"}</option>
-                    <option value={6}>{isEn ? "6 payments" : "٦ دفعات"}</option>
+                    <option value={3}>{isEn ? "3 payments" : "3 دفعات"}</option>
+                    <option value={4}>{isEn ? "4 payments" : "4 دفعات"}</option>
+                    <option value={6}>{isEn ? "6 payments" : "6 دفعات"}</option>
                   </select>
                 </div>
-                <div className="flex flex-col gap-1">
+                <div className="flex min-w-0 flex-col gap-1">
                   <label className="text-[11px] font-bold text-text-muted">
                     {isEn ? "Cadence" : "الفترة"}
                   </label>
@@ -1254,7 +1254,7 @@ export function AiCopilotDrawer({
                     <option value="monthly">{isEn ? "Monthly" : "شهري"}</option>
                   </select>
                 </div>
-                <div className="flex flex-col gap-1">
+                <div className="flex min-w-0 flex-col gap-1">
                   <label className="text-[11px] font-bold text-text-muted">
                     {isEn ? "Down Payment" : "الدفعة المقدمة"}
                   </label>
@@ -1556,8 +1556,8 @@ export function AiCopilotDrawer({
               {asking && liveTools.length > 0 && (
                 <div className="ai-rise flex flex-col gap-1.5 rounded-xl border border-border bg-muted/40 p-2.5 text-[11px]" role="status" aria-live="polite">
                   {liveTools.map((tool, i) => (
-                    <div key={tool.id} style={{ ["--i" as string]: i }} className="ai-step flex items-center justify-between gap-2 rounded-lg bg-card px-2.5 py-1.5">
-                      <span className="flex items-center gap-1.5 font-bold">
+                    <div key={tool.id} style={{ ["--i" as string]: i }} className="ai-step flex min-w-0 items-center justify-between gap-2 rounded-lg bg-card px-2.5 py-1.5">
+                      <span className="flex shrink-0 items-center gap-1.5 font-bold">
                         {tool.state === "running" ? <span className="ai-spin" aria-hidden="true" /> : <span className={tool.state === "done" ? "text-status-paid-fg" : "text-destructive"} aria-hidden="true">{tool.state === "done" ? "✓" : "!"}</span>}
                         {isEn ? tool.titleEn : tool.titleAr}
                       </span>
@@ -1598,9 +1598,9 @@ export function AiCopilotDrawer({
                           <div
                             key={`${tc.toolName}-${idx}`}
                             data-testid={`copilot-tool-call-${tc.toolName}`}
-                            className="flex items-center justify-between gap-2 rounded-lg bg-card px-2.5 py-1 text-[10px]"
+                            className="flex min-w-0 items-center justify-between gap-2 rounded-lg bg-card px-2.5 py-1 text-[10px]"
                           >
-                            <span className="font-bold text-foreground">{isEn ? tc.titleEn : tc.titleAr}</span>
+                            <span className="shrink-0 font-bold text-foreground">{isEn ? tc.titleEn : tc.titleAr}</span>
                             <span className={`truncate ${tc.status === "failed" ? "text-destructive" : "text-muted-foreground"}`}>
                               {isEn ? tc.summaryEn : tc.summaryAr}
                             </span>
@@ -1612,9 +1612,9 @@ export function AiCopilotDrawer({
 
                   {copilotAnswer.matchedDebtor && (
                     <div className="rounded-xl border border-border bg-card p-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-foreground">{copilotAnswer.matchedDebtor.displayName}</span>
-                        <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${copilotAnswer.matchedDebtor.optimalWindow.canSend ? "bg-status-paid-bg text-status-paid-fg" : "bg-danger-bg text-destructive"}`}>
+                      <div className="flex min-w-0 items-center justify-between gap-2">
+                        <span className="min-w-0 truncate text-xs font-bold text-foreground">{copilotAnswer.matchedDebtor.displayName}</span>
+                        <span className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-bold ${copilotAnswer.matchedDebtor.optimalWindow.canSend ? "bg-status-paid-bg text-status-paid-fg" : "bg-danger-bg text-destructive"}`}>
                           {isEn ? copilotAnswer.matchedDebtor.optimalWindow.windowLabelEn : copilotAnswer.matchedDebtor.optimalWindow.windowLabelAr}
                         </span>
                       </div>

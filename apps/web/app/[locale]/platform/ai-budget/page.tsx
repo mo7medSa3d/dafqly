@@ -5,10 +5,11 @@ import { aiGlobalBudget, aiGlobalUsage } from "@tahseel/db";
 import { auth } from "@/server/auth";
 import { ownerDb } from "@/server/db";
 import { env } from "@/server/env";
+import { formatCount, formatNumber } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-const usd = (micros: bigint | string | number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 4 }).format(Number(micros) / 1_000_000);
+const usd = (micros: bigint | string | number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 4, numberingSystem: "latn" }).format(Number(micros) / 1_000_000);
 
 export default async function PlatformAiBudgetPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
@@ -50,13 +51,13 @@ export default async function PlatformAiBudgetPage({ params }: { params: Promise
       <Metric label={isAr ? "متاح قبل الحجز" : "Available before reservations"} value={usd(remaining)}/>
     </section>
     <section className="rounded-xl border border-border bg-surface p-5">
-      <div className="flex items-center justify-between gap-3"><h2 className="font-extrabold">{isAr ? "استهلاك السقف" : "Cap utilization"}</h2><strong className="tnum" dir="ltr">{usedPct.toFixed(1)}%</strong></div>
+      <div className="flex items-center justify-between gap-3"><h2 className="font-extrabold">{isAr ? "استهلاك السقف" : "Cap utilization"}</h2><strong className="tnum" dir="ltr">{formatNumber(usedPct, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%</strong></div>
       <div className="mt-3 h-3 overflow-hidden rounded bg-surface-muted"><div className="h-full rounded bg-primary" style={{ width: `${usedPct}%` }}/></div>
       <p className="mt-2 text-xs text-text-muted">{isAr ? `الفترة من ${currentPeriod}. يشمل الإنفاق المحسوب بعد اكتمال استدعاءات المزود.` : `Period started ${currentPeriod}. Spend reflects usage reconciled after provider calls complete.`}</p>
     </section>
-    <section className="grid gap-3 sm:grid-cols-3"><Metric label={isAr ? "عدد استدعاءات المزود" : "Provider calls"} value={String(usage?.calls ?? 0)}/><Metric label={isAr ? "Input Tokens" : "Input tokens"} value={Number(usage?.inputTokens ?? 0).toLocaleString("en-US")}/><Metric label={isAr ? "Output Tokens" : "Output tokens"} value={Number(usage?.outputTokens ?? 0).toLocaleString("en-US")}/></section>
+    <section className="grid gap-3 sm:grid-cols-3"><Metric label={isAr ? "عدد استدعاءات المزود" : "Provider calls"} value={formatCount(usage?.calls ?? 0, locale)}/><Metric label={isAr ? "Input Tokens" : "Input tokens"} value={formatCount(usage?.inputTokens ?? 0, locale)}/><Metric label={isAr ? "Output Tokens" : "Output tokens"} value={formatCount(usage?.outputTokens ?? 0, locale)}/></section>
     <section className="rounded-xl border border-status-due-fg/25 bg-status-due-bg p-4 text-sm leading-6"><strong>{isAr ? "ملاحظة محاسبية مهمة" : "Metering note"}</strong><p className="mt-1 text-text-muted">{isAr ? "السقف يعمل كـ admission control ذري: يحجز مبلغاً قبل كل استدعاء ويمنع استدعاءات جديدة عند استنفاد المتاح. التكلفة الفعلية تُسوّى بعد وصول Usage من المزود؛ لذلك قد يتجاوز الاستدعاء الجاري السقف بمقدار الفرق بين الحجز والتكلفة الفعلية. استخدم حجزاً محافظاً وراجع فواتير المزود." : "The cap is an atomic admission-control guard: it reserves funds before each provider call and blocks new calls when capacity is exhausted. Actual usage is settled after provider token counts arrive, so an in-flight call can exceed its reservation. Use a conservative per-call reserve and reconcile provider invoices."}</p></section>
-    <p className="text-xs text-text-muted">{isAr ? `عدد النماذج المستخدمة في الفترة: ${models?.count ?? 0}.` : `Distinct models used this period: ${models?.count ?? 0}.`} {isAr ? "هذه الشاشة متاحة فقط للمستخدمين المدرجين في PLATFORM_ADMIN_USER_IDS." : "This view is restricted to PLATFORM_ADMIN_USER_IDS."}</p>
+    <p className="text-xs text-text-muted">{isAr ? `عدد النماذج المستخدمة في الفترة: ${formatCount(models?.count ?? 0, locale)}.` : `Distinct models used this period: ${formatCount(models?.count ?? 0, locale)}.`} {isAr ? "هذه الشاشة متاحة فقط للمستخدمين المدرجين في PLATFORM_ADMIN_USER_IDS." : "This view is restricted to PLATFORM_ADMIN_USER_IDS."}</p>
   </main>;
 }
 

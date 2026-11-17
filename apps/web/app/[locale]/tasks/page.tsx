@@ -24,7 +24,7 @@ export default async function TasksPage({
   const tenant = mine[0];
   if (!tenant) redirect(`/${locale}/onboarding`);
   return (
-    <AppShell locale={locale} demoMode={runtimeModeFlags()} digits={tenant.settings?.easternDigits ? "eastern" : "latin"} businessName={tenant.businessNameAr} currency={tenant.settings?.currency ?? "EGP"} testId="tasks">
+    <AppShell locale={locale} demoMode={runtimeModeFlags()} digits="latin" businessName={tenant.businessNameAr} currency={tenant.settings?.currency ?? "EGP"} testId="tasks">
       <CollectionWorkspaceClient locale={locale} role={tenant.role} initialTab={tab} />
     </AppShell>
   );

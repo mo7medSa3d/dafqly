@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 
 interface Tokens {
   color: { teal: Record<string, string> };
+  chart: Record<"light" | "dark", Record<string, string>>;
   semantic: Record<"light" | "dark", Record<string, string>>;
   status: Record<"light" | "dark", Record<string, { fg: string; bg: string }>>;
 }
@@ -47,6 +48,18 @@ for (const mode of ["light", "dark"] as const) {
     for (const [status, pair] of Object.entries(tokens.status[mode])) {
       it(`status ${status} fg on its bg >= 4.5:1`, () => {
         expect(contrastRatio(pair.fg, pair.bg)).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+    for (const key of ["chart_3", "chart_4", "chart_5"] as const) {
+      it(`neutral ${key} on surface >= 3:1 (WCAG 1.4.11)`, () => {
+        expect(contrastRatio(tokens.chart[mode][key]!, sem.surface!)).toBeGreaterThanOrEqual(3);
+      });
+    }
+    if (mode === "dark") {
+      it("dark chart segments never render as stark white", () => {
+        for (const hex of Object.values(tokens.chart.dark)) {
+          expect(luminance(hex)).toBeLessThan(0.75);
+        }
       });
     }
     it("teal is never a text color", () => {

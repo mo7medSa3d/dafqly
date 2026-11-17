@@ -168,7 +168,7 @@ export async function syncWorkspaceNotifications(
         })
         .from(payments)
         .innerJoin(debtors, eq(debtors.id, payments.debtorId))
-        .where(eq(payments.status, "claimed"))
+        .where(and(eq(payments.status, "claimed"), isNull(debtors.deletedAt)))
         .orderBy(asc(payments.createdAt), asc(payments.id))
         .limit(11),
       tx
@@ -181,7 +181,7 @@ export async function syncWorkspaceNotifications(
         .from(disputes)
         .innerJoin(debtors, eq(debtors.id, disputes.debtorId))
         .innerJoin(invoices, eq(invoices.id, disputes.invoiceId))
-        .where(eq(disputes.status, "open"))
+        .where(and(eq(disputes.status, "open"), isNull(debtors.deletedAt)))
         .orderBy(asc(disputes.createdAt), asc(disputes.id))
         .limit(11),
       tx
@@ -209,7 +209,10 @@ export async function syncWorkspaceNotifications(
         .innerJoin(debtors, eq(debtors.id, cheques.debtorId))
         .leftJoin(invoices, eq(invoices.id, cheques.invoiceId))
         .where(
-          sql`(${cheques.status} = 'bounced' OR (${cheques.status} IN ('held', 'deposited') AND ${cheques.dueDate} <= ${dueWindowEnd}))`,
+          and(
+            isNull(debtors.deletedAt),
+            sql`(${cheques.status} = 'bounced' OR (${cheques.status} IN ('held', 'deposited') AND ${cheques.dueDate} <= ${dueWindowEnd}))`,
+          ),
         )
         .orderBy(asc(cheques.dueDate), asc(cheques.id))
         .limit(11),

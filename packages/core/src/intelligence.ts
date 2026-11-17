@@ -103,6 +103,7 @@ function addDaysIsoPure(iso: string, days: number): string {
 }
 
 function clampInt(n: number, min: number, max: number): number {
+  if (!Number.isFinite(n)) return min;
   return Math.max(min, Math.min(max, Math.round(n)));
 }
 
@@ -414,7 +415,7 @@ export function analyzePortfolioRisk(input: PortfolioRiskInput): PortfolioRiskAn
 
     if (expectedNext14DaysMinor > 0n) {
       insightsAr.push(
-        `تدفقات متوقعة قريباً: يُتوقع تحصيل نحو ${formatCurrencyMinor(expectedNext14DaysMinor, input.currency)} ${symAr} خلال ١٤ يوماً من الحسابات المنتظمة.`,
+        `تدفقات متوقعة قريباً: يُتوقع تحصيل نحو ${formatCurrencyMinor(expectedNext14DaysMinor, input.currency)} ${symAr} خلال 14 يوماً من الحسابات المنتظمة.`,
       );
       insightsEn.push(
         `Near-term liquidity: ~${formatCurrencyMinor(expectedNext14DaysMinor, input.currency)} ${symEn} projected within 14 days from healthy/watch accounts.`,
@@ -920,7 +921,8 @@ export interface NotificationCandidate {
     | "task_assigned"
     | "ai_approval_pending"
     | "ai_approval_executed"
-    | "ai_copilot_alert";
+    | "ai_copilot_alert"
+    | "promise_due";
   severity: NotificationSeverity;
   titleAr: string;
   titleEn: string;

@@ -6,7 +6,7 @@ import { AppError } from "./errors";
  * the guard itself is built and tested in M0.
  */
 export function requireIdempotencyKey(headers: Headers): string {
-  const key = headers.get("idempotency-key");
+  const key = headers.get("idempotency-key")?.trim();
   if (!key || key.length < 8 || key.length > 128) {
     throw new AppError("IDEMPOTENCY_KEY_REQUIRED", "POST endpoints that trigger sends require an Idempotency-Key header (8-128 chars)", 400);
   }

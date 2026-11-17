@@ -14,7 +14,7 @@ import { normalizePhone } from "./phone";
 export type CellValue = string | number | boolean | null;
 export type Grid = CellValue[][];
 
-export const IMPORT_FIELDS = ["name", "phone", "amount", "dueDate", "issuedDate", "reference", "description", "notes"] as const;
+const IMPORT_FIELDS = ["name", "phone", "amount", "dueDate", "issuedDate", "reference", "description", "notes"] as const;
 export type ImportField = (typeof IMPORT_FIELDS)[number];
 /** field -> column index */
 export type ColumnMapping = Partial<Record<ImportField, number>>;
@@ -84,7 +84,7 @@ const HEADER_ALIASES: Record<ImportField, readonly string[]> = {
   ],
 };
 
-export function normalizeHeader(raw: unknown): string {
+function normalizeHeader(raw: unknown): string {
   return normalizeDigits(String(raw ?? ""))
     .trim()
     .toLowerCase()
@@ -157,7 +157,7 @@ function inferFieldFromData(grid: Grid, colIdx: number, startRow: number): "phon
       continue;
     }
     // Numeric amount
-    if (typeof raw === "number" && !isNaN(raw)) {
+    if (typeof raw === "number" && Number.isFinite(raw)) {
       amountCount++;
       continue;
     }
@@ -302,11 +302,11 @@ export interface ParsedImportRow {
   duplicateOfRow?: number;
 }
 
-export const IMPORT_CHUNK_SIZE = 500;
+const IMPORT_CHUNK_SIZE = 500;
 
 function cellText(v: CellValue | undefined): string {
   if (v === null || v === undefined) return "";
-  if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(v);
+  if (typeof v === "number") return String(v);
   return String(v).trim();
 }
 
@@ -498,7 +498,7 @@ export function decodeCsvBuffer(bytes: Uint8Array | Buffer): string {
   }
 }
 
-export function detectCsvDelimiter(text: string): string {
+function detectCsvDelimiter(text: string): string {
   const clean = text.replace(/^\uFEFF/, "");
   const lines = clean.split(/\r?\n/).filter((l) => l.trim().length > 0).slice(0, 15);
   if (lines.length === 0) return ",";

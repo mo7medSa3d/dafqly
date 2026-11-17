@@ -4,7 +4,7 @@ import { z } from "zod";
 import {
   AppError, allocatePayment, decideGatewayCallback, isTerminalStatus, localDateOf, outstandingForLink,
   parseMoney, parsePaymobCallback, planReversalAllocations, redactPaymobPayload,
-  reconcileGateway, type PaymobCallback, type PaymobTxnLike, type SupportedCurrency,
+  reconcileGateway, type PaymobCallback, type PaymobTxnLike,
 } from "@tahseel/core";
 import { verifyPaymobHmac } from "@tahseel/core/payments-crypto";
 import {
@@ -126,11 +126,11 @@ export async function createGatewayLink(
       .where(and(eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
     if (!debtor) throw new AppError("NOT_FOUND", "Debtor not found", 404);
     const invs = await tx.select().from(invoices).where(eq(invoices.debtorId, input.debtorId));
-    let currency: SupportedCurrency = (tenant.settings.currency ?? "EGP") as SupportedCurrency;
+    let currency = tenant.settings.currency ?? "EGP";
     if (input.invoiceId) {
       const inv = invs.find((i) => i.id === input.invoiceId);
       if (!inv) throw new AppError("NOT_FOUND", "Invoice not found", 404);
-      currency = inv.currency as SupportedCurrency;
+      currency = inv.currency as typeof currency;
     }
     const scopedInvoices = input.invoiceId ? invs : invs.filter((i) => i.currency === currency);
     const amountMinor = outstandingForLink(

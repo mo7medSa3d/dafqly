@@ -17,4 +17,9 @@ describe("axisLabel (F-06: tenant-currency exponent)", () => {
     // Small books keep one decimal instead of a row of zeros.
     expect(axisLabel(550, false, "EGP")).toBe("5.5");
   });
+
+  it("uses Western/Latin digits in Arabic mode too", () => {
+    expect(axisLabel(125050, true, "EGP")).toBe("1.3k");
+    expect(axisLabel(550, true, "EGP")).toBe("5.5");
+  });
 });

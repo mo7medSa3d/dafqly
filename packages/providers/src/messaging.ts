@@ -6,6 +6,11 @@
  * same key returns the original providerMessageId and sends nothing twice
  * (hard rule §1.3: a reminder is never sent twice).
  */
+export interface WhatsAppCallOverride {
+  phoneNumberId?: string;
+  accessToken?: string;
+}
+
 export interface SendTemplateInput {
   toE164: string;
   templateKey: string;
@@ -16,6 +21,7 @@ export interface SendTemplateInput {
   parameters?: string[];
   idempotencyKey: string;
   channel: "whatsapp" | "sms";
+  override?: WhatsAppCallOverride;
 }
 export interface SendResult { providerMessageId: string }
 
@@ -25,7 +31,7 @@ export interface MessagingProvider {
 
 /** Providers that can also send free-form text inside the 24h window (F3). */
 export interface TextCapableProvider extends MessagingProvider {
-  sendText(input: { toE164: string; body: string; idempotencyKey: string }): Promise<SendResult>;
+  sendText(input: { toE164: string; body: string; idempotencyKey: string; override?: WhatsAppCallOverride }): Promise<SendResult>;
 }
 
 /** A provider failure carrying the provider's numeric code (taxonomy in @tahseel/core, ADR-015). */
@@ -41,7 +47,7 @@ export class ProviderError extends Error {
 /** FAKE provider for dev/tests: records sends in memory, dedupes by idempotency key. Never touches a network. */
 export class FakeMessagingProvider implements TextCapableProvider {
   readonly sent: SendTemplateInput[] = [];
-  readonly texts: { toE164: string; body: string; idempotencyKey: string }[] = [];
+  readonly texts: { toE164: string; body: string; idempotencyKey: string; override?: WhatsAppCallOverride }[] = [];
   private byKey = new Map<string, SendResult>();
   private readonly tag = Math.random().toString(36).slice(2, 8); // per-instance: provider ids are globally unique (like real wamids)
   private seq = 0;
@@ -53,7 +59,7 @@ export class FakeMessagingProvider implements TextCapableProvider {
     this.sent.push(input);
     return result;
   }
-  async sendText(input: { toE164: string; body: string; idempotencyKey: string }): Promise<SendResult> {
+  async sendText(input: { toE164: string; body: string; idempotencyKey: string; override?: WhatsAppCallOverride }): Promise<SendResult> {
     const existing = this.byKey.get(input.idempotencyKey);
     if (existing) return existing;
     const result = { providerMessageId: `fake-text-${this.tag}-${++this.seq}` };
@@ -81,7 +87,7 @@ export class FlakyProvider implements TextCapableProvider {
     if (failure) throw new ProviderError(failure.code, failure.message);
     return this.inner.sendTemplate(input);
   }
-  async sendText(input: { toE164: string; body: string; idempotencyKey: string }): Promise<SendResult> {
+  async sendText(input: { toE164: string; body: string; idempotencyKey: string; override?: WhatsAppCallOverride }): Promise<SendResult> {
     return this.inner.sendText(input);
   }
   get sent(): SendTemplateInput[] { return this.inner.sent; }
@@ -94,14 +100,14 @@ export class FlakyProvider implements TextCapableProvider {
  */
 export class DryRunMessagingProvider implements TextCapableProvider {
   readonly rendered: SendTemplateInput[] = [];
-  readonly renderedTexts: { toE164: string; body: string; idempotencyKey: string }[] = [];
+  readonly renderedTexts: { toE164: string; body: string; idempotencyKey: string; override?: WhatsAppCallOverride }[] = [];
   constructor(private readonly inner: MessagingProvider) {}
   async sendTemplate(input: SendTemplateInput): Promise<SendResult> {
     this.rendered.push(input);
     void this.inner;
     return { providerMessageId: `dry-run-${input.idempotencyKey}` };
   }
-  async sendText(input: { toE164: string; body: string; idempotencyKey: string }): Promise<SendResult> {
+  async sendText(input: { toE164: string; body: string; idempotencyKey: string; override?: WhatsAppCallOverride }): Promise<SendResult> {
     this.renderedTexts.push(input);
     return { providerMessageId: `dry-run-text-${input.idempotencyKey}` };
   }
@@ -114,7 +120,7 @@ export class NotConfiguredMessagingProvider implements TextCapableProvider {
   async sendTemplate(_input: SendTemplateInput): Promise<SendResult> {
     throw new ProviderError(0, `${this.channel} provider is not configured`);
   }
-  async sendText(_input: { toE164: string; body: string; idempotencyKey: string }): Promise<SendResult> {
+  async sendText(_input: { toE164: string; body: string; idempotencyKey: string; override?: WhatsAppCallOverride }): Promise<SendResult> {
     throw new ProviderError(0, `${this.channel} provider is not configured`);
   }
 }

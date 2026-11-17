@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { normalizeDigits } from "./digits";
-import { currencyMinorExponent, parseMoney, formatMoney, formatCurrencyMinor, normalizeCurrencyCode } from "./money";
+import { currencyMinorExponent, parseMoney, formatMoney, formatCurrencyMinor, getCurrencySymbol, normalizeCurrencyCode } from "./money";
 import { allocatePayment, addDaysIso, type AllocationTarget } from "./invoices";
 
 /**
@@ -35,6 +35,7 @@ export function coerceAmountMinor(value: unknown, currency: string = "EGP"): num
   const exponent = currencyMinorExponent(currency);
   if (typeof value === "number") {
     if (!Number.isFinite(value) || value < 0) return null;
+    if (exponent === 0 && !Number.isInteger(value)) return null;
     const scale = 10 ** exponent;
     const minor = Number.isInteger(value) ? value : Math.round(value * scale);
     return Number.isSafeInteger(minor) ? minor : null;
@@ -67,7 +68,7 @@ const confidenceField = z.number().min(0).max(1);
 const dateField = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 // ------------------------------------------------------------------- F6 ledger
-export const ledgerRowSchema = z.object({
+const ledgerRowSchema = z.object({
   name: z.string().trim().min(1),
   phone: z.string().nullable().optional().default(null),
   amount_minor: amountMinorField,
@@ -78,7 +79,7 @@ export const ledgerRowSchema = z.object({
 });
 export type LedgerRow = z.infer<typeof ledgerRowSchema>;
 
-export const ledgerExtractionSchema = z.object({ rows: z.array(ledgerRowSchema) });
+const ledgerExtractionSchema = z.object({ rows: z.array(ledgerRowSchema) });
 export type LedgerExtraction = z.infer<typeof ledgerExtractionSchema>;
 
 /** Safe parser: invalid LLM output -> null (routes to human review). */
@@ -383,7 +384,7 @@ export const REPLY_INTENTS = [
 ] as const;
 export type ReplyIntent = (typeof REPLY_INTENTS)[number];
 
-export const replyClassificationSchema = z.object({
+const replyClassificationSchema = z.object({
   intent: z.enum(REPLY_INTENTS),
   confidence: confidenceField,
   promised_date: dateField.nullable().optional().default(null),
@@ -446,6 +447,7 @@ export function resolveRelativeDate(text: string, todayIso: string, timezone: st
   for (const { names, dow } of WEEKDAYS) {
     if (names.some((n) => t.includes(n))) {
       const todayDow = new Date(`${todayIso}T00:00:00Z`).getUTCDay();
+      if (Number.isNaN(todayDow)) return { date: null, ambiguous: false };
       let delta = (dow - todayDow + 7) % 7;
       if (delta === 0) delta = 7; // "الخميس" said ON Thursday means next week's
       return { date: addDaysIso(todayIso, delta), ambiguous: false };
@@ -607,7 +609,7 @@ export function sanitizePromptData(input: string): string {
 }
 
 // -------------------------------------------------------- 1. Smart Header Mapper
-export const WORKSPACE_IMPORT_FIELDS = [
+const WORKSPACE_IMPORT_FIELDS = [
   "name", "phone", "amount", "dueDate", "issuedDate", "reference", "description", "notes",
 ] as const;
 export type WorkspaceImportField = (typeof WORKSPACE_IMPORT_FIELDS)[number];
@@ -820,12 +822,8 @@ export function parseReceiptScreenshotAnalysis(input: {
     now,
   });
 
-  const isDupHash = seenHashes.has(sha256);
-  const normRef = e.reference_no ? normalizeDigits(e.reference_no).trim().replace(/[\s\-_]/g, "").toUpperCase() : null;
-  const isDupRef = e.reference_no !== null && (
-    seenReferences.has(e.reference_no) ||
-    (normRef !== null && Array.from(seenReferences).some((r) => normalizeDigits(r).trim().replace(/[\s\-_]/g, "").toUpperCase() === normRef))
-  );
+  const isDupHash = checksRes.checks.find((c) => c.key === "duplicate_hash")?.passed === false;
+  const isDupRef = e.reference_no !== null && checksRes.checks.find((c) => c.key === "duplicate_reference")?.passed === false;
   const isFuture = e.datetime ? new Date(e.datetime).getTime() > now.getTime() + 86_400_000 : false;
   const extractionUnavailable = e.tamper_signals.includes("extraction_unavailable");
   const hasTamperSignal = e.tamper_signals.some((signal) => signal !== "extraction_unavailable");
@@ -948,10 +946,10 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
   const safeBusinessName = sanitizePromptData(input.tenantBusinessName);
   const debtorDisplayName = safeDebtorName || (isEn ? "Valued Customer" : "عزيزي العميل");
   const businessDisplayName = safeBusinessName || (isEn ? "DAFQLY" : "دافقلي");
-  const currency = input.currency ?? (isEn ? "EGP" : "ج.م");
-  const currencyCode = input.currency && /^[A-Za-z]{3}$/.test(input.currency)
-    ? normalizeCurrencyCode(input.currency)
+  const currencyCode = input.currency && /^[A-Za-z]{3}$/.test(input.currency.trim())
+    ? normalizeCurrencyCode(input.currency.trim())
     : "EGP";
+  const currency = isEn ? (input.currency ?? "EGP") : getCurrencySymbol(currencyCode, "ar");
   const amountMajor = formatCurrencyMinor(amountMinor, currencyCode);
   const invoiceRefText = input.reference ? (isEn ? ` #${input.reference}` : ` رقم ${input.reference}`) : "";
 

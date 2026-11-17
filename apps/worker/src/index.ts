@@ -42,18 +42,18 @@ const log = pino({
   redact: ["phoneE164", "toE164", "debtorPhone", "phone", "waId", "*.phoneE164", "*.toE164", "*.phone"],
 });
 
+// Runtime tenant access must use the RLS-bound role. The owner URL is
+// retained only for the engine's explicitly platform-scoped enumeration.
+if (env.NODE_ENV === "production" && !env.APP_DATABASE_URL) {
+  throw new Error("APP_DATABASE_URL is required in production; DATABASE_URL bypasses tenant RLS");
+}
+
 // BullMQ requires maxRetriesPerRequest: null for Worker connections; Queue
 // (producer) connections should stay separate with bounded retries.
 const workerConnection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 const queueConnection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 3 });
 workerConnection.on("error", (err) => log.error({ err }, "worker redis error"));
 queueConnection.on("error", (err) => log.error({ err }, "queue redis error"));
-
-// Runtime tenant access must use the RLS-bound role. The owner URL is
-// retained only for the engine's explicitly platform-scoped enumeration.
-if (env.NODE_ENV === "production" && !env.APP_DATABASE_URL) {
-  throw new Error("APP_DATABASE_URL is required in production; DATABASE_URL bypasses tenant RLS");
-}
 const appConnection = createAppDb(env.APP_DATABASE_URL ?? env.DATABASE_URL);
 const ownerConnection = createDb(env.DATABASE_URL);
 const engine = createEngineDeps({
@@ -70,6 +70,9 @@ const deps = { clock: new SystemClock(), dryRun: env.DRY_RUN_MESSAGING, engine }
 const plannerQueue = new Queue("reminders-planner", { connection: queueConnection });
 const dispatcherQueue = new Queue("reminders-dispatcher", { connection: queueConnection });
 const maintenanceQueue = new Queue("maintenance", { connection: queueConnection });
+plannerQueue.on("error", (err) => log.error({ err }, "planner queue error"));
+dispatcherQueue.on("error", (err) => log.error({ err }, "dispatcher queue error"));
+maintenanceQueue.on("error", (err) => log.error({ err }, "maintenance queue error"));
 
 // Workers are deliberately created only after the RLS role assertion in
 // main(). BullMQ Workers autorun by default; constructing them at module
@@ -112,6 +115,9 @@ async function main(): Promise<void> {
   plannerWorker.on("failed", (_job, err) => log.error({ err }, "planner tick failed"));
   dispatcherWorker.on("failed", (_job, err) => log.error({ err }, "dispatcher tick failed"));
   maintenanceWorker.on("failed", (_job, err) => log.error({ err }, "maintenance tick failed"));
+  plannerWorker.on("error", (err) => log.error({ err }, "planner worker error"));
+  dispatcherWorker.on("error", (err) => log.error({ err }, "dispatcher worker error"));
+  maintenanceWorker.on("error", (err) => log.error({ err }, "maintenance worker error"));
   // Repeatable jobs (BUILD_PLAN §3): planner nightly, dispatcher every minute.
   // The engines behind them land in M2; the schedules are wired now.
   await plannerQueue.add("nightly", {}, { repeat: { pattern: "0 2 * * *", tz: env.DEFAULT_TIMEZONE }, removeOnComplete: 50, removeOnFail: 50 });
@@ -136,24 +142,31 @@ async function shutdown(signal: string, exitCode = 0): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   log.info({ signal }, "shutting down");
-  await Promise.allSettled([
-    plannerWorker?.close(),
-    dispatcherWorker?.close(),
-    maintenanceWorker?.close(),
-    plannerQueue.close(),
-    dispatcherQueue.close(),
-    maintenanceQueue.close(),
-  ]);
-  const closeTimeout = new Promise<void>((resolve) => setTimeout(resolve, 10_000));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const closeTimeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, 10_000);
+    timer.unref();
+  });
   await Promise.race([
-    Promise.allSettled([
-      workerConnection.quit().catch(() => workerConnection.disconnect()),
-      queueConnection.quit().catch(() => queueConnection.disconnect()),
-      appConnection.client.end(),
-      ownerConnection.client.end(),
-    ]),
+    (async () => {
+      await Promise.allSettled([
+        plannerWorker?.close(),
+        dispatcherWorker?.close(),
+        maintenanceWorker?.close(),
+        plannerQueue.close(),
+        dispatcherQueue.close(),
+        maintenanceQueue.close(),
+      ]);
+      await Promise.allSettled([
+        workerConnection.quit().catch(() => workerConnection.disconnect()),
+        queueConnection.quit().catch(() => queueConnection.disconnect()),
+        appConnection.client.end(),
+        ownerConnection.client.end(),
+      ]);
+    })(),
     closeTimeout,
   ]);
+  if (timer) clearTimeout(timer);
   process.exit(exitCode);
 }
 process.on("SIGTERM", () => void shutdown("SIGTERM"));

@@ -2,10 +2,10 @@
 import { useLocale } from "next-intl";
 import { currencyMinorExponent, formatPct } from "@tahseel/core";
 
-export function axisLabel(minor: number, isAr: boolean, currency = "EGP"): string {
+export function axisLabel(minor: number, _isAr: boolean, currency = "EGP"): string {
   if (!Number.isFinite(minor)) return "0";
   const major = minor / 10 ** currencyMinorExponent(currency);
-  const loc = isAr ? "ar-EG" : "en-US";
+  const loc = "en-US";
   if (major >= 1000) {
     const k = major / 1000;
     return `${k.toLocaleString(loc, { maximumFractionDigits: k < 10 ? 1 : 0 })}k`;
@@ -53,7 +53,7 @@ export function ReminderFunnelChart({
                 {s.label}
               </span>
               <span className="tnum font-extrabold text-foreground" dir="ltr">
-                {s.value.toLocaleString(isAr ? "ar-EG" : "en-US")} <span className="text-muted-foreground">· {s.pctText}</span>
+                {s.value.toLocaleString("en-US")} <span className="text-muted-foreground">· {s.pctText}</span>
               </span>
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-muted">

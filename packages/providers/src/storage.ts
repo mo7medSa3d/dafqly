@@ -149,18 +149,29 @@ export class S3CompatibleStorageProvider implements StorageProvider {
 
   async put(key: string, bytes: Uint8Array, mime: string): Promise<void> {
     const response = await this.request("PUT", key, bytes, mime);
-    if (!response.ok) throw new Error(`S3 upload failed (HTTP ${response.status})`);
+    if (!response.ok) {
+      await response.body?.cancel?.().catch(() => undefined);
+      throw new Error(`S3 upload failed (HTTP ${response.status})`);
+    }
+    await response.body?.cancel?.().catch(() => undefined);
   }
 
   async get(key: string): Promise<Uint8Array | null> {
     const response = await this.request("GET", key);
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`S3 download failed (HTTP ${response.status})`);
+    if (response.status === 404) {
+      await response.body?.cancel?.().catch(() => undefined);
+      return null;
+    }
+    if (!response.ok) {
+      await response.body?.cancel?.().catch(() => undefined);
+      throw new Error(`S3 download failed (HTTP ${response.status})`);
+    }
     return new Uint8Array(await response.arrayBuffer());
   }
 
   async delete(key: string): Promise<void> {
     const response = await this.request("DELETE", key);
+    await response.body?.cancel?.().catch(() => undefined);
     if (!response.ok && response.status !== 404) throw new Error(`S3 delete failed (HTTP ${response.status})`);
   }
 

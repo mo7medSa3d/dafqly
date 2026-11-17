@@ -17,7 +17,7 @@ export interface PlanPolicy extends SchedulePolicy {
 export const DEFAULT_WEEKLY_CAP = 3;
 
 export interface ReminderStepDef { stepKey: string; offsetDays: number }
-export const DEFAULT_REMINDER_STEPS: ReminderStepDef[] = [
+const DEFAULT_REMINDER_STEPS: ReminderStepDef[] = [
   { stepKey: "d-3", offsetDays: -3 },
   { stepKey: "d0", offsetDays: 0 },
   { stepKey: "d+3", offsetDays: 3 },
@@ -26,7 +26,7 @@ export const DEFAULT_REMINDER_STEPS: ReminderStepDef[] = [
   { stepKey: "weekly", offsetDays: 21 },
 ];
 /** Hard cap (§7-F4): never more than 6 reminders per invoice. */
-export const MAX_REMINDERS_PER_INVOICE = 6;
+const MAX_REMINDERS_PER_INVOICE = 6;
 
 export interface PlanInvoiceInput {
   id: string;
@@ -126,7 +126,8 @@ export function classifyProviderError(code: number): ClassifiedError {
 
 /** Exponential backoff with jitter (§7-F4): 1s, 2s, 4s … capped at 60s. */
 export function backoffDelayMs(attempt: number, rng: () => number = Math.random): number {
-  const base = Math.min(60_000, 1000 * 2 ** Math.max(0, attempt));
+  const safeAttempt = Number.isFinite(attempt) ? Math.max(0, Math.floor(attempt)) : 0;
+  const base = Math.min(60_000, 1000 * 2 ** safeAttempt);
   return base + Math.floor(rng() * 250);
 }
 export const MAX_SEND_ATTEMPTS = 5;
@@ -141,12 +142,15 @@ export interface QualityVerdict { pause: boolean; failureRate: number; blockRate
  * 20% (over at least 20 sends) or whose block/opt-out rate exceeds 5%.
  */
 export function evaluateQualityGuard(stats: QualityStats): QualityVerdict {
-  const failureRate = stats.sent > 0 ? stats.failed / stats.sent : 0;
-  const blockRate = stats.sent > 0 ? stats.blocked / stats.sent : 0;
-  if (stats.sent >= 20 && failureRate > 0.2) {
+  const sent = Number.isFinite(stats.sent) && stats.sent > 0 ? stats.sent : 0;
+  const failed = Number.isFinite(stats.failed) && stats.failed > 0 ? stats.failed : 0;
+  const blocked = Number.isFinite(stats.blocked) && stats.blocked > 0 ? stats.blocked : 0;
+  const failureRate = sent > 0 ? failed / sent : 0;
+  const blockRate = sent > 0 ? blocked / sent : 0;
+  if (sent >= 20 && failureRate > 0.2) {
     return { pause: true, failureRate, blockRate, reason: `failure rate ${(failureRate * 100).toFixed(1)}% over ${stats.sent} sends` };
   }
-  if (stats.sent >= 20 && blockRate > 0.05) {
+  if (sent >= 20 && blockRate > 0.05) {
     return { pause: true, failureRate, blockRate, reason: `block rate ${(blockRate * 100).toFixed(1)}% over ${stats.sent} sends` };
   }
   return { pause: false, failureRate, blockRate, reason: null };

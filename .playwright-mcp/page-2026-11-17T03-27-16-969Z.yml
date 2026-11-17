@@ -1,0 +1,49 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - button "تفعيل الوضع الليلي" [ref=e4]
+      - button "Switch to English" [ref=e5]:
+        - generic [ref=e6]: English
+    - complementary [ref=e7]:
+      - generic [ref=e11]:
+        - img "دفقلي — Dafqly" [ref=e12]
+        - generic [ref=e16]:
+          - generic [ref=e17]: دفقلي
+          - generic [ref=e18]: تتبّع. تابع. وحصّل.
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - generic [ref=e21]: مساحة العمل
+          - heading "تتبّع. تابع. وحصّل." [level=2] [ref=e22]
+          - paragraph [ref=e23]: إدارة ذكية للمستحقات وتدفق نقدي أسرع.
+        - list [ref=e24]:
+          - listitem [ref=e25]: جدولة تذكيرات سداد ذكية ومؤتمتة
+          - listitem [ref=e29]: مساعد ذكي على بياناتك الحقيقية
+          - listitem [ref=e33]: موافقتك قبل أي إجراء مهم
+        - generic [ref=e43]:
+          - paragraph [ref=e44]: دخول آمن لمساحة العمل
+          - paragraph [ref=e45]: معزولة بصلاحيات المنشأة وقابلة للمراجعة
+      - paragraph [ref=e46]: دفقلي — منصة إدارة المستحقات والتدفق النقدي الذكي
+    - generic [ref=e48]:
+      - generic [ref=e49]:
+        - generic [ref=e50]:
+          - link "تسجيل الدخول" [ref=e52] [cursor=pointer]:
+            - /url: /ar/login
+          - link "إنشاء حساب" [ref=e53] [cursor=pointer]:
+            - /url: /ar/signup
+        - heading "تسجيل الدخول" [level=1] [ref=e55]
+        - paragraph [ref=e56]: أهلاً بيك تاني، كمّل من حيث وقفت.
+      - generic [ref=e57]:
+        - generic [ref=e58]:
+          - generic [ref=e59]: البريد الإلكتروني
+          - textbox "البريد الإلكتروني" [ref=e60]:
+            - /placeholder: name@example.com
+        - generic [ref=e61]:
+          - generic [ref=e62]: كلمة المرور
+          - generic [ref=e63]:
+            - textbox "كلمة المرور Show password" [ref=e64]
+            - button "Show password" [ref=e65]
+        - button "دخول" [ref=e66]
+      - paragraph [ref=e74]: بيانات حسابك ومعاملاتك المالية مشفّرة ومحمية بالكامل.
+      - link "ليس لديك حساب؟ أنشئ حسابًا" [ref=e75] [cursor=pointer]:
+        - /url: /ar/signup
+  - alert [ref=e76]

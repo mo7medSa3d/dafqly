@@ -13,7 +13,7 @@ const bodySchema = z.object({
 });
 
 const HEADERS = { "X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store" };
-const TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/;
+const TOKEN_RE = /^[A-Za-z0-9_-]{32,128}$/;
 
 export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }): Promise<Response> {
   const { token } = await params;

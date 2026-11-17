@@ -1,0 +1,154 @@
+- generic [active] [ref=e1]:
+  - alert [ref=e76]
+  - generic [ref=e88]:
+    - complementary [ref=e89]:
+      - generic [ref=e90]:
+        - generic [ref=e92]:
+          - img "دفقلي — Dafqly" [ref=e93]
+          - generic [ref=e97]: دفقلي
+        - button "طي القائمة" [ref=e99]
+      - navigation "primary" [ref=e103]:
+        - generic [ref=e104]:
+          - generic [ref=e105]: العمليات
+          - link "نظرة عامة" [ref=e106] [cursor=pointer]:
+            - /url: /ar/dashboard
+          - link "العملاء" [ref=e114] [cursor=pointer]:
+            - /url: /ar/debtors
+          - link "الفواتير" [ref=e121] [cursor=pointer]:
+            - /url: /ar/invoices
+          - link "الشيكات" [ref=e126] [cursor=pointer]:
+            - /url: /ar/cheques
+          - link "المهام والتذاكر" [ref=e130] [cursor=pointer]:
+            - /url: /ar/tasks
+          - link "التذكيرات" [ref=e135] [cursor=pointer]:
+            - /url: /ar/tasks?tab=reminders
+        - generic [ref=e140]:
+          - generic [ref=e141]: الأتمتة والذكاء
+          - link "صندوق الوارد AI" [ref=e142] [cursor=pointer]:
+            - /url: /ar/ai-inbox
+            - generic [ref=e146]: صندوق الوارد
+            - generic [ref=e147]: AI
+          - link "استيراد البيانات" [ref=e148] [cursor=pointer]:
+            - /url: /ar/import
+          - link "المسح الضوئي OCR" [ref=e153] [cursor=pointer]:
+            - /url: /ar/ledger-photo
+            - generic [ref=e159]: المسح الضوئي
+            - generic [ref=e160]: OCR
+        - generic [ref=e161]:
+          - generic [ref=e162]: الإعدادات
+          - link "الاشتراك والباقات" [ref=e163] [cursor=pointer]:
+            - /url: /ar/billing
+          - link "الإعدادات" [ref=e167] [cursor=pointer]:
+            - /url: /ar/settings
+      - generic [ref=e170]:
+        - generic [ref=e171]:
+          - generic [aria-hidden] [ref=e172]: ش
+          - generic [ref=e173]:
+            - paragraph [ref=e174]: شركة النيل للتجارة والتوريدات
+            - paragraph [ref=e175]: مساحة العمل
+        - button "تسجيل الخروج" [ref=e177]
+    - generic [ref=e179]:
+      - banner [ref=e180]:
+        - generic [ref=e181]:
+          - generic [ref=e183]:
+            - generic [ref=e184]: شركة النيل للتجارة والتوريدات
+            - generic [ref=e185]: /
+            - generic [ref=e186]: نظرة عامة
+          - generic [ref=e192]:
+            - button "بحث... ⌘K" [ref=e193]:
+              - generic [ref=e197]: بحث...
+              - generic [ref=e198]: ⌘K
+            - button "الإشعارات، 1 غير مقروءة" [ref=e200]:
+              - generic [ref=e201]: "1"
+            - button "تفعيل الوضع الليلي" [ref=e202]
+            - button "EN — Switch to English" [ref=e203]:
+              - generic [ref=e204]: English
+      - status [ref=e205]: "وضع تجريبي — محاكاة: الرسائل تُحفظ ولا تُرسل · فوترة الاشتراك في وضع المحاكاة"
+      - main [ref=e206]:
+        - generic [ref=e207]:
+          - generic [ref=e208]:
+            - generic [ref=e209]:
+              - generic [ref=e210]:
+                - time [ref=e212]: 2026-11-17
+                - generic [ref=e213]: ·
+                - generic [ref=e214]: Africa/Cairo
+              - heading "نظرة عامة — شركة النيل للتجارة والتوريدات" [level=1] [ref=e215]
+            - generic [ref=e216]:
+              - link "استيراد البيانات" [ref=e217] [cursor=pointer]:
+                - /url: /ar/import
+              - link "+ فاتورة جديدة" [ref=e218] [cursor=pointer]:
+                - /url: /ar/invoices
+          - region "kpis" [ref=e219]:
+            - generic [ref=e222]:
+              - generic [ref=e223]:
+                - generic [ref=e224]:
+                  - heading "إجمالي المستحقات" [level=2] [ref=e225]
+                  - paragraph [ref=e226]: إجمالي المحفظة
+                - generic [ref=e227]: 0 فواتير نشطة
+              - generic [ref=e228]:
+                - generic [ref=e229]: "0.00"
+                - generic [ref=e230]: ج.م
+              - generic [ref=e231]: 0 فواتير نشطة · 3 عملاء
+            - generic [ref=e238]:
+              - generic [ref=e239]:
+                - generic [ref=e240]:
+                  - heading "محصّل هذا الشهر" [level=2] [ref=e241]
+                  - paragraph [ref=e242]: مقبوضات الشهر
+                - generic [ref=e243]: 100.0%
+              - generic [ref=e244]:
+                - generic [ref=e245]: 1,250.50
+                - generic [ref=e246]: ج.م
+              - generic [ref=e247]: إجمالي التحصيل المؤكد
+            - generic [ref=e253]:
+              - generic [ref=e254]:
+                - generic [ref=e255]:
+                  - heading "متأخرات السداد" [level=2] [ref=e256]
+                  - paragraph [ref=e257]: متأخرات الاستحقاق
+                - generic [ref=e258]: سليم
+              - generic [ref=e259]:
+                - generic [ref=e260]: "0.00"
+                - generic [ref=e261]: ج.م
+              - link "عرض الفواتير المتأخرة ←" [ref=e263] [cursor=pointer]:
+                - /url: /ar/invoices?overdue=true
+          - generic [ref=e267]:
+            - generic [ref=e269]:
+              - heading "توقع التدفق النقدي (8 أسابيع)" [level=2] [ref=e272]
+              - generic [ref=e274]:
+                - paragraph [ref=e282]: يتطلب المنحنى التنبؤي 10 فواتير مسددة على الأقل.
+                - paragraph [ref=e283]: أضف فواتير ومدفوعات لتفعيل منحنى التدفقات النقدية لـ 8 أسابيع.
+            - generic [ref=e285]:
+              - heading "معدل التحصيل" [level=2] [ref=e288]
+              - generic [ref=e290]:
+                - generic [ref=e291]:
+                  - 'img "معدل التحصيل: 100.0%" [ref=e292]':
+                    - generic [ref=e295]: 100.0%
+                  - paragraph [ref=e296]: معدل التحصيل
+                  - paragraph [ref=e297]: "أيام التحصيل (DSO): 0.0 يوم"
+                - generic [ref=e298]:
+                  - generic [ref=e299]:
+                    - paragraph [ref=e300]: معدل التحصيل
+                    - paragraph [ref=e301]: 100.0%
+                  - generic [ref=e302]:
+                    - paragraph [ref=e303]: أيام التحصيل (DSO)
+                    - paragraph [ref=e304]: 0.0 يوم
+            - generic [ref=e306]:
+              - heading "الأعمار" [level=2] [ref=e309]
+              - generic [ref=e311]:
+                - paragraph [ref=e312]: لا توجد مستحقات مفتوحة
+                - link "إضافة فاتورة ←" [ref=e313] [cursor=pointer]:
+                  - /url: /ar/invoices
+            - generic [ref=e315]:
+              - heading "أكبر المدينين" [level=2] [ref=e318]
+              - generic [ref=e320]:
+                - paragraph [ref=e321]: لا توجد حسابات متأخرة
+                - link "عرض الفواتير ←" [ref=e322] [cursor=pointer]:
+                  - /url: /ar/invoices?overdue=true
+            - generic [ref=e324]:
+              - heading "أداء التذكيرات" [level=2] [ref=e327]
+              - generic [ref=e329]:
+                - paragraph [ref=e330]: لم تُرسل تذكيرات بعد
+                - link "فتح صندوق التحصيل ←" [ref=e331] [cursor=pointer]:
+                  - /url: /ar/ai-inbox
+    - button "المساعد الذكي 1" [ref=e333]:
+      - generic [ref=e356]: المساعد الذكي
+      - generic [ref=e357]: "1"

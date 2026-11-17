@@ -11,7 +11,7 @@ import { withTenant, type Db } from "@tahseel/db";
 import type { OcrLlmProvider, StorageProvider } from "@tahseel/providers";
 import { renderTemplate } from "@tahseel/templates";
 import { storeUpload, getFileBytes } from "./files";
-import { lockDebtor, lockDebtorInvoices, recomputeDebtorCredit, recomputeInvoicePaid } from "./ledger";
+import { lockDebtor, lockDebtorInvoices, recomputeDebtorCredit, recomputeInvoicesPaid } from "./ledger";
 import { replanLater } from "./engine";
 import { upsertNotificationInTx } from "./notifications";
 
@@ -76,11 +76,24 @@ export async function processReceiptImage(
   }
   if (!fileId || !bytes) throw new AppError("NO_FILE", "A receipt image is required", 400);
 
-  const extractionResult = await deps.llm.extractReceipt(bytes, mime);
+  let extractionResult;
+  try {
+    extractionResult = await deps.llm.extractReceipt(bytes, mime);
+  } catch (err) {
+    console.warn("[receipts] AI extraction failed, falling back to unreadable receipt:", err);
+    extractionResult = {
+      data: null,
+      model: "fallback",
+      promptVersion: "error",
+      inputTokens: 0,
+      outputTokens: 0,
+      latencyMs: 0,
+    };
+  }
   const extraction = extractionResult.data;
   const extractedCurrency = (extraction?.currency ?? "").toUpperCase();
 
-  return withTenant(app, tenantId, async (tx) => {
+  const txResult = await withTenant(app, tenantId, async (tx) => {
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     if (!tenant) throw new AppError("NOT_FOUND", "Tenant not found", 404);
     const paymentCurrency = ["EGP", "SAR", "USD", "AED", "EUR", "KWD", "JPY"].includes(extractedCurrency)
@@ -103,7 +116,7 @@ export async function processReceiptImage(
           debtor = allDebtors.find((d) => d.id === suggestion.debtorId) ?? null;
         }
       }
-      if (!debtor && extraction.amount_minor && extraction.amount_minor > 0) {
+      if (!debtor && extraction.amount_minor && Number.isInteger(extraction.amount_minor) && extraction.amount_minor > 0) {
         const openInvs = await tx.select().from(invoices).where(and(eq(invoices.tenantId, tenantId), inArray(invoices.status, ["open", "partially_paid"]), eq(invoices.currency, paymentCurrency)));
         const match = openInvs.find((i) => (i.amountMinor - i.paidMinor) === BigInt(extraction.amount_minor!));
         if (match) {
@@ -228,11 +241,14 @@ export async function processReceiptImage(
       if (lockedDebtor.creditMinor === 0n && lockedDebtor.creditCurrency !== paymentCurrency) {
         await tx.update(debtors).set({ creditCurrency: paymentCurrency, updatedAt: now }).where(eq(debtors.id, debtor.id));
       }
-      for (const a of allocations) {
-        await tx.insert(paymentAllocations).values({ tenantId, paymentId, invoiceId: a.invoiceId, amountMinor: a.amountMinor });
+      if (allocations.length > 0) {
+        await tx.insert(paymentAllocations).values(
+          allocations.map((a) => ({ tenantId, paymentId, invoiceId: a.invoiceId, amountMinor: a.amountMinor })),
+        );
+        await recomputeInvoicesPaid(tx, tenantId, allocations.map((a) => a.invoiceId));
+      } else {
+        await recomputeDebtorCredit(tx, tenantId, debtor.id);
       }
-      for (const a of allocations) await recomputeInvoicePaid(tx, tenantId, a.invoiceId);
-      if (creditMinor > 0n || allocations.length === 0) await recomputeDebtorCredit(tx, tenantId, debtor.id);
       allocatedInvoiceIds = allocations.map((a) => a.invoiceId);
     }
 
@@ -280,19 +296,33 @@ export async function processReceiptImage(
       tenantId, debtorId: debtor.id, direction: "out", channel: "whatsapp", provider: "whatsapp",
       templateKey, bodyText: body, status: "queued",
     });
-    if (deps.notifyText) {
-      await deps.notifyText(debtor.phoneE164, body, `receipt-reply:${paymentId}`)
-        .catch(() => { /* the reply is recorded; a send failure never undoes the claim */ });
-    }
-
-    for (const id of allocatedInvoiceIds) replanLater(tenantId, id);
     return {
       outcome: decision === "auto_confirm" ? "auto_confirmed" as const : "claimed" as const,
       paymentId, fileId: fileId!, sha256, extraction, checks, matchKind: match.kind,
       matchedDebtorId: debtor.id,
       matchedDebtorName: debtor.displayName,
+      _notify: { phoneE164: debtor.phoneE164, body },
+      _allocatedInvoiceIds: allocatedInvoiceIds,
     };
   });
+  if ("_notify" in txResult && txResult._notify && deps.notifyText) {
+    await deps.notifyText(txResult._notify.phoneE164, txResult._notify.body, `receipt-reply:${txResult.paymentId}`)
+      .catch(() => { /* the reply is recorded; a send failure never undoes the claim */ });
+  }
+  if ("_allocatedInvoiceIds" in txResult && txResult._allocatedInvoiceIds) {
+    for (const id of txResult._allocatedInvoiceIds) replanLater(tenantId, id);
+  }
+  return {
+    outcome: txResult.outcome,
+    paymentId: txResult.paymentId,
+    fileId: txResult.fileId,
+    sha256: txResult.sha256,
+    extraction: txResult.extraction,
+    checks: txResult.checks,
+    matchKind: txResult.matchKind,
+    matchedDebtorId: txResult.matchedDebtorId,
+    matchedDebtorName: txResult.matchedDebtorName,
+  };
 }
 
 /** Receipt claims awaiting the merchant (the AI inbox's payment half). */

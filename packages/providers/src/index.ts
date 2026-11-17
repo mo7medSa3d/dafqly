@@ -6,7 +6,6 @@ export * from "./paymob";
 export * from "./storage";
 export * from "./llm";
 export * from "./unified-ai";
-export * from "./registry";
 export * from "./config";
 export { readSseData, parseSseJson } from "./sse";
 export * from "./image";

@@ -3,7 +3,7 @@ import {
   auditLog, debtors, invoices, messages, optOuts, plans, reminders, statementLinks, tenants, usageLedger,
   withTenant, type Db, type TenantSettings,
 } from "@tahseel/db";
-import { createHash } from "node:crypto";
+import { createDecipheriv, createHash } from "node:crypto";
 import {
   planReminders, groupDueReminders, classifyProviderError, backoffDelayMs, isOptOutText, evaluateQualityGuard,
   normalizeEgPhone, formatCurrencyMinor, isInQuietHours, nextAllowedSlot, localDateOf, safeTimezone, zonedTimeToUtc, quotaStatus,
@@ -12,8 +12,8 @@ import {
 } from "@tahseel/core";
 import { generateStatementToken } from "@tahseel/core/payments-crypto";
 import {
-  DryRunMessagingProvider, NotConfiguredMessagingProvider, NotConfiguredSmsProvider,
-  ProviderError, WhatsAppCloudProvider, type TextCapableProvider,
+  DryRunMessagingProvider, NotConfiguredSmsProvider,
+  ProviderError, WhatsAppCloudProvider, type TextCapableProvider, type WhatsAppCallOverride,
 } from "@tahseel/providers";
 import { TEMPLATES, renderTemplate, type TemplateKey } from "@tahseel/templates";
 
@@ -58,6 +58,7 @@ export interface EngineDeps {
   quotaExceeded?: (tenantId: string) => Promise<boolean>;
   onInboundReply?: (info: { tenantId: string; debtorId: string; messageId: string; text: string }) => Promise<void>;
   onInboundImage?: (info: { tenantId: string; debtorId: string; messageId: string; mediaId: string | null; mediaMime: string | null }) => Promise<void>;
+  sessionSecret?: string;
 }
 
 export interface CreateEngineDepsOptions {
@@ -70,6 +71,7 @@ export interface CreateEngineDepsOptions {
   appUrl?: string;
   globalPaused?: boolean;
   providerHealthy?: boolean;
+  sessionSecret?: string;
 }
 
 /**
@@ -77,13 +79,11 @@ export interface CreateEngineDepsOptions {
  * dry-run wrapping, and quota wiring live in one place.
  */
 export function createEngineDeps(options: CreateEngineDepsOptions): EngineDeps {
-  const realWhatsapp: TextCapableProvider = options.whatsappAccessToken
-    ? new WhatsAppCloudProvider({
-        apiVersion: options.whatsappApiVersion ?? "",
-        phoneNumberId: options.whatsappPhoneNumberId ?? "",
-        accessToken: options.whatsappAccessToken,
-      })
-    : new NotConfiguredMessagingProvider("whatsapp");
+  const realWhatsapp: TextCapableProvider = new WhatsAppCloudProvider({
+    apiVersion: options.whatsappApiVersion || "v27.0",
+    phoneNumberId: options.whatsappPhoneNumberId ?? "",
+    accessToken: options.whatsappAccessToken ?? "",
+  });
   const whatsapp = options.dryRunMessaging ? new DryRunMessagingProvider(realWhatsapp) : realWhatsapp;
   const smsBase: TextCapableProvider = new NotConfiguredSmsProvider();
   const sms = options.dryRunMessaging ? new DryRunMessagingProvider(smsBase) : smsBase;
@@ -94,6 +94,7 @@ export function createEngineDeps(options: CreateEngineDepsOptions): EngineDeps {
     appUrl: options.appUrl,
     globalPaused: options.globalPaused,
     providerHealthy: options.providerHealthy,
+    sessionSecret: options.sessionSecret,
     quotaExceeded: (tenantId: string) => quotaExceededFromDb(options.app, tenantId, new Date()),
   };
 }
@@ -158,10 +159,6 @@ export interface PlanResult { planned: number; cancelled: number }
 /** Re-plan one invoice: upsert future steps, cancel obsolete ones, never touch sent/queued steps (§7-F4). `notBefore` is the F8 promise override: no step is planned before that instant. */
 export async function planForInvoice(deps: EngineDeps, tenantId: string, invoiceId: string, now: Date, opts: { notBefore?: Date } = {}): Promise<PlanResult> {
   return withTenant(deps.app, tenantId, async (tx) => {
-    const [invPeek] = await tx.select({ id: invoices.id, debtorId: invoices.debtorId }).from(invoices).where(eq(invoices.id, invoiceId));
-    if (!invPeek) return { planned: 0, cancelled: 0 };
-    // Maintain consistent lock hierarchy (debtor -> invoice) to prevent deadlocks with payments:
-    await tx.select().from(debtors).where(eq(debtors.id, invPeek.debtorId)).for("share");
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for("update");
     if (!tenant || !invoice) return { planned: 0, cancelled: 0 };
@@ -562,6 +559,25 @@ export async function ensureStatementLinkUrl(
  * unreachable, because prepareTenant's sweep + guards run in one
  * transaction and sendGroup follows immediately.
  */
+
+export function resolveTenantWhatsappOverride(
+  settings: unknown,
+  sessionSecret = process.env.SESSION_SECRET,
+): WhatsAppCallOverride | undefined {
+  const wa = (settings as { whatsapp?: { phoneNumberId?: string; encryptedAccessToken?: string } } | null | undefined)?.whatsapp;
+  if (!wa?.phoneNumberId || !wa?.encryptedAccessToken) return undefined;
+  if (!sessionSecret) throw new Error("SESSION_SECRET is required to decrypt tenant WhatsApp token");
+  const [version, ivB64, tagB64, dataB64] = wa.encryptedAccessToken.split(".");
+  if (version !== "v1" || !ivB64 || !tagB64 || !dataB64) {
+    throw new Error("Malformed encrypted WhatsApp token");
+  }
+  const key = createHash("sha256").update(sessionSecret).digest();
+  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivB64, "base64url"));
+  decipher.setAuthTag(Buffer.from(tagB64, "base64url"));
+  const accessToken = Buffer.concat([decipher.update(Buffer.from(dataB64, "base64url")), decipher.final()]).toString("utf8");
+  return { phoneNumberId: wa.phoneNumberId, accessToken };
+}
+
 export async function sendGroup(deps: EngineDeps, tenantId: string, group: GroupWork, now: Date, summary: DispatchSummary): Promise<void> {
   // M05: last-chance re-check. A payment may have landed between
   // prepareTenant's guard read and this send; a plain re-read would still
@@ -614,6 +630,7 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([currency, amountMinor]) => ({ currency, amountMinor })),
       earliestDueOn: open.map((i) => i.dueOn).sort()[0] ?? group.earliestDueOn,
+      tenantSettings: tenantRow?.settings,
     };
   });
   if (live === null) return;
@@ -641,10 +658,14 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
   let providerMessageId: string | null = null;
   let error: { code: number; message: string } | null = null;
   try {
+    const override = group.channel === "whatsapp"
+      ? resolveTenantWhatsappOverride(live.tenantSettings, deps.sessionSecret)
+      : undefined;
     const result = await provider.sendTemplate({
       toE164: group.debtorPhone, templateKey: group.templateKey, variables,
       parameters: orderedParameters(group.templateKey, variables),
       idempotencyKey: group.groupKey, channel: group.channel,
+      ...(override ? { override } : {}),
     });
     providerMessageId = result.providerMessageId;
   } catch (err) {

@@ -28,6 +28,7 @@ export function engineDeps(): EngineDeps {
     whatsappPhoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID,
     whatsappAccessToken: e.WHATSAPP_ACCESS_TOKEN,
     appUrl: e.APP_URL,
+    sessionSecret: e.SESSION_SECRET,
   });
   if (e.NODE_ENV !== "test") engineSingleton = built;
   return built;

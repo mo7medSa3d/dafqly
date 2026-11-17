@@ -1,12 +1,12 @@
 import {
-  isOptOutText, normalizeDigits, parseReplyClassification, parseLedgerExtraction, parseReceiptExtraction,
+  isOptOutText, normalizeDigits, parseLedgerExtraction, parseReceiptExtraction,
   parseChequeExtraction, resolveRelativeDate,
   type LedgerExtraction, type ReceiptExtraction, type ReplyClassification, type ChequeExtraction,
 } from "@tahseel/core";
-import { LEDGER_PROMPT_VERSION, ledgerSystemForCurrency, LEDGER_TOOL_NAME, LEDGER_TOOL_SCHEMA, LEDGER_USER } from "./prompts/ledger";
-import { RECEIPT_PROMPT_VERSION, RECEIPT_SYSTEM, RECEIPT_TOOL_NAME, RECEIPT_TOOL_SCHEMA, RECEIPT_USER } from "./prompts/receipt";
-import { CHEQUE_PROMPT_VERSION, CHEQUE_SYSTEM, CHEQUE_TOOL_NAME, CHEQUE_TOOL_SCHEMA, CHEQUE_USER } from "./prompts/cheque";
-import { REPLY_PROMPT_VERSION, REPLY_SYSTEM, REPLY_TOOL_NAME, REPLY_TOOL_SCHEMA, replyUserText } from "./prompts/reply";
+import { LEDGER_PROMPT_VERSION } from "./prompts/ledger";
+import { RECEIPT_PROMPT_VERSION } from "./prompts/receipt";
+import { CHEQUE_PROMPT_VERSION } from "./prompts/cheque";
+import { REPLY_PROMPT_VERSION } from "./prompts/reply";
 
 /**
  * OcrLlmProvider (BUILD_PLAN §3/§7 F6–F8, ADR-005/022): the ONLY way code in

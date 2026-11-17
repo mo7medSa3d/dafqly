@@ -240,7 +240,7 @@ export function NotificationBell({ locale }: { locale: string }) {
           className="absolute top-11 end-0 z-50 w-[min(92vw,390px)] overflow-hidden rounded-xl border border-border bg-surface panel-shadow"
         >
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 px-4 py-3">
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-text">
                 {isEn ? "Notifications" : "الإشعارات"}

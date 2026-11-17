@@ -144,13 +144,6 @@
     "failed": "Could not record the payment"
   },
   "gateway": {
-    "title": "Payment links",
-    "createTotalLink": "Create a payment link for the total due",
-    "createInvoiceLink": "Payment link",
-    "linkCreated": "Payment link created",
-    "failed": "Could not create the payment link",
-    "openLink": "Open payment link",
-    "expires": "Expires",
     "refund": "Refund",
     "refundPrompt": "Refund amount (leave empty for full remaining refund)",
     "refunded": "Refund recorded successfully",
@@ -161,13 +154,7 @@
     "confirmed": "Confirmed",
     "rejected": "Rejected",
     "reversal": "Reversal",
-    "reconciliation": "Gateway reconciliation",
-    "ledgerReconciliation": "Ledger reconciliation",
-    "gatewayTotal": "Confirmed gateway total",
-    "balanced": "Books balanced",
-    "discrepancies": "Discrepancies need review",
-    "history": "Payment history",
-    "simulated": "SIMULATED — not a real payment"
+    "history": "Payment history"
   },
   "statements": {
     "title": "Customer statement",
@@ -354,18 +341,6 @@
     "deleted": "All workspace data was deleted successfully.",
     "delete": "Delete permanently"
   },
-  "landing": {
-    "heroTagline": "Track. Follow. Get Paid.",
-    "heroSupporting": "Smart Receivables Tracking & Automated Collections",
-    "ctaSignup": "Create account",
-    "ctaLogin": "Sign in",
-    "step1Title": "Issue Invoices",
-    "step1Body": "Record receivables accurately in seconds.",
-    "step2Title": "Smart Reminders",
-    "step2Body": "Polite payment reminders sent right on schedule.",
-    "step3Title": "Close & Reconcile",
-    "step3Body": "Track cash flow and close invoices as payments arrive."
-  },
   "share": {
     "whatsapp": "Share on WhatsApp",
     "shareInvoice": "Share invoice",
@@ -400,7 +375,6 @@
   "statementPortal": {
     "secureStatementFrom": "Secure statement from",
     "totalDue": "Total due",
-    "payTotal": "Pay the total now",
     "invoices": "Invoices",
     "noInvoices": "No invoices.",
     "invoiceFallback": "Invoice",
@@ -408,13 +382,12 @@
     "paid": "Paid",
     "remaining": "Remaining",
     "dueOn": "Due",
-    "payThisInvoice": "Pay this invoice",
     "disputeInvoice": "Dispute this invoice",
     "disputeReason": "Dispute reason",
     "submitDispute": "Submit dispute",
     "disputeRecorded": "A dispute has been recorded for this invoice and is under review.",
     "promiseTitle": "Request a payment date",
-    "promiseHint": "You can propose an amount and a date. The request is not final until the business reviews it.",
+    "promiseHint": "Propose an amount and payment date for business review.",
     "promiseInvoice": "Invoice",
     "promiseAnyInvoice": "Apply to the open balance",
     "promiseRemaining": "remaining",
@@ -426,14 +399,13 @@
     "promisesTitle": "Payment-date requests",
     "paymentsTitle": "Payment history",
     "noPayments": "No confirmed payments recorded yet.",
-    "securityBody": "A secure payment and review page. If you have any note about an invoice, send it here.",
+    "securityBody": "Secure statement for review. Send any invoice notes or disputes directly here.",
     "footer": "Secure statement page from {business} via Dafqly",
-    "payFailed": "Could not start payment right now. Please try again.",
     "disputeOk": "Your dispute has been recorded and the invoice is under review.",
     "disputeFailed": "Could not record the dispute. Please try again.",
     "promiseInvalid": "Enter a valid amount for the payment-date request.",
-    "promiseOk": "Your payment-date request has been sent to the business and will show as pending until approved.",
-    "promiseFailed": "Could not send the payment-date request. Check the amount and date and try again.",
+    "promiseOk": "Payment-date request sent and pending business approval.",
+    "promiseFailed": "Could not send request. Check the amount and date and try again.",
     "rateLimitedTitle": "Too many requests",
     "rateLimitedBody": "Please try again shortly.",
     "notFoundTitle": "Invalid link",
@@ -462,6 +434,18 @@
       "accepted": "Date approved",
       "kept": "Kept",
       "broken": "Missed"
-    }
+    },
+    "paymentInstructionsTitle": "Payment instructions",
+    "paymentInstructionsEmpty": "Contact the business directly for transfer details.",
+    "copyInstructions": "Copy details",
+    "copied": "Copied",
+    "receiptTitle": "Upload payment receipt",
+    "receiptHint": "Attach a transfer screenshot or PDF for review.",
+    "receiptAction": "Choose receipt file",
+    "receiptUploading": "Uploading...",
+    "receiptUploadOk": "Receipt uploaded and sent for review.",
+    "receiptUploadFailed": "Receipt upload is unavailable right now. Please share it via WhatsApp.",
+    "receiptTooLarge": "File must be 10 MB or smaller.",
+    "promiseAction": "Promise to pay"
   }
 }

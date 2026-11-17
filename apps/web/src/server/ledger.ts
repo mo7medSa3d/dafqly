@@ -28,7 +28,10 @@ import { hashPhone } from "./services";
 // must pass this gate and be validated for real at the currency-aware
 // parse site (which throws MoneyParseError → 400 INVALID_AMOUNT).
 const moneyString = z.string().trim().min(1).refine((s) => { try { return parseMoney(s, "KWD") > 0n; } catch { return false; } }, "INVALID_AMOUNT");
-const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE");
+const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE").refine((s) => {
+  const d = new Date(`${s}T00:00:00.000Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}, "INVALID_DATE");
 
 async function tenantSettings(tx: Db, tenantId: string) {
   const [t] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
@@ -81,15 +84,15 @@ export async function recomputeDebtorCredit(tx: Db, tenantId: string, debtorId: 
   const [debtor] = await tx.select({ creditMinor: debtors.creditMinor, creditCurrency: debtors.creditCurrency })
     .from(debtors).where(eq(debtors.id, debtorId));
   const currency = debtor?.creditCurrency ?? "EGP";
-  const [paid] = await tx.select({ total: sql<bigint>`coalesce(sum(${payments.amountMinor}), 0)::bigint` })
+  const [paid] = await tx.select({ total: sql<string>`coalesce(sum(${payments.amountMinor}), 0)::bigint` })
     .from(payments)
     .where(and(eq(payments.tenantId, tenantId), eq(payments.debtorId, debtorId), eq(payments.status, "confirmed"), eq(payments.currency, currency)));
-  const [alloc] = await tx.select({ total: sql<bigint>`coalesce(sum(${paymentAllocations.amountMinor}), 0)::bigint` })
+  const [alloc] = await tx.select({ total: sql<string>`coalesce(sum(${paymentAllocations.amountMinor}), 0)::bigint` })
     .from(paymentAllocations)
     .innerJoin(payments, eq(payments.id, paymentAllocations.paymentId))
     .innerJoin(invoices, eq(invoices.id, paymentAllocations.invoiceId))
     .where(and(eq(payments.tenantId, tenantId), eq(payments.debtorId, debtorId), eq(payments.status, "confirmed"), eq(invoices.currency, currency)));
-  const credit = (paid?.total ?? 0n) - (alloc?.total ?? 0n);
+  const credit = BigInt(paid?.total ?? 0) - BigInt(alloc?.total ?? 0);
   await tx.update(debtors).set({ creditMinor: credit, updatedAt: new Date() }).where(eq(debtors.id, debtorId));
   return { creditMinor: credit, creditCurrency: currency };
 }
@@ -179,24 +182,30 @@ export async function createDebtor(app: Db, tenantId: string, actor: string, inp
   } catch {
     throw new AppError("INVALID_PHONE", "Phone number is not a valid phone number", 400);
   }
-  return withTenant(app, tenantId, async (tx) => {
-    const [existing] = await tx.select().from(debtors)
-      .where(and(eq(debtors.phoneE164, normalized.e164), isNull(debtors.deletedAt)));
-    if (existing) throw new AppError("DUPLICATE_PHONE", "A debtor with this phone already exists for this tenant", 409);
-    const [row] = await tx.insert(debtors).values({
-      tenantId, displayName: input.displayName, phoneE164: normalized.e164,
-      phoneValid: normalized.valid, whatsappStatus: normalized.whatsappCapable ? "unknown" : "unreachable",
-      notes: input.notes ?? null, phoneHash: hashPhone(normalized.e164),
-    }).returning();
-    // M6: the audit log is a log — no raw phone numbers in it, only masked.
-    await audit(tx, tenantId, actor, "debtor.created", "debtor", row!.id, null, { displayName: row!.displayName, phone: maskPhone(row!.phoneE164) });
-    return toDebtorView(row!);
-  });
+  try {
+    return await withTenant(app, tenantId, async (tx) => {
+      const [existing] = await tx.select().from(debtors)
+        .where(and(eq(debtors.phoneE164, normalized.e164), isNull(debtors.deletedAt)));
+      if (existing) throw new AppError("DUPLICATE_PHONE", "A debtor with this phone already exists for this tenant", 409);
+      const [row] = await tx.insert(debtors).values({
+        tenantId, displayName: input.displayName, phoneE164: normalized.e164,
+        phoneValid: normalized.valid, whatsappStatus: normalized.whatsappCapable ? "unknown" : "unreachable",
+        notes: input.notes ?? null, phoneHash: hashPhone(normalized.e164),
+      }).returning();
+      // M6: the audit log is a log — no raw phone numbers in it, only masked.
+      await audit(tx, tenantId, actor, "debtor.created", "debtor", row!.id, null, { displayName: row!.displayName, phone: maskPhone(row!.phoneE164) });
+      return toDebtorView(row!);
+    });
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
+    if (code === "23505") throw new AppError("DUPLICATE_PHONE", "A debtor with this phone already exists for this tenant", 409);
+    throw err;
+  }
 }
 
 export async function updateDebtor(app: Db, tenantId: string, actor: string, debtorId: string, input: { displayName?: string; notes?: string | null; riskFlag?: boolean }): Promise<DebtorView> {
   return withTenant(app, tenantId, async (tx) => {
-    const [before] = await tx.select().from(debtors).where(and(eq(debtors.id, debtorId), isNull(debtors.deletedAt)));
+    const [before] = await tx.select().from(debtors).where(and(eq(debtors.id, debtorId), isNull(debtors.deletedAt))).for("update");
     if (!before) throw new AppError("NOT_FOUND", "Debtor not found", 404);
     const [row] = await tx.update(debtors).set({
       ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
@@ -212,7 +221,7 @@ export async function updateDebtor(app: Db, tenantId: string, actor: string, deb
 /** Soft-delete (F1 edge): history and audit are kept; the debtor leaves every list. */
 export async function softDeleteDebtor(app: Db, tenantId: string, actor: string, debtorId: string): Promise<void> {
   await withTenant(app, tenantId, async (tx) => {
-    const [before] = await tx.select().from(debtors).where(and(eq(debtors.id, debtorId), isNull(debtors.deletedAt)));
+    const [before] = await tx.select().from(debtors).where(and(eq(debtors.id, debtorId), isNull(debtors.deletedAt))).for("update");
     if (!before) throw new AppError("NOT_FOUND", "Debtor not found", 404);
     await tx.update(debtors).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(debtors.id, debtorId));
     await audit(tx, tenantId, actor, "debtor.deleted", "debtor", debtorId, { displayName: before.displayName }, { deletedAt: "set" });
@@ -453,6 +462,9 @@ export async function updateInvoice(app: Db, tenantId: string, actor: string, in
       throw new AppError("INVOICE_TERMINAL", `A ${before.status} invoice cannot be edited (only its description may change)`, 409);
     }
     const amountMinor = input.amount !== undefined ? parseMoney(input.amount, before.currency) : before.amountMinor;
+    if (amountMinor <= 0n) {
+      throw new AppError("INVALID_AMOUNT", "Invoice amount must be positive", 400);
+    }
     if (amountMinor < before.paidMinor) {
       throw new AppError("AMOUNT_BELOW_PAID", "Invoice amount cannot be less than the amount already paid", 400);
     }

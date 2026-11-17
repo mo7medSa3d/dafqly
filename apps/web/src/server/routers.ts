@@ -97,7 +97,7 @@ export const appRouter = router({
   },
   collections: {
     team: tenantProcedure.query(async ({ ctx }) => listTeamMembers(ctx.appDb, ctx.tenantId)),
-    tasks: tenantProcedure.input(z.object({ status: z.enum(["open", "in_progress", "done", "cancelled"]).optional(), assignedToUserId: z.string().optional() }).optional())
+    tasks: tenantProcedure.input(z.object({ status: z.enum(["open", "in_progress", "done", "cancelled"]).optional(), assignedToUserId: z.string().min(1).max(128).optional() }).optional())
       .query(async ({ ctx, input }) => listCollectionTasks(ctx.appDb, ctx.tenantId, ctx.role === "owner" ? (input ?? {}) : { ...(input ?? {}), assignedToUserId: ctx.user.id })),
     createTask: tenantProcedure.input(createTaskInput).mutation(async ({ ctx, input }) => createCollectionTask(ctx.appDb, ctx.tenantId, ctx.user.id, {
       ...input, assignedToUserId: ctx.role === "owner" ? input.assignedToUserId : ctx.user.id,
@@ -199,7 +199,7 @@ export const appRouter = router({
   },
   debtors: {
     list: tenantProcedure
-      .input(z.object({ cursor: z.string().optional(), limit: z.number().int().min(1).max(200).optional(), search: z.string().optional() }).optional())
+      .input(z.object({ cursor: z.string().max(200).optional(), limit: z.number().int().min(1).max(200).optional(), search: z.string().max(120).optional() }).optional())
       .query(async ({ ctx, input }) => {
         return encodePage(await listDebtorsPage2(ctx.appDb, ctx.tenantId, { ...pageArgs(input), search: input?.search }));
       }),
@@ -234,10 +234,10 @@ export const appRouter = router({
   invoices: {
     list: tenantProcedure
       .input(z.object({
-        cursor: z.string().optional(), limit: z.number().int().min(1).max(200).optional(),
+        cursor: z.string().max(200).optional(), limit: z.number().int().min(1).max(200).optional(),
         debtorId: z.string().uuid().optional(),
         status: z.enum(["open", "partially_paid", "paid", "disputed", "written_off", "cancelled"]).optional(),
-        overdue: z.boolean().optional(), agingBucket: z.string().optional(), search: z.string().optional(),
+        overdue: z.boolean().optional(), agingBucket: z.string().max(32).optional(), search: z.string().max(120).optional(),
       }).optional())
       .query(async ({ ctx, input }) => encodePage(await listInvoicesPage(ctx.appDb, ctx.tenantId, {
         ...pageArgs(input),
@@ -249,8 +249,8 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => createInvoice(ctx.appDb, ctx.tenantId, ctx.user.id, input)),
     update: tenantProcedure
       .input(z.object({
-        id: z.string().uuid(), amount: z.string().optional(), description: z.string().nullable().optional(),
-        reference: z.string().nullable().optional(), dueOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE").optional(), issuedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE").optional(),
+        id: z.string().uuid(), amount: z.string().max(32).optional(), description: z.string().max(2000).nullable().optional(),
+        reference: z.string().max(120).nullable().optional(), dueOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE").optional(), issuedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE").optional(),
       }))
       .mutation(async ({ ctx, input }) => updateInvoice(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input, ctx.tenantMeta.today)),
     transition: tenantProcedure

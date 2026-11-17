@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import {
-  AppError, MAX_LEDGER_PAGES, normalizeCurrencyCode, normalizeEgPhone, normalizeLedgerRowDigits, parseMoney,
+  AppError, MAX_LEDGER_PAGES, normalizeCurrencyCode, normalizeLedgerRowDigits, normalizePhone, parseMoney,
   resolveDueOn, suggestDebtorByName,
 } from "@tahseel/core";
 import { decodeBase64Upload, MAX_UPLOAD_BASE64_CHARS } from "@tahseel/core/files-crypto";
@@ -152,7 +152,7 @@ export async function runLedgerExtraction(
         const row = normalizeLedgerRowDigits(raw);
         let phoneE164: string | null = null;
         if (row.phone) {
-          try { phoneE164 = normalizeEgPhone(row.phone).e164; } catch { phoneE164 = null; }
+          try { phoneE164 = normalizePhone(row.phone).e164; } catch { phoneE164 = null; }
         }
         const suggestion = suggestDebtorByName(row.name, debtorList);
         const data: LedgerRowData = {
@@ -211,7 +211,7 @@ export async function runLedgerExtraction(
 
 export async function getLedgerJob(app: Db, tenantId: string, jobId: string): Promise<LedgerJobView> {
   return withTenant(app, tenantId, async (tx) => {
-    const job = await loadJob(tx, tenantId, jobId, true);
+    const job = await loadJob(tx, tenantId, jobId, false);
     const rows = await tx.select().from(importRows).where(and(eq(importRows.jobId, jobId), eq(importRows.tenantId, tenantId))).orderBy(asc(importRows.rowNumber));
     return {
       id: job.id, status: job.status, fileName: job.fileName, stats: job.stats,
@@ -264,8 +264,8 @@ export async function updateLedgerRow(
   await withTenant(app, tenantId, async (tx) => {
     const [row] = await tx.select().from(importRows).where(and(eq(importRows.id, input.rowId), eq(importRows.tenantId, tenantId)));
     if (!row) throw new AppError("NOT_FOUND", "Import row not found", 404);
-    const [job] = await tx.select().from(importJobs).where(and(eq(importJobs.id, row.jobId), eq(importJobs.tenantId, tenantId)));
-    if (!job || job.status !== "pending_review") throw new AppError("ALREADY_COMMITTED", "This job can no longer be edited", 409);
+    const job = await loadJob(tx, tenantId, row.jobId, true);
+    if (job.status !== "pending_review") throw new AppError("ALREADY_COMMITTED", "This job can no longer be edited", 409);
     const stored = (row.parsed ?? null) as LedgerStoredRow | null;
     if (!stored?.data) throw new AppError("INVALID_ROW", "Row has no extracted data to edit", 400);
     const data: LedgerRowData = { ...stored.data };
@@ -274,7 +274,7 @@ export async function updateLedgerRow(
       data.phone = input.phone;
       data.phoneE164 = null;
       if (input.phone) {
-        try { data.phoneE164 = normalizeEgPhone(input.phone).e164; } catch { data.phoneE164 = null; }
+        try { data.phoneE164 = normalizePhone(input.phone).e164; } catch { data.phoneE164 = null; }
       }
     }
     if (input.amount !== undefined) {
@@ -379,7 +379,7 @@ export async function commitLedgerJob(
 
 export async function deleteLedgerJob(app: Db, tenantId: string, actor: string, jobId: string) {
   return withTenant(app, tenantId, async (tx) => {
-    const [job] = await tx.select().from(importJobs).where(and(eq(importJobs.id, jobId), eq(importJobs.tenantId, tenantId)));
+    const [job] = await tx.select().from(importJobs).where(and(eq(importJobs.id, jobId), eq(importJobs.tenantId, tenantId))).for("update");
     if (!job) throw new AppError("NOT_FOUND", "Ledger job not found", 404);
     if (job.status === "committed") {
       throw new AppError("CANNOT_DELETE_COMMITTED", "Committed imports cannot be deleted", 409);

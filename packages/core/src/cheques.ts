@@ -115,7 +115,7 @@ const chequeAmountMinorField = z.union([z.number(), z.string()]).transform((v, c
   return minor;
 });
 
-export const chequeExtractionSchema = z.object({
+const chequeExtractionSchema = z.object({
   number: z.string().trim().min(1).max(40).nullable(),
   bank: z.string().trim().min(1).max(120).nullable(),
   amount_minor: chequeAmountMinorField.nullable(),

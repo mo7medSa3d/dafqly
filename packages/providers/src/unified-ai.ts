@@ -249,6 +249,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
         : "auto";
     }
 
+    const signal = combinedSignal(this.timeoutMs, options.signal);
     const res = await this.fetchFn(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -256,7 +257,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
         ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}),
       },
       body: JSON.stringify(body),
-      signal: combinedSignal(this.timeoutMs, options.signal),
+      signal,
     });
 
     if (!res.ok) {
@@ -294,7 +295,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
     let outputTokens = 0;
     const rawCalls: { id: string; name: string; arguments: string }[] = [];
 
-    for await (const data of readSseData(res, options.signal)) {
+    for await (const data of readSseData(res, signal)) {
       const chunk = parseSseJson<{
         choices?: { delta?: { content?: string | null; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] } }[];
         usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
@@ -314,6 +315,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
       }
       for (const tc of delta.tool_calls ?? []) {
         const idx = tc.index ?? (tc.id ? rawCalls.length : Math.max(0, rawCalls.length - 1));
+        if (idx < 0 || idx > 64) continue;
         const slot = (rawCalls[idx] ??= { id: "", name: "", arguments: "" });
         if (tc.id) slot.id = tc.id;
         if (tc.function?.name && tc.function.name !== slot.name) slot.name += tc.function.name;
@@ -368,6 +370,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
         : { type: "auto" };
     }
 
+    const signal = combinedSignal(this.timeoutMs, options.signal);
     const res = await this.fetchFn(`${this.baseUrl}/v1/messages`, {
       method: "POST",
       headers: {
@@ -376,11 +379,11 @@ export class UnifiedAiProvider implements OcrLlmProvider {
         "anthropic-version": ANTHROPIC_API_VERSION,
       },
       body: JSON.stringify(body),
-      signal: combinedSignal(this.timeoutMs, options.signal),
+      signal,
     });
 
     if (!res.ok) {
-      const detail = typeof res.text === "function" ? await res.text().catch(() => "") : "";
+      const detail = await res.text().catch(() => "");
       throw new Error(`anthropic API error: HTTP ${res.status} ${detail.replace(/\s+/g, " ").slice(0, 200)}`.trim());
     }
 
@@ -413,7 +416,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
     let inputTokens = 0;
     let outputTokens = 0;
 
-    for await (const data of readSseData(res, options.signal)) {
+    for await (const data of readSseData(res, signal)) {
       const event = parseSseJson<{
         type?: string;
         index?: number;
@@ -429,9 +432,9 @@ export class UnifiedAiProvider implements OcrLlmProvider {
       else if (event.type === "content_block_start" && event.index !== undefined && event.content_block) {
         const b = event.content_block;
         blocks[event.index] = { type: b.type ?? "text", id: b.id, name: b.name, text: b.text ?? "", json: "" };
-      } else if (event.type === "content_block_delta") {
-        const idx = event.index ?? 0;
-        const block = blocks[idx] ?? (blocks[idx] = { type: "text", text: "", json: "" });
+      } else if (event.type === "content_block_delta" && event.index !== undefined) {
+        const block = blocks[event.index];
+        if (!block) continue;
         if (event.delta?.type === "text_delta" && event.delta.text) {
           block.text = (block.text ?? "") + event.delta.text;
           options.onTextDelta?.(event.delta.text);
@@ -501,14 +504,12 @@ export class UnifiedAiProvider implements OcrLlmProvider {
     const started = this.now();
     const userMessage = args.image
       ? this.formatImageUserMessage(args.image.data, args.image.mime, args.userText)
-      : this.wireFormat === "anthropic"
-        ? { role: "user", content: [{ type: "text", text: args.userText }] }
-        : { role: "user", content: args.userText };
+      : { role: "user", content: args.userText };
 
     const turn = await this.request(args.system, [userMessage], {
       tools: [{ name: args.toolName, description: args.toolDescription, inputSchema: args.toolSchema }],
       forcedToolName: args.toolName,
-      maxTokens: 4096,
+      maxTokens: 2000,
     });
 
     const call = turn.toolCalls.find((c) => c.name === args.toolName);
@@ -604,6 +605,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
     let finalText = "";
 
     for (let step = 0; step < maxSteps; step += 1) {
+      if (input.signal?.aborted) throw input.signal.reason ?? new DOMException("Aborted", "AbortError");
       input.onEvent?.({ type: "step", step });
       const turn = await this.request(input.systemInstruction, messages, {
         tools: input.tools,
@@ -626,6 +628,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
         messages.push({ role: "assistant", content: turn.rawAnthropicContent ?? [] });
         const results: Record<string, unknown>[] = [];
         for (const call of turn.toolCalls) {
+          if (input.signal?.aborted) throw input.signal.reason ?? new DOMException("Aborted", "AbortError");
           const result = await executeAgentToolCall({
             id: call.id,
             name: call.name,
@@ -651,6 +654,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
           })),
         });
         for (const call of turn.toolCalls) {
+          if (input.signal?.aborted) throw input.signal.reason ?? new DOMException("Aborted", "AbortError");
           const result = await executeAgentToolCall({
             id: call.id,
             name: call.name,

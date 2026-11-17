@@ -11,7 +11,7 @@ import { Check, MagnifyingGlass, PencilSimple, Plus, Sparkle, WarningCircle, X }
 import { trpc } from "@/lib/trpc-client";
 import { EmptyState, LoadingState, Panel, StatusPill, btnGhost, btnPrimary, btnSmall, inputCls, labelCls } from "./ui";
 import { WhatsAppShareButton, invoiceShareMessage } from "./WhatsAppShare";
-import { EmptyInvoicesIllustration, ReceivablesIllustration } from "./illustrations";
+import { EmptyInvoicesIllustration } from "./illustrations";
 
 interface Invoice {
   id: string; debtorId: string; reference: string | null; description: string | null;
@@ -219,9 +219,9 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
 
   return (
     <section className="flex flex-col gap-6">
-      {/* Top Section: Form (8 cols) + Info Card (4 cols) */}
+      {/* Top Section: Create Invoice */}
       <div className="grid items-stretch gap-6 lg:grid-cols-12">
-        <div className="lg:col-span-8">
+        <div className="min-w-0 lg:col-span-12">
           <Panel title={t("add")} icon={Plus}>
             <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void onCreate(); }}>
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--icon-box-border)] bg-[var(--icon-box-bg)] px-3.5 py-2 text-xs font-bold text-[var(--icon-box-fg)]">
@@ -296,11 +296,6 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
           </Panel>
         </div>
 
-        <div className="panel-shadow flex flex-col justify-between gap-4 rounded-xl border border-border bg-surface p-5 sm:p-6 lg:col-span-4">
-          <div className="flex justify-center"><ReceivablesIllustration size={210} /></div>
-          <div><p className="text-xs font-bold text-primary">{isAr ? "ضوابط الفوترة" : "Invoice controls"}</p><h2 className="mt-1 text-lg font-extrabold">{isAr ? "متابعة قابلة للتدقيق" : "Auditable follow-up"}</h2><p className="mt-2 text-sm leading-6 text-text-muted">{isAr ? "كل فاتورة مرتبطة بعميل وتاريخ استحقاق وحالة سداد. تعديل الحالة لا يثبت وصول الأموال؛ تسجيل الدفعة المؤكدة هو الذي يحدّث الرصيد." : "Every invoice has a customer, due date and payment state. Changing status does not prove funds were received; only a confirmed ledger payment updates the balance."}</p></div>
-          <div className="grid grid-cols-2 gap-2 text-xs"><div className="rounded-xl bg-surface-muted p-3"><span className="font-semibold text-text-subtle">{isAr ? "تذكيرات" : "Reminders"}</span><p className="mt-1 font-extrabold">{isAr ? "حسب السياسة" : "Policy-based"}</p></div><div className="rounded-xl bg-surface-muted p-3"><span className="font-semibold text-text-subtle">{isAr ? "التحصيل" : "Collections"}</span><p className="mt-1 font-extrabold">{isAr ? "دفعات مؤكدة" : "Confirmed payments"}</p></div></div>
-        </div>
       </div>
 
       {(actionError || loadError) && (
@@ -324,38 +319,38 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
       {/* Invoice aging analysis: balances grouped by aging bucket, not a decorative status strip. */}
       {items.length > 0 && (() => {
         const { rows, total } = agingSummary;
-        const tones = ["bg-status-paid-fg", "bg-primary", "bg-status-due-fg", "bg-status-overdue-fg", "bg-status-overdue-fg"];
+        const tones = ["bg-status-paid-fg", "bg-[var(--chart-2)]", "bg-status-due-fg", "bg-[var(--chart-1)]", "bg-status-overdue-fg"];
         return <section data-testid="inv-aging-analysis" className="panel-shadow flex flex-col gap-4 rounded-xl border border-border bg-surface p-4 sm:p-5">
           <div className="flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-sm font-extrabold">{isAr ? "أعمار الأرصدة المفتوحة" : "Open receivables aging"}</h2><p className="mt-1 text-xs text-text-muted">{isAr ? "قيمة المتبقي حسب مدة التأخير ضمن النتائج الحالية" : "Outstanding balance by age in the current filtered results"}{truncated && (isAr ? ` — عرض ${items.length} من أصل ${totalCount} فاتورة` : ` — showing ${items.length} of ${totalCount} invoices`)}</p></div><strong className="tnum text-base" dir="ltr">{formatAmountOnly(total)} {currencySymbol}</strong></div>
           <div className="flex h-3 w-full overflow-hidden rounded bg-surface-muted">{rows.map((row, i) => row.amount > 0n && <div key={row.key} className={`${tones[i]} h-full`} style={{ width: `${Number((row.amount * 10000n) / (total || 1n)) / 100}%` }} />)}</div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{rows.map((row, i) => <div key={row.key} className="min-w-0"><div className="flex items-center gap-2 text-xs font-semibold text-text-muted"><span className={`size-2.5 shrink-0 rounded-sm ${tones[i]}`} />{row.label}</div><p className="mt-1 truncate text-sm font-extrabold" dir="ltr">{formatAmountOnly(row.amount)} {currencySymbol}</p><p className="mt-0.5 text-[11px] text-text-muted">{total > 0n ? `${Number((row.amount * 10000n) / total) / 100}%` : "0%"}</p></div>)}</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">{rows.map((row, i) => <div key={row.key} className="min-w-0 text-start"><div className="flex items-center gap-2 text-xs font-semibold text-text-muted"><span className={`size-2.5 shrink-0 rounded-sm ${tones[i]}`} /><span className="truncate">{row.label}</span></div><p className="mt-1 truncate text-sm font-extrabold"><span className="tnum inline-block" dir="ltr">{formatAmountOnly(row.amount)} {currencySymbol}</span></p><p className="tnum mt-0.5 text-[11px] text-text-muted"><span className="inline-block" dir="ltr">{total > 0n ? `${Number((row.amount * 10000n) / total) / 100}%` : "0%"}</span></p></div>)}</div>
         </section>;
       })()}
 
       {/* Filters bar */}
-      <div className="panel-shadow flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface p-4 sm:p-5">
-        <label className="min-w-[200px] flex-1">
+      <div className="panel-shadow flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface p-4 sm:gap-4 sm:p-5">
+        <label className="w-full min-w-0 sm:w-auto sm:flex-1 sm:min-w-[200px]">
           <span className="sr-only">{t("search")}</span>
           <span className="relative block">
             <MagnifyingGlass size={17} aria-hidden className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-text-subtle" />
             <input data-testid="inv-search" className={`${inputCls} ps-10`} placeholder={t("search")} value={search} onChange={(e) => setSearch(e.target.value)} />
           </span>
         </label>
-        <label className="min-w-[150px]">
+        <label className="w-full min-w-0 sm:w-auto sm:min-w-[150px]">
           <span className="sr-only">{t("status")}</span>
           <select data-testid="inv-status-filter" className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">{t("allStatuses")}</option>
             {STATUSES.map((s) => <option key={s} value={s}>{t(`statuses.${s}`)}</option>)}
           </select>
         </label>
-        <label className="min-w-[140px]">
+        <label className="w-full min-w-0 sm:w-auto sm:min-w-[140px]">
           <span className="sr-only">{t("aging")}</span>
           <select data-testid="inv-aging-filter" className={inputCls} value={bucket} onChange={(e) => setBucket(e.target.value)}>
             <option value="">{isAr ? "جميع الأعمار" : "All Aging"}</option>
             {BUCKETS.map((b) => <option key={b} value={b}>{t(`buckets.${b}`)}</option>)}
           </select>
         </label>
-        <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-border bg-surface-muted/60 px-3.5 py-2.5 transition-colors hover:bg-surface-muted">
+        <label className="flex w-full cursor-pointer items-center gap-2.5 rounded-xl border border-border bg-surface-muted/60 px-3.5 py-2.5 transition-colors hover:bg-surface-muted sm:w-auto">
           <input
             data-testid="inv-overdue-filter"
             type="checkbox"
@@ -369,7 +364,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
 
       {/* Bulk actions & count */}
       <div className="flex flex-wrap items-center gap-2.5">
-        <select data-testid="inv-bulk-to" aria-label={t("bulkTargetStatus")} className={cn(inputVariants)} value={bulkTo} onChange={(e) => setBulkTo(e.target.value)}>
+        <select data-testid="inv-bulk-to" aria-label={t("bulkTargetStatus")} className={cn(inputVariants, "w-auto sm:min-w-[160px]")} value={bulkTo} onChange={(e) => setBulkTo(e.target.value)}>
           {STATUSES.map((s) => <option key={s} value={s}>{t(`statuses.${s}`)}</option>)}
         </select>
         <button type="button" data-testid="inv-bulk-apply" disabled={busy || selected.size === 0} onClick={() => void onBulk()} className={btnGhost}>{selected.size > 0 ? `${t("bulkApply")} (${selected.size})` : t("bulkApply")}</button>
@@ -403,7 +398,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                         {i.reference ?? `INV-${i.issuedOn.slice(0, 4)}-${1001 + idx}`}
                       </span>
                     </label>
-                    <span className="rounded bg-surface-muted px-2.5 py-0.5 text-xs font-bold text-text">
+                    <span className="max-w-full truncate rounded bg-surface-muted px-2.5 py-0.5 text-xs font-bold text-text">
                       {debtorName(i.debtorId)}
                     </span>
                     {i.description && (
@@ -413,7 +408,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {i.overdue && (
                       <span data-testid="invoice-overdue" className="inline-flex items-center gap-1 rounded bg-status-overdue-bg px-2.5 py-0.5 text-xs font-bold text-status-overdue-fg">
                         <WarningCircle size={14} aria-hidden />
@@ -443,18 +438,20 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                 </div>
 
                 {editingId === i.id && (
-                  <div className="grid gap-3 rounded-xl border border-primary/30 bg-callout p-3.5 sm:grid-cols-4">
-                    <input className={inputCls} placeholder={t("reference")} value={editForm.reference} onChange={(e) => setEditForm((f) => ({ ...f, reference: e.target.value }))} />
-                    <input className={inputCls} placeholder={t("description")} value={editForm.description} onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))} />
-                    <input className={inputCls} dir="ltr" inputMode="decimal" placeholder={t("amount")} value={editForm.amount} onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))} />
-                    <div className="flex items-center gap-2">
-                      <input type="date" className={inputCls} dir="ltr" value={editForm.dueOn} onChange={(e) => setEditForm((f) => ({ ...f, dueOn: e.target.value }))} />
-                      <button type="button" disabled={busy || editForm.amount.trim() === ""} onClick={() => void onSaveEdit(i.id)} className={btnSmall}>
-                        <Check size={14} strokeWidth={2.5} aria-hidden /> {tc("save")}
-                      </button>
-                      <button type="button" onClick={() => setEditingId(null)} className={btnSmall}>
-                        <X size={14} strokeWidth={2.5} aria-hidden />
-                      </button>
+                  <div className="grid grid-cols-1 gap-3 rounded-xl border border-primary/30 bg-callout p-3.5 sm:grid-cols-2 lg:grid-cols-4">
+                    <input className={cn(inputCls, "min-w-0")} placeholder={t("reference")} value={editForm.reference} onChange={(e) => setEditForm((f) => ({ ...f, reference: e.target.value }))} />
+                    <input className={cn(inputCls, "min-w-0")} placeholder={t("description")} value={editForm.description} onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))} />
+                    <input className={cn(inputCls, "min-w-0")} dir="ltr" inputMode="decimal" placeholder={t("amount")} value={editForm.amount} onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))} />
+                    <div className="flex min-w-0 flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-1">
+                      <input type="date" className={cn(inputCls, "min-w-[130px] flex-1")} dir="ltr" value={editForm.dueOn} onChange={(e) => setEditForm((f) => ({ ...f, dueOn: e.target.value }))} />
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button type="button" disabled={busy || editForm.amount.trim() === ""} onClick={() => void onSaveEdit(i.id)} className={btnSmall}>
+                          <Check size={14} strokeWidth={2.5} aria-hidden /> {tc("save")}
+                        </button>
+                        <button type="button" onClick={() => setEditingId(null)} className={btnSmall}>
+                          <X size={14} strokeWidth={2.5} aria-hidden />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}

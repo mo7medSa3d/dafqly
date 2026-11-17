@@ -5,5 +5,10 @@ export default defineConfig({
   // `@/` alias as the Next app (tsconfig paths: `./src/*`, `./app/*` —
   // `@/server/...` resolves to `./src/server/...`).
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
-  test: { include: ["src/**/*.test.ts"], testTimeout: 30000, hookTimeout: 60000, fileParallelism: false },
+  test: {
+    include: ["src/**/*.test.ts"],
+    testTimeout: 30000,
+    hookTimeout: 60000,
+    fileParallelism: false,
+  },
 });

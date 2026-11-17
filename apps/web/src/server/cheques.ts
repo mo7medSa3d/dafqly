@@ -229,7 +229,7 @@ export async function transitionCheque(
     }
 
     if ((to === "bounced" || to === "returned") && cheque.paymentId) {
-      const [payment] = await tx.select().from(payments).where(eq(payments.id, cheque.paymentId));
+      const [payment] = await tx.select().from(payments).where(eq(payments.id, cheque.paymentId)).for("update");
       if (payment?.status === "claimed") action = "reject";
       else if (payment?.status === "confirmed") {
         affectedInvoices = await reverseConfirmedPayment(tx, tenantId, actor, payment, to);
@@ -370,7 +370,20 @@ export async function extractChequePhoto(
   input: { bytes: Uint8Array; mime: string },
 ): Promise<ExtractChequePhotoResult> {
   const stored = await storeUpload(app, deps.storage, tenantId, actor, { bytes: input.bytes, mime: input.mime, kind: "other" });
-  const result = await deps.llm.extractCheque(stored.bytes, stored.mime);
+  let result;
+  try {
+    result = await deps.llm.extractCheque(stored.bytes, stored.mime);
+  } catch (err) {
+    console.warn("[cheques] AI extraction failed, falling back to empty extraction:", err);
+    result = {
+      data: null,
+      model: "fallback",
+      promptVersion: "error",
+      inputTokens: 0,
+      outputTokens: 0,
+      latencyMs: 0,
+    };
+  }
 
   let matchedDebtor: MatchedDebtorLite | null = null;
   let matchedInvoice: MatchedInvoiceLite | null = null;
@@ -403,7 +416,7 @@ export async function extractChequePhoto(
       }
 
       // 2. If no name match, attempt matching open/partially_paid invoices by amount
-      if (!matchedDebtorId && result.data.amount_minor && result.data.amount_minor > 0) {
+      if (!matchedDebtorId && result.data.amount_minor && Number.isInteger(result.data.amount_minor) && result.data.amount_minor > 0) {
         const matchingInvs = await tx
           .select({ debtorId: invoices.debtorId, id: invoices.id, reference: invoices.reference, amountMinor: invoices.amountMinor, dueOn: invoices.dueOn, paidMinor: invoices.paidMinor })
           .from(invoices)
@@ -441,7 +454,7 @@ export async function extractChequePhoto(
 
           if (!matchedInvoice && debInvs.length > 0) {
             // Pick invoice with matching amount or the oldest due
-            const matchingByAmount = result.data.amount_minor
+            const matchingByAmount = result.data.amount_minor && Number.isInteger(result.data.amount_minor)
               ? debInvs.find((i) => (i.amountMinor - i.paidMinor) === BigInt(result.data!.amount_minor!))
               : null;
             const chosen = matchingByAmount ?? debInvs[0];

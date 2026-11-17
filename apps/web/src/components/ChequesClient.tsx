@@ -141,7 +141,7 @@ export function ChequesClient() {
         amount: form.amount.trim(),
         issueDate: form.issueDate,
         dueDate: form.dueDate,
-        invoiceId: form.invoiceId || undefined,
+        invoiceId: form.direction === "receivable" ? (form.invoiceId || undefined) : undefined,
         imageFileId: form.imageFileId || undefined,
       });
       setForm({
@@ -206,7 +206,7 @@ export function ChequesClient() {
   return (
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
       {/* Main Column: Cheques List, Alerts, Calendar (8 cols) */}
-      <section className="flex flex-col gap-6 lg:col-span-8">
+      <section className="flex min-w-0 flex-col gap-6 lg:col-span-8">
         {loadError && (
           <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-danger/30 bg-danger-bg px-4 py-3 text-sm font-semibold text-danger">
             <span>{loadError}</span>
@@ -287,7 +287,7 @@ export function ChequesClient() {
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                       <span className="font-extrabold text-primary" dir="ltr">{c.number}</span>
                       <span className="text-text-muted">{c.bank}</span>
-                      <span className="font-semibold">{debtorName(c.debtorId)}</span>
+                      <span className="min-w-0 break-words font-semibold">{debtorName(c.debtorId)}</span>
                       <span className="rounded bg-surface-muted px-2.5 py-0.5 text-xs font-bold">{t(c.direction as "receivable" | "payable")}</span>
                       <span className="ms-auto"><StatusPill status={c.status} label={t(c.status as "held")} testId="cheque-status" /></span>
                     </div>
@@ -337,7 +337,7 @@ export function ChequesClient() {
                   <p className="mb-2 font-bold text-sm text-text">{t("weekOf")} <span dir="ltr">{g.weekStart}</span></p>
                   <ul className="flex flex-col divide-y divide-border">
                     {g.cheques.map((c) => (
-                      <li key={c.id} className="flex items-center gap-2 py-2 text-xs sm:text-sm">
+                      <li key={c.id} className="flex flex-wrap items-center gap-2 py-2 text-xs sm:text-sm">
                         <span dir="ltr" className="font-semibold">{c.number}</span>
                         <span className="text-text-muted" dir="ltr">{c.dueDate}</span>
                         <span className="ms-auto font-bold">{money(c.amountMinor, c.currency)}</span>
@@ -352,7 +352,7 @@ export function ChequesClient() {
       </section>
 
       {/* Side Column: Registration Form (4 cols) */}
-      <aside className="flex flex-col gap-6 lg:col-span-4">
+      <aside className="flex min-w-0 flex-col gap-6 lg:col-span-4">
         <Panel title={t("registerTitle")} icon={Checks}>
           <form onSubmit={onRegister} className="flex flex-col gap-4">
             <label className="flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-border/80 bg-surface-muted/40 px-4 py-5 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/70">
@@ -394,7 +394,7 @@ export function ChequesClient() {
                 </select>
               </label>
               <label className={labelCls}><span>{t("direction")}</span>
-                <select data-testid="cheque-direction" value={form.direction} onChange={(e) => setForm({ ...form, direction: e.target.value })} className={inputCls}>
+                <select data-testid="cheque-direction" value={form.direction} onChange={(e) => setForm({ ...form, direction: e.target.value, invoiceId: e.target.value === "payable" ? "" : form.invoiceId })} className={inputCls}>
                   <option value="receivable">{t("receivable")}</option>
                   <option value="payable">{t("payable")}</option>
                 </select>
@@ -408,24 +408,26 @@ export function ChequesClient() {
                 <input data-testid="cheque-bank" required maxLength={160} value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} className={inputCls} /></label>
               <label className={labelCls}><span>{t("amount")}</span>
                 <input data-testid="cheque-amount" required value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={inputCls} /></label>
-              <label className={labelCls}><span>{t("invoice")}</span>
-                <select
-                  data-testid="cheque-invoice"
-                  value={form.invoiceId}
-                  onChange={(e) => {
-                    const invId = e.target.value;
-                    const inv = invoices.find((x) => x.id === invId);
-                    setForm({
-                      ...form,
-                      invoiceId: invId,
-                      amount: inv && !form.amount ? formatAmountOnly(BigInt(inv.amountMinor), inv.currency ? { currency: inv.currency } : undefined) : form.amount,
-                    });
-                  }}
-                  className={inputCls}
-                >
-                  <option value="">{t("none")}</option>
-                  {invoices.map((i) => <option key={i.id} value={i.id}>{i.reference ?? i.id} — {formatAmountOnly(BigInt(i.amountMinor), i.currency ? { currency: i.currency } : undefined)}</option>)}
-                </select></label>
+              {form.direction === "receivable" && (
+                <label className={labelCls}><span>{t("invoice")}</span>
+                  <select
+                    data-testid="cheque-invoice"
+                    value={form.invoiceId}
+                    onChange={(e) => {
+                      const invId = e.target.value;
+                      const inv = invoices.find((x) => x.id === invId);
+                      setForm({
+                        ...form,
+                        invoiceId: invId,
+                        amount: inv && !form.amount ? formatAmountOnly(BigInt(inv.amountMinor), inv.currency ? { currency: inv.currency } : undefined) : form.amount,
+                      });
+                    }}
+                    className={inputCls}
+                  >
+                    <option value="">{t("none")}</option>
+                    {invoices.map((i) => <option key={i.id} value={i.id}>{i.reference ?? i.id} — {formatAmountOnly(BigInt(i.amountMinor), i.currency ? { currency: i.currency } : undefined)}</option>)}
+                  </select></label>
+              )}
               <label className={labelCls}><span>{t("issueDate")}</span>
                 <input data-testid="cheque-issue" required type="date" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} className={inputCls} /></label>
               <label className={labelCls}><span>{t("dueDate")}</span>
@@ -442,7 +444,7 @@ export function ChequesClient() {
           <ShieldCheck size={20} className="shrink-0 text-status-paid-fg dark:text-status-paid-fg" />
           <p className="leading-relaxed">
             {isAr
-              ? "تُعلّق التذكيرات تلقائياً للشيكات المسجلة، مع إرسال تنبيهات قبل الاستحقاق بـ ٣ أيام."
+              ? "تُعلّق التذكيرات تلقائياً للشيكات المسجلة، مع إرسال تنبيهات قبل الاستحقاق بـ 3 أيام."
               : "Reminders pause automatically for registered cheques, with alerts sent 3 days prior."}
           </p>
         </div>

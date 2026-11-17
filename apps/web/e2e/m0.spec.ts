@@ -56,8 +56,7 @@ test("brand wiring: manifest is RTL Arabic, theme color is navy-700, font flag o
   await page.goto("/ar/login");
   const themeColor = await page.locator('meta[name="theme-color"][media*="light"]').getAttribute("content");
   expect(themeColor).toBe("#1C2350");
-  const brandFont = await page.locator("html").getAttribute("data-brand-font");
-  expect(["on", "off"]).toContain(brandFont);
+  await expect(page.locator("html")).toHaveAttribute("data-brand-font", "on");
 });
 
 test("brand evidence: favicon at 16px and dark-mode dashboard screenshots", async ({ page, browser }) => {

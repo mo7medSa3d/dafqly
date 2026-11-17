@@ -29,10 +29,10 @@ export interface LatenessStats { median: number; p80: number; count: number }
 
 /** Conservative default when neither debtor nor tenant has >= 3 data points (ADR-023). */
 export const DEFAULT_LATENESS: LatenessStats = { median: 7, p80: 21, count: 0 };
-export const MIN_DEBTOR_POINTS = 3;
-export const MIN_TENANT_POINTS = 3;
+const MIN_DEBTOR_POINTS = 3;
+const MIN_TENANT_POINTS = 3;
 /** F12: below this many paid invoices tenant-wide there is NO forecast. */
-export const MIN_FORECAST_PAID_INVOICES = 10;
+const MIN_FORECAST_PAID_INVOICES = 10;
 
 function medianOf(sorted: number[]): number {
   const n = sorted.length;
@@ -44,8 +44,9 @@ function medianOf(sorted: number[]): number {
 /** Nearest-rank percentile: the value at rank ceil(p/100 * n) (1-indexed). */
 export function percentileNearestRank(values: readonly number[], p: number): number {
   if (values.length === 0) return 0;
+  const safeP = Number.isFinite(p) ? p : 0;
   const sorted = [...values].sort((a, b) => a - b);
-  const rank = Math.min(sorted.length, Math.max(1, Math.ceil((p / 100) * sorted.length)));
+  const rank = Math.min(sorted.length, Math.max(1, Math.ceil((safeP / 100) * sorted.length)));
   return sorted[rank - 1]!;
 }
 
@@ -72,7 +73,7 @@ export function debtorLateness(
  * per-invoice debtorLateness call is O(open × paid) — at the M6 100k bench
  * (70k open × 30k paid) it ran for minutes; this resolver is O(paid + open).
  */
-export function makeLatenessResolver(
+function makeLatenessResolver(
   history: readonly PaidHistoryRow[],
 ): (debtorId: string) => { stats: LatenessStats; level: LatenessLevel } {
   const byDebtor = new Map<string, PaidHistoryRow[]>();
@@ -135,7 +136,7 @@ export function forecastCashflow(input: {
 }): ForecastResult {
   for (const inv of input.openInvoices) assertSafeMinor(inv.outstandingMinor, `open invoice ${inv.id}`);
   for (const row of input.paidHistory) assertSafeMinor(row.amountMinor, `paid history ${row.debtorId}/${row.dueOn}`);
-  const weekCount = input.weeks ?? 8;
+  const weekCount = typeof input.weeks === "number" && Number.isInteger(input.weeks) && input.weeks > 0 ? input.weeks : 8;
   const weeks: ForecastWeek[] = Array.from({ length: weekCount }, (_, i) => ({
     weekStart: addDaysIso(input.today, i * 7), expectedMinor: 0, conservativeMinor: 0,
   }));

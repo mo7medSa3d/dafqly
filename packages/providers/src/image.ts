@@ -39,6 +39,7 @@ export async function generateImage(options: GenerateImageOptions): Promise<Gene
       model,
       prompt: options.prompt,
     }),
+    signal: AbortSignal.timeout(60_000),
   });
 
   if (!res.ok) {

@@ -13,11 +13,11 @@ import { axisLabel } from "./charts";
  * neutrals, --primary, --destructive). Zero external chart libs, SSR-safe.
  */
 const SERIES = [
+  "var(--status-paid-fg)",
   "var(--chart-2)",
+  "var(--status-due-fg)",
   "var(--chart-1)",
-  "var(--chart-3)",
   "var(--destructive)",
-  "var(--chart-5)",
 ];
 
 function smoothPath(pts: [number, number][]): string {
@@ -43,6 +43,9 @@ export function MosaicSparkCard({
   badge,
   badgeTone = "neutral",
   series,
+  seriesLabels,
+  sourceLabel,
+  ratioBar,
   color = "var(--chart-2)",
   testId,
   extra,
@@ -54,6 +57,9 @@ export function MosaicSparkCard({
   badge?: string;
   badgeTone?: "neutral" | "positive" | "danger";
   series: number[];
+  seriesLabels?: string[];
+  sourceLabel?: string;
+  ratioBar?: { pct: number; label: string };
   color?: string;
   testId?: string;
   extra?: ReactNode;
@@ -61,6 +67,7 @@ export function MosaicSparkCard({
   const uid = useId().replace(/:/g, "");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const pts = series.length >= 2 ? series : [0, ...series, 0];
+  const hasRealTrend = series.length >= 3 && Math.max(...series) > Math.min(...series);
   const allZero = pts.every((v) => v === 0);
   const W = 320;
   const H = 72;
@@ -104,7 +111,23 @@ export function MosaicSparkCard({
         {extra && <div className="mt-1.5 text-xs text-muted-foreground">{extra}</div>}
       </div>
 
+      {!hasRealTrend && ratioBar ? (
+        <div className="mt-4 px-5 pb-4">
+          <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-semibold text-muted-foreground">
+            <span className="truncate">{ratioBar.label}</span>
+            <span className="tnum font-bold text-foreground" dir="ltr">{Math.round(Math.max(0, Math.min(100, ratioBar.pct)))}%</span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.max(0, Math.min(100, ratioBar.pct))}%`, background: color }} />
+          </div>
+        </div>
+      ) : (
       <div className="relative mt-3 h-[72px] w-full">
+        {sourceLabel && (
+          <span className="pointer-events-none absolute start-5 top-0 z-10 text-[10px] font-semibold text-muted-foreground">
+            {hoverIdx !== null && seriesLabels?.[hoverIdx] ? seriesLabels[hoverIdx] : sourceLabel}
+          </span>
+        )}
         <svg
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="none"
@@ -133,6 +156,7 @@ export function MosaicSparkCard({
           )}
         </svg>
       </div>
+      )}
     </div>
   );
 }
@@ -175,11 +199,11 @@ export function ForecastArea({
   const con = weeks.map((w, i): [number, number] => [x(i), y(w.conservativeMinor)]);
   const line = smoothPath(exp);
   const area = `${line} L${x(weeks.length - 1)},${H - B} L${x(0)},${H - B} Z`;
-  const fmt = (n: number) => formatAmountOnly(BigInt(Math.round(n)));
+  const fmt = (n: number) => formatAmountOnly(BigInt(Math.round(n)), { digits: "latin" });
   const total = weeks.reduce((s, w) => s + w.expectedMinor, 0);
   const totalCon = weeks.reduce((s, w) => s + w.conservativeMinor, 0);
   const peak = weeks.reduce((b, w, i) => (w.expectedMinor > weeks[b]!.expectedMinor ? i : b), 0);
-  const dateFmt = new Intl.DateTimeFormat(isAr ? "ar-EG" : "en-GB", { day: "numeric", month: "short" });
+  const dateFmt = new Intl.DateTimeFormat(isAr ? "ar-EG-u-nu-latn" : "en-GB", { day: "numeric", month: "short" });
   const day = (iso: string) => dateFmt.format(new Date(`${iso}T00:00:00`));
   const h = hover ?? null;
   const hasBeyond = Boolean(beyondHorizon && (beyondHorizon.expectedMinor > 0 || beyondHorizon.conservativeMinor > 0));
@@ -341,7 +365,7 @@ export function ForecastArea({
 
       {hasBeyond && beyondHorizon && (
         <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-          {isAr ? "مستحقات بعد أفق ٨ أسابيع:" : "Due beyond 8-week horizon:"}{" "}
+          {isAr ? "مستحقات بعد أفق 8 أسابيع:" : "Due beyond 8-week horizon:"}{" "}
           <span className="tnum font-bold text-foreground" dir="ltr">
             {fmt(beyondHorizon.expectedMinor)} {symbol}
           </span>
@@ -431,9 +455,9 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
           <p className="text-[11px] font-bold text-muted-foreground">{shown ? shown.label : isAr ? "الإجمالي" : "Total"}</p>
           <p className="tnum text-base font-extrabold text-card-foreground" dir="ltr">
-            {formatAmountOnly(BigInt(Math.round(shown ? shown.amountMinor : total)))}
+            {formatAmountOnly(BigInt(Math.round(shown ? shown.amountMinor : total)), { digits: "latin" })}
           </p>
-          <p className="text-[10px] font-semibold text-muted-foreground">
+          <p className="tnum text-[10px] font-semibold text-muted-foreground" dir="ltr">
             {shown && total ? formatPct(shown.amountMinor / total) : symbol}
           </p>
         </div>
@@ -458,7 +482,7 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
         ))}
         {severe > 0 && (
           <li className="mt-1 rounded-lg bg-danger-bg px-2.5 py-1.5 font-bold text-destructive">
-            {isAr ? `${formatPct(sevRatio)} من الرصيد تجاوز ٣٠ يوماً` : `${formatPct(sevRatio)} over 30 days`}
+            {isAr ? `${formatPct(sevRatio)} من الرصيد تجاوز 30 يوماً` : `${formatPct(sevRatio)} over 30 days`}
           </li>
         )}
       </ul>
@@ -509,20 +533,21 @@ export interface RankedItem {
 
 export function RankedBars({ items }: { items: RankedItem[] }) {
   const { symbol, formatAmountOnly } = useCurrency();
-  const max = Math.max(1, ...items.map((i) => i.amountMinor));
+  const topItems = items.slice(0, 4);
+  const max = Math.max(1, ...topItems.map((i) => i.amountMinor));
   return (
     <ol className="flex flex-col gap-2.5">
-      {items.map((d, i) => (
+      {topItems.map((d, i) => (
         <li key={d.id}>
           <Link href={d.href} className="group flex flex-col gap-1.5 rounded-xl px-2.5 py-2 transition-colors hover:bg-accent">
             <span className="flex items-center gap-2.5">
-              <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[10px] font-extrabold text-muted-foreground" dir="ltr">
+              <span className="tnum flex size-5 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[10px] font-extrabold text-muted-foreground" dir="ltr">
                 {i + 1}
               </span>
               <InitialAvatar name={d.name} size={28} />
               <span className="min-w-0 flex-1 truncate text-sm font-bold">{d.name}</span>
               <span className="tnum text-sm font-extrabold text-foreground" dir="ltr">
-                {formatAmountOnly(BigInt(Math.round(d.amountMinor)))} <span className="text-[11px] font-normal text-muted-foreground">{symbol}</span>
+                {formatAmountOnly(BigInt(Math.round(d.amountMinor)), { digits: "latin" })} <span className="text-[11px] font-normal text-muted-foreground">{symbol}</span>
               </span>
             </span>
             <span className="h-1.5 overflow-hidden rounded-full bg-muted">

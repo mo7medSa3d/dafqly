@@ -77,7 +77,7 @@ const amountCents = z.union([z.number(), z.string()]).refine((v) => {
   }
 }, { message: "amount_cents must be a non-negative integer (use a string above 2^53)" });
 const requiredBool = z.boolean();
-export const paymobTransactionSchema = z.object({
+const paymobTransactionSchema = z.object({
   amount_cents: amountCents,
   created_at: z.string().min(1),
   currency: z.string().min(1),
@@ -126,7 +126,7 @@ export function redactPaymobPayload(payload: unknown): unknown {
   return copy;
 }
 
-export const paymobCallbackSchema = z.object({
+const paymobCallbackSchema = z.object({
   type: z.string().optional(),
   obj: paymobTransactionSchema,
 });

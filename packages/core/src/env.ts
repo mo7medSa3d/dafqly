@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidTimezone } from "./time";
 
 export class EnvError extends Error {
   constructor(message: string) {
@@ -10,12 +11,12 @@ export class EnvError extends Error {
 const boolFromString = (def: boolean) =>
   z.preprocess((v) => (v === undefined ? def : v === "true" || v === "1" || v === true), z.boolean());
 const secret = (name: string) =>
-  z.string().min(32, `${name} must be at least 32 chars`).refine((v) => !v.startsWith("change-me"), `${name} still has the placeholder value`);
+  z.string().trim().min(32, `${name} must be at least 32 chars`).refine((v) => !v.startsWith("change-me"), `${name} still has the placeholder value`);
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  APP_URL: z.string().default("http://localhost:3000"),
-  DEFAULT_TIMEZONE: z.string().default("Africa/Cairo"),
+  APP_URL: z.string().url().default("http://localhost:3000"),
+  DEFAULT_TIMEZONE: z.string().refine(isValidTimezone, "DEFAULT_TIMEZONE must be a valid IANA timezone").default("Africa/Cairo"),
   DEFAULT_LOCALE: z.enum(["ar", "en"]).default("ar"),
   SESSION_SECRET: secret("SESSION_SECRET"),
   PHONE_HASH_PEPPER: secret("PHONE_HASH_PEPPER"),

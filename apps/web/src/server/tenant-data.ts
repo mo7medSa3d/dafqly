@@ -61,7 +61,7 @@ const TENANT_DATA_TABLES: TenantTableSpec[] = [
 
 interface TenantDataExport {
   exportedAt: string;
-  format: "tahseel-tenant-export-v1";
+  format: "dafqly-tenant-export-v1";
   tenant: Record<string, unknown>;
   rowCounts: Record<string, number>;
   tables: Record<string, unknown[]>;
@@ -78,16 +78,24 @@ export async function exportTenantData(app: Db, tenantId: string): Promise<{ fil
       tables[spec.name] = rows;
       rowCounts[spec.name] = rows.length;
     }
+    const { whatsapp, ...safeSettings } = tenant.settings ?? {};
+    const safeTenant = {
+      ...tenant,
+      settings: {
+        ...safeSettings,
+        ...(whatsapp ? { whatsapp: { phoneNumberId: whatsapp.phoneNumberId, wabaId: whatsapp.wabaId ?? null, connected: true } } : {}),
+      },
+    };
     const out: TenantDataExport = {
       exportedAt: new Date().toISOString(),
-      format: "tahseel-tenant-export-v1",
-      tenant: tenant as unknown as Record<string, unknown>,
+      format: "dafqly-tenant-export-v1",
+      tenant: safeTenant as unknown as Record<string, unknown>,
       rowCounts, tables,
     };
     return out;
   });
   return {
-    filename: `tahseel-export-${tenantId}.json`,
+    filename: `dafqly-export-${tenantId}.json`,
     json: JSON.stringify(bundle, bigintReplacer, 2),
     rowCounts: bundle.rowCounts,
   };

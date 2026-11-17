@@ -68,14 +68,14 @@ export function resolveLlmProviderConfigs(e: AiEnvInput): LlmProviderConfig[] {
   }];
 }
 
-/** True when the configured AI provider has an API key or is a local endpoint (Ollama/LM Studio). */
+/** True when the configured AI provider has an API key or is a local endpoint (Ollama/LM Studio/local proxy). */
 export function hasUsableLlmConfig(e: AiEnvInput): boolean {
   const cfg = resolveAiConfig(e);
   const preset = PROVIDER_PRESETS[cfg.provider];
   const baseUrl = cfg.baseUrl ?? preset?.baseUrl ?? "";
   if (!baseUrl) return false;
   const isLocal = /^(https?:\/\/)(localhost|127\.0\.0\.1|\[::1\]|host\.docker\.internal)/i.test(baseUrl);
-  return Boolean(cfg.apiKey) || (isLocal && preset?.requiresKey !== true);
+  return Boolean(cfg.apiKey) || isLocal || preset?.requiresKey === false;
 }
 
 /** Model id used for budget metering and status display. */

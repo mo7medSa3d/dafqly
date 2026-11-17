@@ -125,7 +125,7 @@ export function formatEgp(minor: bigint, opts: { digits?: "latin" | "eastern" } 
   return formatCurrencyMinor(minor, "EGP", opts);
 }
 
-export const CURRENCY_SYMBOLS: Record<string, { ar: string; en: string }> = {
+const CURRENCY_SYMBOLS: Record<string, { ar: string; en: string }> = {
   EGP: { ar: "ج.م", en: "EGP" },
   SAR: { ar: "ر.س", en: "SAR" },
   USD: { ar: "$", en: "$" },
@@ -136,10 +136,19 @@ export const CURRENCY_SYMBOLS: Record<string, { ar: string; en: string }> = {
 };
 
 export function getCurrencySymbol(currency: string = "EGP", locale: string = "ar"): string {
-  const norm = (currency || "EGP").toUpperCase();
+  const norm = (currency || "EGP").trim().toUpperCase() || "EGP";
   const entry = CURRENCY_SYMBOLS[norm];
-  if (!entry) return currency;
-  return locale === "en" ? entry.en : entry.ar;
+  if (!entry) return norm;
+  return locale.toLowerCase().startsWith("en") ? entry.en : entry.ar;
+}
+
+function toSafeBigInt(minor: bigint | number | string): bigint {
+  if (typeof minor === "bigint") return minor;
+  if (typeof minor === "number") {
+    return Number.isFinite(minor) ? BigInt(Math.trunc(minor)) : 0n;
+  }
+  const trimmed = String(minor ?? "").trim();
+  return /^-?\d+$/.test(trimmed) ? BigInt(trimmed) : 0n;
 }
 
 export function formatMoney(
@@ -147,10 +156,11 @@ export function formatMoney(
   currency: string = "EGP",
   opts: { locale?: string; digits?: "latin" | "eastern" } = {}
 ): string {
-  const b = typeof minor === "bigint" ? minor : BigInt(String(minor || "0"));
+  const b = toSafeBigInt(minor);
+  const locale = opts.locale ?? "ar";
   const num = formatCurrencyMinor(b, currency, { digits: opts.digits });
-  const sym = getCurrencySymbol(currency, opts.locale ?? "ar");
-  return opts.locale === "en" ? `${sym} ${num}` : `${num} ${sym}`;
+  const sym = getCurrencySymbol(currency, locale);
+  return locale.toLowerCase().startsWith("en") ? `${sym} ${num}` : `${num} ${sym}`;
 }
 
 export function sumMoney(values: Iterable<bigint>): bigint {

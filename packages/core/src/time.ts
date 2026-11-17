@@ -23,6 +23,7 @@ export const DEFAULT_POLICY: SchedulePolicy = {
  * brick every request that computed "today" with a 500.
  */
 export function isValidTimezone(tz: string): boolean {
+  if (typeof tz !== "string" || tz.trim() === "") return false;
   try {
     new Intl.DateTimeFormat("en-CA", { timeZone: tz });
     return true;
@@ -39,7 +40,7 @@ export function safeTimezone(tz: string | null | undefined, fallback = "Africa/C
 interface LocalParts { hour: number; minute: number; weekday: string }
 function localParts(at: Date, timezone: string): LocalParts {
   const fmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone: timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23", weekday: "short",
+    timeZone: safeTimezone(timezone), hour: "2-digit", minute: "2-digit", hourCycle: "h23", weekday: "short",
   });
   const parts = fmt.formatToParts(at);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
@@ -65,8 +66,9 @@ export function zonedTimeToUtc(dateIso: string, hhmm: string, timezone: string):
   const [y, mo, d] = dateIso.split("-").map(Number);
   const [hh, mm] = hhmm.split(":").map(Number);
   const target = Date.UTC(y!, mo! - 1, d!, hh!, mm!, 0);
+  if (Number.isNaN(target)) throw new Error(`Invalid date/time: ${dateIso} ${hhmm}`);
   const fmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+    timeZone: safeTimezone(timezone), year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
   });
   let guess = target;
@@ -84,7 +86,8 @@ export function zonedTimeToUtc(dateIso: string, hhmm: string, timezone: string):
 
 /** Local calendar date (YYYY-MM-DD) of an instant in a timezone. */
 export function localDateOf(at: Date, timezone: string): string {
-  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" });
+  if (Number.isNaN(at.getTime())) throw new Error("Invalid Date passed to localDateOf");
+  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: safeTimezone(timezone), year: "numeric", month: "2-digit", day: "2-digit" });
   return fmt.format(at);
 }
 

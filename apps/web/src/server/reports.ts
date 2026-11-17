@@ -1,4 +1,4 @@
-import { eq, isNull, and, inArray, sql } from "drizzle-orm";
+import { eq, isNull, and, sql } from "drizzle-orm";
 import {
   AppError, computeKpis, computeReminderPerformance, forecastCashflow, toCsv,
   type ForecastResult, type KpiReport, type PaidHistoryRow, type ReminderPerformance,
@@ -58,39 +58,62 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
     // is frozen and never counts toward outstanding, overdue or aging.
     const currency = tenant?.settings.currency ?? "EGP";
     const timezone = tenant?.timezone ?? "Africa/Cairo";
-    const [agg] = await tx.execute(sql`
-      select
-        coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor), 0)::bigint as outstanding,
-        coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and due_on < ${todayIso}::date), 0)::bigint as overdue,
-        coalesce(sum(amount_minor) filter (where issued_on >= ${todayIso}::date - 89 and issued_on <= ${todayIso}::date and status not in ('cancelled','written_off')), 0)::bigint as invoiced90,
-        coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and due_on >= ${todayIso}::date), 0)::bigint as aging_current,
-        coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and (${todayIso}::date - due_on) between 1 and 7), 0)::bigint as aging_0_7,
-        coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and (${todayIso}::date - due_on) between 8 and 30), 0)::bigint as aging_8_30,
-        coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and (${todayIso}::date - due_on) between 31 and 60), 0)::bigint as aging_31_60,
-        coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and (${todayIso}::date - due_on) > 60), 0)::bigint as aging_60p
-      from invoices where currency = ${currency}`) as unknown as [{
-        outstanding: string; overdue: string; invoiced90: string;
-        aging_current: string; aging_0_7: string; aging_8_30: string; aging_31_60: string; aging_60p: string;
-      }];
-    const top = await tx.execute(sql`
-      select debtor_id as "debtorId", coalesce(sum(amount_minor - paid_minor), 0)::bigint as outstanding
-      from invoices
-      where status in ('open','partially_paid') and amount_minor > paid_minor and currency = ${currency}
-      group by debtor_id order by outstanding desc, debtor_id asc limit 10`) as unknown as { debtorId: string; outstanding: string }[];
-    const byCurrency = await tx.execute(sql`
-      select currency,
-        coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor), 0)::bigint as outstanding,
-        coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and due_on < ${todayIso}::date), 0)::bigint as overdue
-      from invoices group by currency order by currency`) as unknown as { currency: string; outstanding: string; overdue: string }[];
-    const collectedByCurrency = await tx.execute(sql`
-      select currency,
-        coalesce(sum(amount_minor) filter (where amount_minor > 0), 0)::bigint as collected,
-        coalesce(-sum(amount_minor) filter (where amount_minor < 0), 0)::bigint as refunded
-      from payments
-      where status = 'confirmed'
-        and received_on >= date_trunc('month', ${todayIso}::date)::date
-        and received_on < (date_trunc('month', ${todayIso}::date) + interval '1 month')::date
-      group by currency order by currency`) as unknown as { currency: string; collected: string; refunded: string }[];
+    const [[agg], top, byCurrency, collectedByCurrency, [perf]] = await Promise.all([
+      tx.execute(sql`
+        select
+          coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor), 0)::bigint as outstanding,
+          coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and due_on < ${todayIso}::date), 0)::bigint as overdue,
+          coalesce(sum(amount_minor) filter (where issued_on >= ${todayIso}::date - 89 and issued_on <= ${todayIso}::date and status not in ('cancelled','written_off')), 0)::bigint as invoiced90,
+          coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and due_on >= ${todayIso}::date), 0)::bigint as aging_current,
+          coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and (${todayIso}::date - due_on) between 1 and 7), 0)::bigint as aging_0_7,
+          coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and (${todayIso}::date - due_on) between 8 and 30), 0)::bigint as aging_8_30,
+          coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and (${todayIso}::date - due_on) between 31 and 60), 0)::bigint as aging_31_60,
+          coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and (${todayIso}::date - due_on) > 60), 0)::bigint as aging_60p
+        from invoices where currency = ${currency}`) as unknown as Promise<[{
+          outstanding: string; overdue: string; invoiced90: string;
+          aging_current: string; aging_0_7: string; aging_8_30: string; aging_31_60: string; aging_60p: string;
+        }]>,
+      tx.execute(sql`
+        select i.debtor_id as "debtorId", d.display_name as "displayName", coalesce(sum(i.amount_minor - i.paid_minor), 0)::bigint as outstanding
+        from invoices i
+        join debtors d on d.id = i.debtor_id and d.deleted_at is null
+        where i.status in ('open','partially_paid') and i.amount_minor > i.paid_minor and i.currency = ${currency}
+        group by i.debtor_id, d.display_name order by outstanding desc, i.debtor_id asc limit 10`) as unknown as Promise<{ debtorId: string; displayName: string; outstanding: string }[]>,
+      tx.execute(sql`
+        select currency,
+          coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor), 0)::bigint as outstanding,
+          coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and due_on < ${todayIso}::date), 0)::bigint as overdue
+        from invoices group by currency order by currency`) as unknown as Promise<{ currency: string; outstanding: string; overdue: string }[]>,
+      tx.execute(sql`
+        select currency,
+          coalesce(sum(amount_minor) filter (where amount_minor > 0), 0)::bigint as collected,
+          coalesce(-sum(amount_minor) filter (where amount_minor < 0), 0)::bigint as refunded
+        from payments
+        where status = 'confirmed'
+          and received_on >= date_trunc('month', ${todayIso}::date)::date
+          and received_on < (date_trunc('month', ${todayIso}::date) + interval '1 month')::date
+        group by currency order by currency`) as unknown as Promise<{ currency: string; collected: string; refunded: string }[]>,
+      tx.execute(sql`
+        select
+          out_agg.sent,
+          out_agg.delivered,
+          (select count(distinct debtor_id)::int from messages where direction = 'in' and debtor_id in
+             (select distinct debtor_id from messages where direction = 'out' and status in ('sent','delivered','read'))) as replied,
+          (select count(*)::int from (
+             select i.last_reminded_at, max(p.received_on) as paid_on
+             from invoices i
+             join payment_allocations a on a.invoice_id = i.id
+             join payments p on p.id = a.payment_id and p.status = 'confirmed'
+             where i.status = 'paid' and i.last_reminded_at is not null
+             group by i.id, i.last_reminded_at) x
+           where (x.paid_on - (x.last_reminded_at at time zone ${timezone})::date) between 0 and 7) as paid_within_7d
+        from (
+          select
+            count(*) filter (where status in ('sent','delivered','read'))::int as sent,
+            count(*) filter (where status in ('delivered','read'))::int as delivered
+          from messages where direction = 'out'
+        ) out_agg`) as unknown as Promise<[{ sent: number; delivered: number; replied: number; paid_within_7d: number }]>,
+    ]);
     const collectedMap = new Map(collectedByCurrency.map((c) => [c.currency, toSafeMinor(BigInt(c.collected), `collected ${c.currency}`)]));
     const refundedMap = new Map(collectedByCurrency.map((c) => [c.currency, toSafeMinor(BigInt(c.refunded), `refunded ${c.currency}`)]));
     const byCurrencyMerged = byCurrency.map((b) => ({
@@ -112,24 +135,7 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
       }
     }
     byCurrencyMerged.sort((a, b) => (a.currency < b.currency ? -1 : a.currency > b.currency ? 1 : 0));
-    const names = top.length === 0 ? new Map<string, string>() : new Map(
-      (await tx.select({ id: debtors.id, displayName: debtors.displayName }).from(debtors)
-        .where(inArray(debtors.id, top.map((t) => t.debtorId)))).map((d) => [d.id, d.displayName]),
-    );
-    const [perf] = await tx.execute(sql`
-      select
-        (select count(*)::int from messages where direction = 'out' and status in ('sent','delivered','read')) as sent,
-        (select count(*)::int from messages where direction = 'out' and status in ('delivered','read')) as delivered,
-        (select count(distinct debtor_id)::int from messages where direction = 'in' and debtor_id in
-           (select distinct debtor_id from messages where direction = 'out' and status in ('sent','delivered','read'))) as replied,
-        (select count(*)::int from (
-           select i.last_reminded_at, max(p.received_on) as paid_on
-           from invoices i
-           join payment_allocations a on a.invoice_id = i.id
-           join payments p on p.id = a.payment_id and p.status = 'confirmed'
-           where i.status = 'paid' and i.last_reminded_at is not null
-           group by i.id, i.last_reminded_at) x
-         where (x.paid_on - (x.last_reminded_at at time zone ${timezone})::date) between 0 and 7) as paid_within_7d`) as unknown as [{ sent: number; delivered: number; replied: number; paid_within_7d: number }];
+
 
     const totalOutstandingMinor = toSafeMinor(BigInt(agg!.outstanding), "totalOutstanding");
     const collectedInMonthMinor = collectedMap.get(currency) ?? 0;
@@ -152,7 +158,7 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
       },
       topDebtors: top.map((t) => ({
         debtorId: t.debtorId,
-        displayName: names.get(t.debtorId) ?? t.debtorId,
+        displayName: t.displayName ?? t.debtorId,
         outstandingMinor: toSafeMinor(BigInt(t.outstanding), `topDebtor ${t.debtorId}`),
       })),
       reminderPerformance: { sent: perf!.sent, delivered: perf!.delivered, replied: perf!.replied, paidWithin7d: perf!.paid_within_7d },
@@ -274,18 +280,18 @@ export async function getForecast(app: Db, tenantId: string, todayIso: string): 
     const allocs = await tx
       .select({
         invoiceId: paymentAllocations.invoiceId,
-        receivedOn: payments.receivedOn,
-        amountMinor: paymentAllocations.amountMinor,
+        paidOn: sql<string>`max(${payments.receivedOn})::text`,
+        collectedMinor: sql<string>`coalesce(sum(${paymentAllocations.amountMinor}), 0)::bigint`,
       })
       .from(paymentAllocations)
       .innerJoin(payments, eq(payments.id, paymentAllocations.paymentId))
-      .where(eq(payments.status, "confirmed"));
+      .where(and(eq(payments.status, "confirmed"), eq(payments.currency, currency)))
+      .groupBy(paymentAllocations.invoiceId);
     const paidOn = new Map<string, string>();
     const collected = new Map<string, bigint>();
     for (const a of allocs) {
-      const cur = paidOn.get(a.invoiceId);
-      if (!cur || a.receivedOn > cur) paidOn.set(a.invoiceId, a.receivedOn);
-      collected.set(a.invoiceId, (collected.get(a.invoiceId) ?? 0n) + a.amountMinor);
+      paidOn.set(a.invoiceId, a.paidOn);
+      collected.set(a.invoiceId, BigInt(a.collectedMinor));
     }
     const paidHistory: PaidHistoryRow[] = invs
       .filter((i) => i.status === "paid" && paidOn.has(i.id))

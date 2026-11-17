@@ -34,7 +34,8 @@ describe("UnifiedAiProvider (Anthropic mode) (mocked fetch, ADR-022 shapes)", ()
     expect(body.tool_choice).toEqual({ type: "tool", name: "classify_reply" });
     expect((body.tools as { name: string }[])[0]!.name).toBe("classify_reply");
     // customer text is quoted as data inside <customer_message> tags
-    const content = (body.messages as { content: { text: string }[] }[])[0]!.content[0]!.text;
+    const msg = (body.messages as { content: string | { text?: string }[] }[])[0]!;
+    const content = typeof msg.content === "string" ? msg.content : (msg.content[0]?.text ?? "");
     expect(content).toContain("<customer_message>");
     expect(content).toContain("هدفع الخميس");
   });
@@ -56,7 +57,7 @@ describe("UnifiedAiProvider (Anthropic mode) (mocked fetch, ADR-022 shapes)", ()
   it("non-200 -> error; invalid tool input -> data null (routes to human)", async () => {
     const failing = new UnifiedAiProvider({ provider: "anthropic",
       apiKey: "sk-test", model: "v",
-      fetchFn: async () => ({ ok: false, status: 500, json: async () => ({}) }) as Response,
+      fetchFn: async () => ({ ok: false, status: 500, text: async () => "server error 500", json: async () => ({}) }) as unknown as Response,
     });
     await expect(failing.classifyReply("x", { todayIso: "2026-11-09", timezone: "Africa/Cairo" })).rejects.toThrow(/500/);
     const invalid = new UnifiedAiProvider({ provider: "anthropic",
@@ -279,8 +280,10 @@ describe("Anthropic native text streaming", () => {
   it("forwards text_delta events without waiting for the complete response", async () => {
     const events = [
       { type: "message_start", message: { usage: { input_tokens: 7 } } },
-      { type: "content_block_delta", delta: { type: "text_delta", text: "تحليل " } },
-      { type: "content_block_delta", delta: { type: "text_delta", text: "واضح" } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "تحليل " } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "واضح" } },
+      { type: "content_block_stop", index: 0 },
       { type: "message_delta", usage: { output_tokens: 3 } },
     ];
     const body = events.map((value) => `event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`).join("");
