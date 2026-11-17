@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { and, asc, count, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
+import { asc, count, eq, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import { AppError, isValidTimezone, safeTimezone } from "@tahseel/core";
@@ -12,10 +12,6 @@ type AiEnv = ReturnType<typeof env>;
 /** Never throws: the settings page must render even when AI_* env is misconfigured. */
 function safeLlmConfigs(e: AiEnv): LlmProviderConfig[] {
   try { return resolveLlmProviderConfigs(e); } catch { return []; }
-}
-function aiProviderLabel(e: AiEnv): string {
-  const names = safeLlmConfigs(e).map((c) => c.name ?? c.kind);
-  return names.length ? names.join(" → ") : e.AI_PROVIDER;
 }
 
 /** HMAC-SHA256 phone hash for F14 groundwork only (ADR-006). Never log the phone itself. */
@@ -106,66 +102,55 @@ export interface DashboardSummary {
 }
 
 export async function getDashboardSummary(app: Db, tenantId: string, todayIso: string): Promise<DashboardSummary> {
+  const monthPrefix = todayIso.slice(0, 7);
   return withTenant(app, tenantId, async (tx) => {
-    const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+    const [[tenant], [d], byCurrencyRows, collectedRows] = await Promise.all([
+      tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId)),
+      tx.select({ c: count() }).from(debtors).where(isNull(debtors.deletedAt)),
+      tx.execute(sql`
+        select currency,
+          coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor), 0)::bigint as outstanding,
+          coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and due_on < ${todayIso}::date), 0)::bigint as overdue,
+          coalesce(count(*) filter (where status in ('open','partially_paid')), 0)::int as open_count
+        from invoices
+        where tenant_id = ${tenantId}
+        group by currency order by currency`) as unknown as Promise<{ currency: string; outstanding: string; overdue: string; open_count: number }[]>,
+      tx.execute(sql`
+        select currency,
+          coalesce(sum(amount_minor) filter (where amount_minor > 0), 0)::bigint as collected,
+          coalesce(-sum(amount_minor) filter (where amount_minor < 0), 0)::bigint as refunded
+        from payments
+        where tenant_id = ${tenantId} and status = 'confirmed' and to_char(received_on, 'YYYY-MM') = ${monthPrefix}
+        group by currency order by currency`) as unknown as Promise<{ currency: string; collected: string; refunded: string }[]>,
+    ]);
+
     const currency = tenant?.settings.currency ?? "EGP";
-    const openStatuses = ["open", "partially_paid"] as const;
-    const [agg] = await tx
-      .select({
-        outstanding: sql<string>`coalesce(sum(${invoices.amountMinor} - ${invoices.paidMinor}), 0)`,
-        overdue: sql<string>`coalesce(sum(case when ${invoices.dueOn} < ${todayIso} then ${invoices.amountMinor} - ${invoices.paidMinor} else 0 end), 0)`,
-        openCount: count(),
-      })
-      .from(invoices)
-      .where(and(inArray(invoices.status, [...openStatuses]), eq(invoices.currency, currency)));
-    const [d] = await tx.select({ c: count() }).from(debtors).where(isNull(debtors.deletedAt));
-    // M1: the payments ledger exists now — collected this month is the sum of
-    // CONFIRMED payments received in the tenant-local current month.
-    // M03: collected (positive rows) and refunded (negative rows) are
-    // separate lines — a reversal never nets against another month.
-    const monthPrefix = todayIso.slice(0, 7);
-    const monthFilter = sql`to_char(${payments.receivedOn}, 'YYYY-MM') = ${monthPrefix}`;
-    const [collected] = await tx
-      .select({ total: sql<string>`coalesce(sum(${payments.amountMinor}), 0)` })
-      .from(payments)
-      .where(and(eq(payments.status, "confirmed"), eq(payments.currency, currency), monthFilter, gt(payments.amountMinor, 0n)));
-    const [refunded] = await tx
-      .select({ total: sql<string>`coalesce(-sum(${payments.amountMinor}), 0)` })
-      .from(payments)
-      .where(and(eq(payments.status, "confirmed"), eq(payments.currency, currency), monthFilter, lt(payments.amountMinor, 0n)));
-    const byCurrencyRows = await tx.execute(sql`
-      select currency,
-        coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor), 0)::bigint as outstanding,
-        coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and due_on < ${todayIso}::date), 0)::bigint as overdue
-      from invoices
-      where tenant_id = ${tenantId}
-      group by currency order by currency`) as unknown as { currency: string; outstanding: string; overdue: string }[];
-    const collectedRows = await tx.execute(sql`
-      select currency,
-        coalesce(sum(amount_minor) filter (where amount_minor > 0), 0)::bigint as collected,
-        coalesce(-sum(amount_minor) filter (where amount_minor < 0), 0)::bigint as refunded
-      from payments
-      where tenant_id = ${tenantId} and status = 'confirmed' and to_char(received_on, 'YYYY-MM') = ${monthPrefix}
-      group by currency order by currency`) as unknown as { currency: string; collected: string; refunded: string }[];
-    const collectedMap = new Map(collectedRows.map((c) => [c.currency, c.collected]));
-    const refundedMap = new Map(collectedRows.map((c) => [c.currency, c.refunded]));
-    const byCurrency = byCurrencyRows.map((b) => ({
-      currency: b.currency, outstandingMinor: b.outstanding, overdueMinor: b.overdue,
-      collectedInMonthMinor: collectedMap.get(b.currency) ?? "0",
-      refundedInMonthMinor: refundedMap.get(b.currency) ?? "0",
-    }));
+    const collectedMap = new Map(collectedRows.map((c) => [c.currency, c]));
+    const byCurrency = byCurrencyRows.map((b) => {
+      const c = collectedMap.get(b.currency);
+      return {
+        currency: b.currency,
+        outstandingMinor: b.outstanding,
+        overdueMinor: b.overdue,
+        collectedInMonthMinor: c?.collected ?? "0",
+        refundedInMonthMinor: c?.refunded ?? "0",
+      };
+    });
     for (const c of collectedRows) {
       if (!byCurrency.some((b) => b.currency === c.currency)) {
         byCurrency.push({ currency: c.currency, outstandingMinor: "0", overdueMinor: "0", collectedInMonthMinor: c.collected, refundedInMonthMinor: c.refunded });
       }
     }
+
+    const defaultInv = byCurrencyRows.find((b) => b.currency === currency);
+    const defaultPay = collectedMap.get(currency);
     return {
-      totalOutstandingMinor: BigInt(agg?.outstanding ?? "0").toString(),
-      overdueMinor: BigInt(agg?.overdue ?? "0").toString(),
-      openInvoices: agg?.openCount ?? 0,
+      totalOutstandingMinor: BigInt(defaultInv?.outstanding ?? "0").toString(),
+      overdueMinor: BigInt(defaultInv?.overdue ?? "0").toString(),
+      openInvoices: Number(defaultInv?.open_count ?? 0),
       debtors: d?.c ?? 0,
-      collectedThisMonthMinor: BigInt(collected?.total ?? "0").toString(),
-      refundedThisMonthMinor: BigInt(refunded?.total ?? "0").toString(),
+      collectedThisMonthMinor: BigInt(defaultPay?.collected ?? "0").toString(),
+      refundedThisMonthMinor: BigInt(defaultPay?.refunded ?? "0").toString(),
       currency,
       byCurrency,
     };
@@ -205,6 +190,8 @@ export type UpdateTenantSettingsInput = z.infer<typeof updateTenantSettingsInput
 
 export async function getTenantSettingsAndIntegrations(app: Db, tenantId: string) {
   const e = env();
+  const llmConfigs = safeLlmConfigs(e);
+  const llmNames = llmConfigs.map((c) => c.name ?? c.kind);
   return withTenant(app, tenantId, async (tx) => {
     const [t] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     if (!t) throw new AppError("NOT_FOUND", "Tenant not found", 404);
@@ -214,9 +201,9 @@ export async function getTenantSettingsAndIntegrations(app: Db, tenantId: string
       settings: t.settings,
       integrations: {
         aiConfigured: hasUsableLlmConfig(e),
-        aiProvider: aiProviderLabel(e),
-        llmModelFast: primaryModelFor(safeLlmConfigs(e), "fast") ?? "",
-        llmModelVision: primaryModelFor(safeLlmConfigs(e), "vision") ?? "",
+        aiProvider: llmNames.length ? llmNames.join(" → ") : e.AI_PROVIDER,
+        llmModelFast: primaryModelFor(llmConfigs, "fast") ?? "",
+        llmModelVision: primaryModelFor(llmConfigs, "vision") ?? "",
         paymobConfigured: Boolean(e.PAYMOB_SECRET_KEY && e.PAYMOB_PUBLIC_KEY && e.PAYMOB_INTEGRATION_ID && e.PAYMOB_HMAC_SECRET),
         whatsappConfigured: Boolean(e.WHATSAPP_PHONE_NUMBER_ID && e.WHATSAPP_ACCESS_TOKEN),
         smsConfigured: false,
@@ -236,16 +223,17 @@ export async function updateTenantSettings(app: Db, tenantId: string, actorUserI
     if (!t) throw new AppError("NOT_FOUND", "Tenant not found", 404);
     const currentCurrency = t.settings.currency ?? "EGP";
     if (patch.currency !== undefined && patch.currency !== currentCurrency) {
-      const [invoiceActivity] = await tx.select({ n: count() }).from(invoices);
-      const [paymentActivity] = await tx.select({ n: count() }).from(payments);
       // Cheques and promises do not persist a currency column in the current
       // schema; unlinked records derive their meaning from the tenant default.
       // Include them in the lock or a default-currency edit would rewrite the
       // interpretation of already-entered financial records.
-      const [chequeActivity] = await tx.select({ n: count() }).from(cheques);
-      const [promiseActivity] = await tx.select({ n: count() }).from(promisesToPay);
-      if (Number(invoiceActivity?.n ?? 0) > 0 || Number(paymentActivity?.n ?? 0) > 0
-        || Number(chequeActivity?.n ?? 0) > 0 || Number(promiseActivity?.n ?? 0) > 0) {
+      const [inv, pay, chq, prom] = await Promise.all([
+        tx.select({ id: invoices.id }).from(invoices).limit(1),
+        tx.select({ id: payments.id }).from(payments).limit(1),
+        tx.select({ id: cheques.id }).from(cheques).limit(1),
+        tx.select({ id: promisesToPay.id }).from(promisesToPay).limit(1),
+      ]);
+      if (inv.length > 0 || pay.length > 0 || chq.length > 0 || prom.length > 0) {
         throw new AppError("CURRENCY_LOCKED", "Default currency cannot be changed after financial activity exists. Use an explicit ledger migration instead.", 409);
       }
     }

@@ -6,12 +6,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { useCurrency } from "./CurrencyContext";
-import { BellRinging, BellSlash, CalendarCheck, Check, CheckCircle, Clock, FileText, HandCoins, LinkSimple, PaperPlaneTilt, PencilSimple, Receipt, Sparkle, Trash, Wallet, WarningCircle, XCircle } from "@/components/ui/solid-icons";
+import { BellRinging, BellSlash, CalendarCheck, Check, CheckCircle, Clock, Copy, FileText, HandCoins, LinkSimple, PaperPlaneTilt, PencilSimple, Receipt, Sparkle, Trash, Wallet, WarningCircle, XCircle } from "@/components/ui/solid-icons";
 import { normalizeCurrencyCode } from "@tahseel/core";
 import { trpc } from "@/lib/trpc-client";
 import type { DebtorIntelligenceView } from "@/server/intelligence";
 import { openAiCopilot } from "./copilot-events";
-import { Panel, SecurityNotice, StatusPill, btnGhost, btnPrimary, btnSmall, inputCls, labelCls, linkAction } from "./ui";
+import { LoadingState, Panel, SecurityNotice, StatusPill, btnGhost, btnPrimary, btnSmall, inputCls, labelCls, linkAction } from "./ui";
 import { WhatsAppShareButton, invoiceShareMessage, totalShareMessage } from "./WhatsAppShare";
 
 interface Invoice { id: string; reference: string | null; amountMinor: string; paidMinor: string; outstandingMinor: string; currency: string; status: string; dueOn: string; currencyWarning: boolean }
@@ -32,11 +32,11 @@ interface TimelineEvent { id: string; kind: string; at: string; summary: string;
 
 
 
-function copyTextSafe(text: string) {
+async function copyTextSafe(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(text);
-      return;
+      await navigator.clipboard.writeText(text);
+      return true;
     }
   } catch { /* fallback below */ }
   try {
@@ -46,13 +46,16 @@ function copyTextSafe(text: string) {
     ta.style.opacity = "0";
     document.body.appendChild(ta);
     ta.select();
-    document.execCommand("copy");
+    const ok = document.execCommand("copy");
     document.body.removeChild(ta);
-  } catch { /* ignore */ }
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 export function DebtorDetailClient({ debtorId, businessName }: { debtorId: string; businessName?: string }) {
-  const { formatAmountOnly } = useCurrency();
+  const { currency: tenantCurrency, formatAmountOnly } = useCurrency();
   // F-06: amounts render in the tenant currency, not hardcoded EGP.
   const fmt = (minor: string, currency?: string) => formatAmountOnly(BigInt(minor), currency ? { currency } : undefined);
   const t = useTranslations("debtors");
@@ -75,13 +78,17 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   const [recon, setRecon] = useState<Recon | null>(null);
   const [ledgerRecon, setLedgerRecon] = useState<LedgerRecon | null>(null);
   const [debtorIntel, setDebtorIntel] = useState<DebtorIntelligenceView | null>(null);
-  const [gwMsg, setGwMsg] = useState<string | null>(null);
+  const [gwMsg, setGwMsg] = useState<{ text: string; isError?: boolean } | null>(null);
+  const [gwBusy, setGwBusy] = useState(false);
+  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+  const [stmtMsg, setStmtMsg] = useState<{ text: string; isError?: boolean } | null>(null);
+  const [stmtBusy, setStmtBusy] = useState(false);
   const [amount, setAmount] = useState("");
   const [paymentCurrency, setPaymentCurrency] = useState("");
   const [method, setMethod] = useState<"cash" | "instapay" | "bank" | "wallet" | "cheque" | "gateway" | "other">("cash");
   const [receivedOn, setReceivedOn] = useState(() => todayIso());
   const [alloc, setAlloc] = useState<Record<string, string>>({});
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ text: string; isError?: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Edit debtor state
@@ -124,7 +131,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
         ]);
         return current && available.has(current)
           ? current
-          : (openCurrency ?? det.creditCurrency ?? det.defaultCurrency ?? "EGP");
+          : (openCurrency ?? det.creditCurrency ?? det.defaultCurrency ?? tenantCurrency);
       });
       setEditName(det.displayName);
       setEditNotes(det.notes ?? "");
@@ -137,12 +144,13 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
       setLedgerRecon(lrc as LedgerRecon);
       setDebtorIntel(intelRes as DebtorIntelligenceView | null);
     } catch (err: unknown) {
-      setLoadError(err instanceof Error ? err.message : (locale === "en" ? "Debtor not found" : "تعذّر تحميل بيانات العميل"));
+      setLoadError(err instanceof Error ? err.message : (isAr ? "تعذّر تحميل بيانات العميل" : "Debtor not found"));
     }
-  }, [debtorId, locale]);
+  }, [debtorId, isAr]);
   useEffect(() => { void load(); }, [load]);
 
   async function onSaveDebtor() {
+    if (busy || editName.trim().length === 0) return;
     setBusy(true); setActionError(null);
     try {
       await trpc.debtors.update.mutate({
@@ -159,32 +167,36 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   }
 
   async function onPay() {
+    if (busy || amount.trim() === "") return;
     setBusy(true); setMsg(null);
     try {
       const allocations = Object.entries(alloc)
         .filter(([, v]) => v.trim() !== "")
         .map(([invoiceId, v]) => ({ invoiceId, amount: v.trim() }));
       await trpc.payments.record.mutate({
-        debtorId, amount, currency: normalizeCurrencyCode(paymentCurrency || detail?.defaultCurrency || "EGP"), method, receivedOn,
+        debtorId, amount: amount.trim(), currency: normalizeCurrencyCode(paymentCurrency || detail?.defaultCurrency || tenantCurrency), method, receivedOn,
         allocations: allocations.length > 0 ? allocations : undefined,
       });
       setAmount(""); setAlloc({});
-      setMsg(tp("saved"));
+      setMsg({ text: tp("saved") });
       await load();
-    } catch { setMsg(tp("failed")); } finally { setBusy(false); }
+    } catch (err: unknown) {
+      setMsg({ text: err instanceof Error && err.message ? err.message : tp("failed"), isError: true });
+    } finally { setBusy(false); }
   }
 
   async function onToggleReminders(enabled: boolean) {
-    setBusy(true); setMsg(null);
+    setBusy(true); setActionError(null);
     try {
       await trpc.debtors.toggleReminders.mutate({ id: debtorId, enabled });
-      setMsg(enabled
-        ? (isAr ? "تم إعادة تفعيل التذكيرات التلقائية لهذا العميل بنجاح." : "Automatic reminders re-enabled successfully.")
-        : (isAr ? "تم إيقاف التذكيرات التلقائية لهذا العميل." : "Automatic reminders paused for this customer.")
-      );
+      setMsg({
+        text: enabled
+          ? (isAr ? "تم إعادة تفعيل التذكيرات التلقائية لهذا العميل بنجاح." : "Automatic reminders re-enabled successfully.")
+          : (isAr ? "تم إيقاف التذكيرات التلقائية لهذا العميل." : "Automatic reminders paused for this customer."),
+      });
       await load();
-    } catch {
-      setMsg(isAr ? "تعذّر تعديل حالة التذكيرات" : "Failed to update reminder status");
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : (isAr ? "تعذّر تعديل حالة التذكيرات" : "Failed to update reminder status"));
     } finally {
       setBusy(false);
     }
@@ -204,62 +216,69 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   }
 
   async function onCreateStatement() {
-    setGwMsg(null); setCopiedUrl(false);
+    if (stmtBusy) return;
+    setStmtBusy(true); setStmtMsg(null); setCopiedUrl(false);
     try {
       const created = await trpc.statements.create.mutate({ debtorId }) as { path: string };
       setNewStatementUrl(`${window.location.origin}${created.path}`);
       await load();
-    } catch { setGwMsg(ts("failed")); }
+    } catch (err: unknown) {
+      setStmtMsg({ text: err instanceof Error && err.message ? err.message : ts("failed"), isError: true });
+    } finally { setStmtBusy(false); }
   }
 
   async function onRevokeStatement(linkId: string) {
-    setBusy(true); setActionError(null);
+    setBusy(true); setStmtMsg(null);
     try {
       await trpc.statements.revoke.mutate({ linkId });
       await load();
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : (isAr ? "تعذّر إلغاء رابط كشف الحساب" : "Failed to revoke statement link"));
+      setStmtMsg({ text: err instanceof Error ? err.message : (isAr ? "تعذّر إلغاء رابط كشف الحساب" : "Failed to revoke statement link"), isError: true });
     } finally { setBusy(false); }
   }
 
   async function onResolveDispute(disputeId: string, resolution: "reopen_invoice" | "cancel_invoice") {
-    setBusy(true); setGwMsg(null);
+    setBusy(true); setStmtMsg(null);
     try {
       await trpc.statements.resolveDispute.mutate({ disputeId, resolution });
-      setGwMsg(
-        resolution === "reopen_invoice"
+      setStmtMsg({
+        text: resolution === "reopen_invoice"
           ? (isAr ? "تم حسم الاعتراض وإعادة تفعيل الفاتورة والتذكيرات." : "Dispute resolved and invoice reopened.")
-          : (isAr ? "تم قبول الاعتراض وإلغاء المطالبة." : "Dispute accepted and invoice cancelled.")
-      );
+          : (isAr ? "تم قبول الاعتراض وإلغاء المطالبة." : "Dispute accepted and invoice cancelled."),
+      });
       await load();
-    } catch {
-      setGwMsg(isAr ? "تعذّر تحديث حالة الاعتراض" : "Could not resolve dispute");
+    } catch (err: unknown) {
+      setStmtMsg({ text: err instanceof Error ? err.message : (isAr ? "تعذّر تحديث حالة الاعتراض" : "Could not resolve dispute"), isError: true });
     } finally {
       setBusy(false);
     }
   }
 
   async function onCreateGatewayLink(invoiceId?: string) {
-    setGwMsg(null);
+    if (gwBusy) return;
+    setGwBusy(true); setGwMsg(null);
     try {
       await trpc.payments.createLink.mutate(invoiceId ? { debtorId, invoiceId } : { debtorId });
-      setGwMsg(tg("linkCreated"));
+      setGwMsg({ text: tg("linkCreated") });
       await load();
     } catch (err: unknown) {
-      setGwMsg((err instanceof Error ? err.message : null) || tg("failed"));
-    }
+      setGwMsg({ text: (err instanceof Error ? err.message : null) || tg("failed"), isError: true });
+    } finally { setGwBusy(false); }
   }
 
   async function onRefund(paymentId: string, customAmount?: string) {
-    setGwMsg(null);
+    if (gwBusy) return;
+    setGwBusy(true); setGwMsg(null);
     try {
       const trimmed = customAmount?.trim();
       await trpc.payments.refund.mutate(trimmed ? { paymentId, amount: trimmed } : { paymentId });
-      setGwMsg(tg("refunded"));
+      setGwMsg({ text: tg("refunded") });
       setRefundForId(null);
       setRefundAmount("");
       await load();
-    } catch { setGwMsg(tg("refundFailed")); }
+    } catch (err: unknown) {
+      setGwMsg({ text: err instanceof Error && err.message ? err.message : tg("refundFailed"), isError: true });
+    } finally { setGwBusy(false); }
   }
 
   async function onConfirmClaim(paymentId: string) {
@@ -284,21 +303,26 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
 
   if (loadError) {
     return (
-      <div className="panel-shadow flex flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-8 text-center">
+      <div role="alert" className="panel-shadow flex flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-8 text-center">
         <WarningCircle size={40} className="text-status-overdue-fg" />
-        <p className="font-bold text-text">{locale === "en" ? "Debtor not found or has been deleted" : "العميل غير موجود أو تم حذفه"}</p>
-        <button
-          type="button"
-          onClick={() => router.push(`/${locale}/debtors`)}
-          className={btnPrimary}
-        >
-          {locale === "en" ? "Return to Debtors" : "العودة إلى قائمة العملاء"}
-        </button>
+        <p className="font-bold text-text">{loadError}</p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <button type="button" onClick={() => void load()} className={btnGhost}>
+            {isAr ? "إعادة المحاولة" : "Retry"}
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push(`/${locale}/debtors`)}
+            className={btnPrimary}
+          >
+            {isAr ? "العودة إلى قائمة العملاء" : "Return to Debtors"}
+          </button>
+        </div>
       </div>
     );
   }
 
-  if (!detail) return <p className="text-text-muted">…</p>;
+  if (!detail) return <LoadingState isAr={isAr} />;
   const allOpenInvoices = detail.invoices.filter((i) =>
     (i.status === "open" || i.status === "partially_paid") && BigInt(i.outstandingMinor) > 0n,
   );
@@ -313,7 +337,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
   ])];
   const selectedPaymentCurrency = paymentCurrencies.includes(paymentCurrency)
     ? paymentCurrency
-    : (allOpenInvoices[0]?.currency ?? detail.creditCurrency ?? detail.defaultCurrency ?? "EGP");
+    : (allOpenInvoices[0]?.currency ?? detail.creditCurrency ?? detail.defaultCurrency ?? tenantCurrency);
   const openInvoices = allOpenInvoices.filter((i) => i.currency === selectedPaymentCurrency);
   const selectedOutstandingMinor = detail.outstandingByCurrency?.find((b) => b.currency === selectedPaymentCurrency)?.minor ?? "0";
   const hasBalance = BigInt(selectedOutstandingMinor) > 0n;
@@ -460,7 +484,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               <PencilSimple size={17} aria-hidden />
               {tc.has("edit") ? tc("edit") : (isAr ? "تعديل" : "Edit")}
             </button>
-            <button data-testid="debtor-delete" onClick={() => void onDelete()} className={cn(buttonVariants({ variant: "outline", size: "default" }), "border-status-overdue-fg/40 text-status-overdue-fg")}>
+            <button type="button" data-testid="debtor-delete" disabled={busy} onClick={() => void onDelete()} className={cn(buttonVariants({ variant: "outline", size: "default" }), "border-status-overdue-fg/40 text-status-overdue-fg")}>
               <Trash size={17} aria-hidden />
               {t("delete")}
             </button>
@@ -471,18 +495,23 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
           <div className="flex flex-col gap-3 border-t border-border bg-callout p-5 sm:px-6">
             <div className="grid gap-3 sm:grid-cols-2">
               <label className={labelCls}><span>{t("name")}</span>
-                <input className={inputCls} value={editName} onChange={(e) => setEditName(e.target.value)} /></label>
+                <input className={inputCls} value={editName} onChange={(e) => setEditName(e.target.value)} maxLength={160} required /></label>
               <label className={labelCls}><span>{t("notes")}</span>
-                <input className={inputCls} value={editNotes} onChange={(e) => setEditNotes(e.target.value)} /></label>
+                <input className={inputCls} value={editNotes} onChange={(e) => setEditNotes(e.target.value)} maxLength={2000} /></label>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <label className="flex items-center gap-2 text-sm font-semibold">
                 <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={editRisk} onChange={(e) => setEditRisk(e.target.checked)} />
                 <span>{locale === "ar" ? "علامة مخاطرة ائتمانية (شيك مرتد / تأخر متكرر)" : "Credit Risk Flag (Bounced Cheque / Chronic Late Payer)"}</span>
               </label>
-              <button type="button" disabled={busy} onClick={() => void onSaveDebtor()} className={btnPrimary}>
-                <Check size={16} strokeWidth={2.5} aria-hidden /> {tc("save")}
-              </button>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setEditingDebtor(false)} className={btnGhost}>
+                  {isAr ? "إلغاء" : "Cancel"}
+                </button>
+                <button type="button" disabled={busy || editName.trim().length === 0} onClick={() => void onSaveDebtor()} className={btnPrimary}>
+                  <Check size={16} strokeWidth={2.5} aria-hidden /> {tc("save")}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -569,7 +598,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               ))}
             </ul>
           )}
-          {msg && <p role="status" data-testid="pay-msg" className="text-sm font-semibold text-primary">{msg}</p>}
+          {msg && <p role={msg.isError ? "alert" : "status"} data-testid="pay-msg" className={cn("text-sm font-semibold", msg.isError ? "text-status-overdue-fg" : "text-primary")}>{msg.text}</p>}
           <div>
             <button data-testid="pay-submit" disabled={busy || amount.trim() === ""} className={btnPrimary}>{tp("record")}</button>
           </div>
@@ -578,16 +607,17 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
 
       <Panel title={tg("title")} icon={LinkSimple}>
         <div className="flex flex-col gap-4">
-          {gwMsg && <p role="status" data-testid="gw-msg" className="text-sm font-semibold text-primary">{gwMsg}</p>}
+          {gwMsg && <p role={gwMsg.isError ? "alert" : "status"} data-testid="gw-msg" className={cn("text-sm font-semibold", gwMsg.isError ? "text-status-overdue-fg" : "text-primary")}>{gwMsg.text}</p>}
           <div>
             <button
+              type="button"
               data-testid="gw-create-total"
-              disabled={openInvoices.length === 0}
+              disabled={gwBusy || allOpenInvoices.length === 0}
               onClick={() => void onCreateGatewayLink()}
               className={btnPrimary}
             >
               <LinkSimple size={17} aria-hidden />
-              {tg("createTotalLink")}
+              {gwBusy ? (isAr ? "جارٍ الإنشاء..." : "Creating...") : tg("createTotalLink")}
             </button>
           </div>
           {paymentLinks.length > 0 && (
@@ -600,7 +630,24 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                     <span data-testid="gw-link-simulated" className="rounded bg-status-due-bg px-2.5 py-0.5 text-xs font-bold text-status-due-fg">{tg("simulated")}</span>
                   )}
                   <span className="text-text-muted">{tg("expires")}: <span dir="ltr">{l.expiresAt.slice(0, 16).replace("T", " ")}</span></span>
-                  <a data-testid="gw-link-open" href={l.checkoutUrl} target="_blank" rel="noreferrer" className={`${linkAction} ms-auto`}>{tg("openLink")}</a>
+                  <div className="ms-auto flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void copyTextSafe(l.checkoutUrl).then((ok) => {
+                          if (ok) {
+                            setCopiedLinkId(l.id);
+                            setTimeout(() => setCopiedLinkId((cur) => (cur === l.id ? null : cur)), 2000);
+                          }
+                        });
+                      }}
+                      className={btnSmall}
+                    >
+                      <Copy size={13} aria-hidden />
+                      {copiedLinkId === l.id ? ts("copied") : ts("copy")}
+                    </button>
+                    <a data-testid="gw-link-open" href={l.checkoutUrl} target="_blank" rel="noreferrer" className={linkAction}>{tg("openLink")}</a>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -629,10 +676,11 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
 
       <Panel title={ts("title")} icon={FileText}>
         <div className="flex flex-col gap-4">
+          {stmtMsg && <p role={stmtMsg.isError ? "alert" : "status"} className={cn("text-sm font-semibold", stmtMsg.isError ? "text-status-overdue-fg" : "text-primary")}>{stmtMsg.text}</p>}
           <div>
-            <button data-testid="stmt-create" onClick={() => void onCreateStatement()} className={btnGhost}>
+            <button type="button" data-testid="stmt-create" disabled={stmtBusy} onClick={() => void onCreateStatement()} className={btnGhost}>
               <FileText size={17} aria-hidden />
-              {ts("create")}
+              {stmtBusy ? (isAr ? "جارٍ الإنشاء..." : "Creating...") : ts("create")}
             </button>
           </div>
           {newStatementUrl && (
@@ -641,8 +689,9 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               <p className="break-all rounded-lg bg-surface px-3 py-2 text-sm font-medium" dir="ltr">{newStatementUrl}</p>
               <div className="flex items-center gap-3">
                 <button
+                  type="button"
                   data-testid="stmt-copy"
-                  onClick={() => { copyTextSafe(newStatementUrl); setCopiedUrl(true); }}
+                  onClick={() => { void copyTextSafe(newStatementUrl).then((ok) => { if (ok) setCopiedUrl(true); }); }}
                   className={btnPrimary}
                 >
                   {copiedUrl ? ts("copied") : ts("copy")}
@@ -659,7 +708,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                   <span className="text-text-muted">{ts("expiresAt")}: <span dir="ltr">{l.expiresAt.slice(0, 10)}</span></span>
                   <span className="text-text-muted">{ts("lastViewed")}: {l.lastViewedAt ? <span dir="ltr">{l.lastViewedAt.slice(0, 10)}</span> : ts("neverViewed")}</span>
                   {l.state === "valid" && (
-                    <button data-testid="stmt-revoke" onClick={() => void onRevokeStatement(l.id)} className={`${linkAction} ms-auto`}>{ts("revoke")}</button>
+                    <button type="button" data-testid="stmt-revoke" disabled={busy} onClick={() => void onRevokeStatement(l.id)} className={`${linkAction} ms-auto`}>{ts("revoke")}</button>
                   )}
                 </li>
               ))}
@@ -719,7 +768,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               {i.currencyWarning && <p className="text-sm font-semibold text-status-due-fg">{ti("currencyWarning")}</p>}
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 {(i.status === "open" || i.status === "partially_paid") && (
-                  <button data-testid="gw-create-invoice" onClick={() => void onCreateGatewayLink(i.id)} className={linkAction}>
+                  <button type="button" data-testid="gw-create-invoice" disabled={gwBusy} onClick={() => void onCreateGatewayLink(i.id)} className={linkAction}>
                     {tg("createInvoiceLink")}
                   </button>
                 )}
@@ -756,13 +805,13 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                 <span className="ms-auto flex items-center gap-3">
                   {p.status === "claimed" && (
                     <>
-                      <button data-testid="claim-confirm" onClick={() => void onConfirmClaim(p.id)} className={linkAction}>{tg("confirm")}</button>
-                      <button data-testid="claim-reject" onClick={() => void onRejectClaim(p.id)} className={linkAction}>{tg("reject")}</button>
+                      <button type="button" data-testid="claim-confirm" disabled={busy} onClick={() => void onConfirmClaim(p.id)} className={linkAction}>{tg("confirm")}</button>
+                      <button type="button" data-testid="claim-reject" disabled={busy} onClick={() => void onRejectClaim(p.id)} className={linkAction}>{tg("reject")}</button>
                     </>
                   )}
                   {p.status === "confirmed" && p.source === "gateway" && !p.reversalOf && BigInt(p.amountMinor) > 0n && (
                     <>
-                      <button data-testid="gw-refund" onClick={() => void onRefund(p.id)} className={linkAction}>{tg("refund")}</button>
+                      <button type="button" data-testid="gw-refund" disabled={gwBusy} onClick={() => void onRefund(p.id)} className={linkAction}>{tg("refund")}</button>
                       <button
                         type="button"
                         onClick={() => { setRefundForId(refundForId === p.id ? null : p.id); setRefundAmount(""); }}
@@ -784,7 +833,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                     value={refundAmount}
                     onChange={(e) => setRefundAmount(e.target.value)}
                   />
-                  <button type="button" onClick={() => void onRefund(p.id, refundAmount)} className={btnSmall}>
+                  <button type="button" disabled={gwBusy || refundAmount.trim() === ""} onClick={() => void onRefund(p.id, refundAmount)} className={btnSmall}>
                     {tg("refund")}
                   </button>
                 </div>

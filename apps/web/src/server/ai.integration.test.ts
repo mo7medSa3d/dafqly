@@ -363,8 +363,7 @@ d("M4 AI services (F6/F7/F8)", () => {
 
   it("F8: a promise records the promise and moves the next reminder to promised_date + 1", async () => {
     const debtor = await createDebtor(app(), tenantA, user.id, { displayName: "واعد", phone: "01044440000" });
-    const inv = await createInvoice(app(), tenantA, user.id, { debtorId: debtor.id, amount: "900.00", issuedOn: "2026-11-09", dueOn: "2026-11-20" });
-    void inv;
+    await createInvoice(app(), tenantA, user.id, { debtorId: debtor.id, amount: "900.00", issuedOn: "2026-11-09", dueOn: "2026-11-20" });
     // M5 race fix (setup only, assertions unchanged): createInvoice fires
     // the async planner (replanLater), whose single-transaction insert of
     // all steps used to lose the race against the fixture insert below on

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import {
   AppError, actionForIntent, canTransition, formatMoney, isOptOutText, localDateOf, normalizeCurrencyCode,
   nextAllowedSlot, resolveRelativeDate, zonedTimeToUtc, addDaysIso,
@@ -137,12 +137,7 @@ export async function processInboundReply(
       );
       if (future.length > 0) {
         await tx.update(reminders).set({ dueAt: target, updatedAt: now }).where(eq(reminders.id, future[0]!.id));
-      }
-    }
-    if (action === "replan_after_promise" && promisedDate) {
-      const futureCount = await tx.select({ id: reminders.id }).from(reminders)
-        .where(and(eq(reminders.debtorId, debtor.id), eq(reminders.status, "scheduled")));
-      if (futureCount.length === 0) {
+      } else {
         const notBefore = zonedTimeToUtc(addDaysIso(promisedDate, 1), "00:00", setup.tenant.timezone);
         for (const inv of setup.openInvoices) {
           await planForInvoice(deps.engine, tenantId, inv.id, now, { notBefore }).catch(() => undefined);
@@ -227,8 +222,14 @@ export async function recordPendingReceiptIntent(
 /** The AI inbox: classifications that need a human (plus pending receipt images). */
 export async function listIntents(app: Db, tenantId: string, opts: { onlyHuman?: boolean } = {}) {
   return withTenant(app, tenantId, async (tx) => {
-    let rows = await tx.select().from(messageIntents).orderBy(desc(messageIntents.createdAt)).limit(100);
-    if (opts.onlyHuman) rows = rows.filter((r) => r.resolvedBy === "human");
+    const whereClause = opts.onlyHuman
+      ? and(
+          eq(messageIntents.tenantId, tenantId),
+          eq(messageIntents.resolvedBy, "human"),
+          or(isNull(messageIntents.actionTaken), inArray(messageIntents.actionTaken, ["human_inbox", "merchant_approval"])),
+        )
+      : eq(messageIntents.tenantId, tenantId);
+    const rows = await tx.select().from(messageIntents).where(whereClause).orderBy(desc(messageIntents.createdAt)).limit(100);
     if (rows.length === 0) return [];
 
     const messageIds = Array.from(new Set(rows.map((r) => r.messageId).filter(Boolean)));
@@ -265,12 +266,13 @@ export async function resolveMessageIntent(
   intentId: string, decision: string,
 ) {
   return withTenant(app, tenantId, async (tx) => {
-    const [intent] = await tx.select().from(messageIntents).where(eq(messageIntents.id, intentId));
+    const [intent] = await tx.select().from(messageIntents)
+      .where(and(eq(messageIntents.id, intentId), eq(messageIntents.tenantId, tenantId)));
     if (!intent) throw new AppError("NOT_FOUND", "Message intent not found", 404);
     await tx.update(messageIntents).set({
       actionTaken: decision,
       resolvedBy: "human",
-    }).where(eq(messageIntents.id, intentId));
+    }).where(and(eq(messageIntents.id, intentId), eq(messageIntents.tenantId, tenantId)));
     await audit(tx, tenantId, "message_intent.resolved", "message_intent", intentId, { decision, actor });
     return { ok: true, intentId, decision };
   });

@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowsClockwise, Bell, BellRinging, CheckCircle, Checks, Sparkle, Warning, WarningCircle, X } from "@/components/ui/solid-icons";
+import { ArrowsClockwise, Bell, BellRinging, CheckCircle, Checks, Sparkle, Warning, WarningCircle, X, type LucideIcon } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 
 interface NotificationItem {
@@ -35,30 +35,12 @@ function formatRelativeTime(iso: string, isEn: boolean): string {
   return isEn ? `${days}d ago` : `منذ ${days} ي`;
 }
 
-function severityStyles(severity: NotificationItem["severity"]) {
-  switch (severity) {
-    case "urgent":
-      return {
-        box: "bg-status-overdue-bg text-status-overdue-fg",
-        Icon: WarningCircle,
-      };
-    case "warning":
-      return {
-        box: "bg-status-due-bg text-status-due-fg",
-        Icon: Warning,
-      };
-    case "success":
-      return {
-        box: "bg-status-paid-bg text-status-paid-fg",
-        Icon: CheckCircle,
-      };
-    default:
-      return {
-        box: "bg-callout text-primary",
-        Icon: Sparkle,
-      };
-  }
-}
+const SEVERITY_STYLE: Record<NotificationItem["severity"], { box: string; Icon: LucideIcon }> = {
+  urgent: { box: "bg-status-overdue-bg text-status-overdue-fg", Icon: WarningCircle },
+  warning: { box: "bg-status-due-bg text-status-due-fg", Icon: Warning },
+  success: { box: "bg-status-paid-bg text-status-paid-fg", Icon: CheckCircle },
+  info: { box: "bg-callout text-primary", Icon: Sparkle },
+};
 
 export function NotificationBell({ locale }: { locale: string }) {
   const isEn = locale === "en";
@@ -71,16 +53,18 @@ export function NotificationBell({ locale }: { locale: string }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [urgentCount, setUrgentCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  
+
   const fetchList = useCallback(async () => {
     try {
       const res = await trpc.notifications.list.query({ limit: 30 });
       setItems(res.items as NotificationItem[]);
       setUnreadCount(res.unreadCount);
       setUrgentCount(res.urgentCount);
+      setFetchError(false);
     } catch {
-      // Fail silently in background poll so shell stays resilient
+      setFetchError(true);
     } finally {
       setLoading(false);
     }
@@ -92,16 +76,15 @@ export function NotificationBell({ locale }: { locale: string }) {
       await trpc.notifications.sync.mutate();
       await fetchList();
     } catch {
-      // Ignore transient network errors
+      setFetchError(true);
     } finally {
       setSyncing(false);
     }
   }, [fetchList]);
 
-  // Initial load + 60s refresh when visible
+  // Initial load, 60s refresh when visible, and live refresh on workspace mutations
   useEffect(() => {
-    let active = true;
-    if (active) void fetchList();
+    void fetchList();
 
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") {
@@ -109,9 +92,14 @@ export function NotificationBell({ locale }: { locale: string }) {
       }
     }, 60_000);
 
+    const onMutated = () => {
+      void fetchList();
+    };
+    window.addEventListener("dafqly:data-mutated", onMutated);
+
     return () => {
-      active = false;
       window.clearInterval(timer);
+      window.removeEventListener("dafqly:data-mutated", onMutated);
     };
   }, [fetchList]);
 
@@ -141,12 +129,17 @@ export function NotificationBell({ locale }: { locale: string }) {
   }, [items, filter]);
 
   const handleMarkRead = async (id: string) => {
+    const target = items.find((item) => item.id === id);
+    if (!target || target.readAt) return;
+
+    const nowIso = new Date().toISOString();
     setItems((prev) =>
-      prev.map((item) =>
-        item.id === id && !item.readAt ? { ...item, readAt: new Date().toISOString() } : item,
-      ),
+      prev.map((item) => (item.id === id && !item.readAt ? { ...item, readAt: nowIso } : item)),
     );
     setUnreadCount((c) => Math.max(0, c - 1));
+    if (target.severity === "urgent") {
+      setUrgentCount((c) => Math.max(0, c - 1));
+    }
     try {
       await trpc.notifications.markRead.mutate({ id });
     } catch {
@@ -180,15 +173,16 @@ export function NotificationBell({ locale }: { locale: string }) {
     }
   };
 
-  const handleItemClick = async (item: NotificationItem) => {
+  const handleItemClick = (item: NotificationItem) => {
     if (!item.readAt) {
-      await handleMarkRead(item.id);
+      void handleMarkRead(item.id);
     }
     setOpen(false);
     if (item.actionUrl) {
-      const normalized = item.actionUrl.startsWith(`/${locale}/`)
-        ? item.actionUrl
-        : `/${locale}${item.actionUrl.startsWith("/") ? item.actionUrl : `/${item.actionUrl}`}`;
+      const normalized =
+        item.actionUrl === `/${locale}` || item.actionUrl.startsWith(`/${locale}/`)
+          ? item.actionUrl
+          : `/${locale}${item.actionUrl.startsWith("/") ? item.actionUrl : `/${item.actionUrl}`}`;
       router.push(normalized);
     }
   };
@@ -210,10 +204,16 @@ export function NotificationBell({ locale }: { locale: string }) {
       <button
         type="button"
         data-testid="notification-bell-btn"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => {
+            const next = !v;
+            if (next) void fetchList();
+            return next;
+          });
+        }}
         aria-label={bellLabel}
         aria-expanded={open}
-        className={cn(buttonVariants({ variant: open ? "soft" : "outline", size: "icon" }), "relative size-9", !(open) && "text-text-muted hover:border-border")}
+        className={cn(buttonVariants({ variant: open ? "soft" : "outline", size: "icon" }), "relative size-9", !open && "text-text-muted hover:border-border")}
       >
         {unreadCount > 0 ? (
           <BellRinging size={17} aria-hidden className={urgentCount > 0 ? "text-status-overdue-fg" : "text-primary"} />
@@ -223,11 +223,11 @@ export function NotificationBell({ locale }: { locale: string }) {
         {unreadCount > 0 && (
           <span
             data-testid="notification-unread-badge"
-            className={`absolute -top-1 ${isEn ? "-right-1" : "-left-1"} flex min-w-[18px] items-center justify-center rounded px-1 py-0.5 text-[10px] font-bold leading-none text-primary-fg ${
+            className={`absolute -top-1 -end-1 flex min-w-[18px] items-center justify-center rounded px-1 py-0.5 text-[10px] font-bold leading-none text-primary-fg ${
               urgentCount > 0 ? "bg-danger" : "bg-primary"
             }`}
           >
-            {unreadCount > 9 ? "9+" : unreadCount}
+            {badge}
           </span>
         )}
       </button>
@@ -237,9 +237,7 @@ export function NotificationBell({ locale }: { locale: string }) {
           role="dialog"
           aria-label={isEn ? "Workspace Notifications" : "إشعارات مساحة العمل"}
           data-testid="notification-popover"
-          className={`absolute top-11 z-50 w-[min(92vw,390px)] overflow-hidden rounded-xl border border-border bg-surface panel-shadow ${
-            isEn ? "right-0" : "left-0"
-          }`}
+          className="absolute top-11 end-0 z-50 w-[min(92vw,390px)] overflow-hidden rounded-xl border border-border bg-surface panel-shadow"
         >
           {/* Header */}
           <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
@@ -294,7 +292,7 @@ export function NotificationBell({ locale }: { locale: string }) {
                 key={tab.id}
                 type="button"
                 onClick={() => setFilter(tab.id)}
-                className={cn(buttonVariants({ variant: filter === tab.id ? "default" : "ghost", size: "sm" }), !(filter === tab.id) && "text-text-muted")}
+                className={cn(buttonVariants({ variant: filter === tab.id ? "default" : "ghost", size: "sm" }), filter !== tab.id && "text-text-muted")}
               >
                 {isEn ? tab.labelEn : tab.labelAr}
               </button>
@@ -306,6 +304,19 @@ export function NotificationBell({ locale }: { locale: string }) {
             {loading ? (
               <div className="px-4 py-8 text-center text-xs text-text-muted">
                 {isEn ? "Loading notifications..." : "جاري تحميل الإشعارات..."}
+              </div>
+            ) : fetchError && filteredItems.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 px-6 py-8 text-center">
+                <p className="text-xs font-semibold text-danger">
+                  {isEn ? "Could not load notifications." : "تعذر تحميل الإشعارات."}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void fetchList()}
+                  className={cn(buttonVariants({ variant: "outline", size: "xs" }))}
+                >
+                  {isEn ? "Retry" : "إعادة المحاولة"}
+                </button>
               </div>
             ) : filteredItems.length === 0 ? (
               <div className="flex flex-col items-center gap-2 px-6 py-9 text-center">
@@ -323,13 +334,21 @@ export function NotificationBell({ locale }: { locale: string }) {
               </div>
             ) : (
               filteredItems.map((item) => {
-                const { box, Icon } = severityStyles(item.severity);
+                const { box, Icon } = SEVERITY_STYLE[item.severity] ?? SEVERITY_STYLE.info;
                 const unread = !item.readAt;
                 return (
                   <div
                     key={item.id}
-                    onClick={() => void handleItemClick(item)}
-                    className={`group flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-surface-muted/60 ${
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleItemClick(item)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleItemClick(item);
+                      }
+                    }}
+                    className={`group flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-surface-muted/60 focus:outline-none focus:bg-surface-muted/60 ${
                       unread ? "bg-callout/35" : ""
                     }`}
                   >
@@ -347,7 +366,10 @@ export function NotificationBell({ locale }: { locale: string }) {
                             type="button"
                             onClick={(e) => void handleDismiss(e, item.id, unread, item.severity === "urgent")}
                             aria-label={isEn ? "Dismiss" : "إخفاء"}
-                            className={cn(buttonVariants({ variant: "ghost", size: "iconSm" }), "size-6 text-text-subtle opacity-0 group-hover:opacity-100")}
+                            className={cn(
+                              buttonVariants({ variant: "ghost", size: "iconSm" }),
+                              "size-6 text-text-subtle opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 focus:opacity-100",
+                            )}
                           >
                             <X size={12} aria-hidden />
                           </button>

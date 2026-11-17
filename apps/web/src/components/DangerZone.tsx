@@ -15,23 +15,33 @@ export function DangerZone() {
 
   async function exportAll() {
     setBusy(true);
+    setError(null);
     try {
       const out = await trpc.tenantData.export.query();
       const url = URL.createObjectURL(new Blob([out.json], { type: "application/json;charset=utf-8" }));
       const a = document.createElement("a");
-      a.href = url; a.download = out.filename; a.click();
-      URL.revokeObjectURL(url);
-    } finally { setBusy(false); }
+      a.href = url;
+      a.download = out.filename;
+      a.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function deleteAll() {
-    setBusy(true); setError(null);
+    setBusy(true);
+    setError(null);
     try {
       await trpc.tenantData.deleteAll.mutate({ confirmation });
       setDone(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "error");
-    } finally { setBusy(false); }
+      setError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -51,10 +61,19 @@ export function DangerZone() {
       </div>
       <div className="flex flex-col gap-2.5 border-t border-border pt-4">
         <p className="text-xs text-text-muted">{t("deleteHint")}</p>
-        <input data-testid="delete-confirmation" value={confirmation} onChange={(e) => setConfirmation(e.target.value)}
-          placeholder={t("deleteConfirmPlaceholder")} className={inputCls} />
-        <button data-testid="delete-all" disabled={busy || confirmation.length === 0} onClick={() => void deleteAll()}
-          className={`${btnDanger} w-full`}>
+        <input
+          data-testid="delete-confirmation"
+          value={confirmation}
+          onChange={(e) => setConfirmation(e.target.value)}
+          placeholder={t("deleteConfirmPlaceholder")}
+          className={inputCls}
+        />
+        <button
+          data-testid="delete-all"
+          disabled={busy || confirmation.trim().length === 0}
+          onClick={() => void deleteAll()}
+          className={`${btnDanger} w-full`}
+        >
           <Trash size={17} aria-hidden />
           {t("deleteAll")}
         </button>

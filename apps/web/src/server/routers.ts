@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+import { and, desc, eq } from "drizzle-orm";
 import { decodeCursor, encodeCursor, type InvoiceStatus } from "@tahseel/core";
 import { decodeBase64Upload, MAX_UPLOAD_BASE64_CHARS } from "@tahseel/core/files-crypto";
-import { applyOptOut, resumeReminders } from "@tahseel/reminders";
+import { debtors, invoices, reminders, withTenant } from "@tahseel/db";
+import { applyOptOut, dispatchDue, planForTenant, resumeReminders } from "@tahseel/reminders";
 import { router, publicProcedure, protectedProcedure, tenantProcedure, ownerProcedure } from "./trpc";
 import { withAiTenantContext } from "./ai-budget";
 import { auth } from "./auth";
@@ -17,7 +19,7 @@ import { createImportPreview, createImportPreviewInput, updateImportMapping, get
 import {
   createGatewayLink, createGatewayLinkInput, listPaymentLinks, refundGatewayPayment, refundInput,
   confirmClaimedPayment, rejectClaimedPayment, confirmRefundIntent, rejectRefundIntent,
-  getReconciliation, gatewayDeps,
+  getReconciliation, gatewayDeps, paymentProviderFromEnv, realGatewayConfigured,
 } from "./gateway";
 import {
   createStatementLink, listStatementLinks, revokeStatementLink,
@@ -38,7 +40,6 @@ import {
 import { exportTenantData, deleteTenantData } from "./tenant-data";
 import { createTaskInput, updateTaskInput, createPromiseInput, listTeamMembers, listCollectionTasks, createCollectionTask, updateCollectionTask, listPromisesToPay, createMerchantPromise, decidePromiseToPay, listAiActionApprovals, decideAiActionApproval, getCollectionWorkspaceSummary } from "./workflows";
 import { FakePaymentProvider } from "@tahseel/providers";
-import { paymentProviderFromEnv, realGatewayConfigured } from "./gateway";
 import { globalSearch, listAuditTrail } from "./search";
 import {
   mapWorkspaceHeaders, mapHeadersInput,
@@ -108,6 +109,89 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => decidePromiseToPay(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input.status, ctx.tenantMeta.today)),
     summary: tenantProcedure.query(async ({ ctx }) => getCollectionWorkspaceSummary(ctx.appDb, ctx.tenantId, ctx.tenantMeta.today)),
   },
+  reminders: {
+    list: tenantProcedure
+      .input(z.object({
+        status: z.enum(["scheduled", "sent", "skipped", "failed", "cancelled"]).optional(),
+      }).optional())
+      .query(async ({ ctx, input }) => {
+        return withTenant(ctx.appDb, ctx.tenantId, async (tx) => {
+          const rows = await tx.select({
+            id: reminders.id,
+            debtorId: reminders.debtorId,
+            debtorName: debtors.displayName,
+            invoiceId: reminders.invoiceId,
+            invoiceRef: invoices.reference,
+            amountMinor: invoices.amountMinor,
+            currency: invoices.currency,
+            channel: reminders.channel,
+            templateKey: reminders.templateKey,
+            status: reminders.status,
+            dueAt: reminders.dueAt,
+            updatedAt: reminders.updatedAt,
+            skipReason: reminders.skipReason,
+            lastErrorCode: reminders.lastErrorCode,
+          })
+            .from(reminders)
+            .innerJoin(debtors, eq(debtors.id, reminders.debtorId))
+            .innerJoin(invoices, eq(invoices.id, reminders.invoiceId))
+            .where(and(
+              eq(reminders.tenantId, ctx.tenantId),
+              input?.status ? eq(reminders.status, input.status) : undefined,
+            ))
+            .orderBy(desc(reminders.dueAt), desc(reminders.createdAt))
+            .limit(500);
+          return rows.map((r) => ({
+            id: r.id,
+            debtorId: r.debtorId,
+            debtorName: r.debtorName,
+            invoiceId: r.invoiceId,
+            invoiceRef: r.invoiceRef,
+            amountMinor: r.amountMinor.toString(),
+            currency: r.currency,
+            channel: r.channel,
+            templateKey: r.templateKey,
+            status: r.status,
+            dueAt: r.dueAt.toISOString(),
+            sentAt: r.status === "sent" ? r.updatedAt.toISOString() : null,
+            skipReason: r.skipReason,
+            lastError: r.lastErrorCode !== null ? String(r.lastErrorCode) : null,
+          }));
+        });
+      }),
+    planNow: tenantProcedure.mutation(async ({ ctx }) => {
+      return planForTenant(engineDeps(), ctx.tenantId, new Date());
+    }),
+    dispatchNow: tenantProcedure.mutation(async ({ ctx }) => {
+      const s = await dispatchDue(engineDeps(), new Date(), { tenantId: ctx.tenantId });
+      return {
+        sent: s.remindersSent,
+        skipped: Object.values(s.skipped).reduce((acc, n) => acc + n, 0),
+        rescheduled: s.rescheduled,
+        retried: s.retried,
+        failed: s.failed,
+        paused: s.paused,
+        note: s.note,
+      };
+    }),
+    cancel: tenantProcedure
+      .input(z.object({ id: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        return withTenant(ctx.appDb, ctx.tenantId, async (tx) => {
+          const [updated] = await tx.update(reminders)
+            .set({ status: "cancelled", skipReason: "merchant_cancelled", updatedAt: new Date() })
+            .where(and(eq(reminders.id, input.id), eq(reminders.tenantId, ctx.tenantId), eq(reminders.status, "scheduled")))
+            .returning({ id: reminders.id });
+          if (!updated) {
+            const [existing] = await tx.select({ status: reminders.status }).from(reminders)
+              .where(and(eq(reminders.id, input.id), eq(reminders.tenantId, ctx.tenantId)));
+            if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Reminder not found" });
+            throw new TRPCError({ code: "CONFLICT", message: `Cannot cancel reminder with status ${existing.status}` });
+          }
+          return { ok: true, id: updated.id };
+        });
+      }),
+  },
   aiActions: {
     list: tenantProcedure.query(async ({ ctx }) => listAiActionApprovals(ctx.appDb, ctx.tenantId)),
     decide: ownerProcedure.input(z.object({ id: z.string().uuid(), decision: z.enum(["approve", "reject"]) }))
@@ -166,7 +250,7 @@ export const appRouter = router({
     update: tenantProcedure
       .input(z.object({
         id: z.string().uuid(), amount: z.string().optional(), description: z.string().nullable().optional(),
-        reference: z.string().nullable().optional(), dueOn: z.string().optional(), issuedOn: z.string().optional(),
+        reference: z.string().nullable().optional(), dueOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE").optional(), issuedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE").optional(),
       }))
       .mutation(async ({ ctx, input }) => updateInvoice(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input, ctx.tenantMeta.today)),
     transition: tenantProcedure

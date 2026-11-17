@@ -3,9 +3,9 @@ import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { formatEgp } from "@tahseel/core";
 import { ArrowUp, Buildings, Check, Crown, Gauge, Lightning, Receipt, ShieldCheck, Sparkle, WarningCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
+import { useCurrency } from "./CurrencyContext";
 import { Panel, StatusPill } from "./ui";
 
 interface Quota {
@@ -43,13 +43,16 @@ export function BillingClient({
 }) {
   const t = useTranslations("reports");
   const isAr = locale === "ar";
+  const { format: formatCurrency } = useCurrency();
   const [quota, setQuota] = useState<Quota | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [subInvoices, setSubInvoices] = useState<SubInvoice[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
+    setLoadError(null);
     try {
       const [q, p, invs] = await Promise.all([
         trpc.billing.quota.query(),
@@ -60,9 +63,9 @@ export function BillingClient({
       setPlans(p.plans as Plan[]);
       setSubInvoices(invs as SubInvoice[]);
     } catch {
-      /* ignore */
+      setLoadError(isAr ? "تعذّر تحميل بيانات الباقة والحصة." : "Failed to load billing and quota details.");
     }
-  }, []);
+  }, [isAr]);
 
   useEffect(() => {
     void load();
@@ -141,7 +144,7 @@ export function BillingClient({
                       <span className="text-xs font-bold text-text">{isAr ? p.nameAr : p.nameEn}</span>
                       <span className="text-[11px] text-text-muted">
                         {p.monthlyMessageQuota ?? "∞"} {t("perMonth")} ·{" "}
-                        <span className="tnum" dir="ltr">{formatEgp(BigInt(p.priceMinor))}</span>
+                        <span className="tnum" dir="ltr">{formatCurrency(BigInt(p.priceMinor))}</span>
                       </span>
                     </div>
                     {!isCurrent ? (
@@ -287,6 +290,40 @@ export function BillingClient({
 
       </div>
 
+      {loadError && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-danger/30 bg-danger-bg p-4 text-sm font-bold text-danger">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => void load()} className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}>
+            {isAr ? "إعادة المحاولة" : "Retry"}
+          </button>
+        </div>
+      )}
+
+      {/* Current Plan & Monthly Quota Summary */}
+      {quota && (
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-surface p-5">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <Gauge size={20} aria-hidden />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-text-muted">{t("currentPlan")}</p>
+              <p className="text-base font-extrabold text-text capitalize">{quota.planKey} · <span dir="ltr">{quota.month}</span></p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-extrabold text-text" dir="ltr">
+              <span className="tnum">{quota.used}</span> / <span className="tnum">{quota.quota ?? "∞"}</span>
+            </span>
+            {pct !== null && (
+              <span className="rounded-md bg-surface-muted px-2.5 py-1 text-xs font-bold text-primary tnum">
+                {pct}%
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Quota Banner if Warning/Exceeded */}
       {quota && quota.state !== "ok" && (
         <div
@@ -316,15 +353,15 @@ export function BillingClient({
         {tiers.map((tier) => {
           const planKey = tier.planKey;
           const isCurrent = quota?.planKey === planKey;
-          const rawPrice = tier.planObj ? Number(tier.planObj.priceMinor) : 0;
-          const isPaidPlan = rawPrice > 0;
+          const rawPrice = tier.planObj ? Number(tier.planObj.priceMinor) : (tier.key === "trial" ? 0 : 1);
+          const isPaidPlan = tier.planObj ? BigInt(tier.planObj.priceMinor) > 0n : tier.key !== "trial";
 
           return (
             <div
               key={tier.key}
               className={`relative flex flex-col justify-between rounded-xl p-6 sm:p-7 transition-all duration-300 ${
                 tier.highlighted
-                  ? "bg-surface ring-2 ring-primary dark:"
+                  ? "bg-surface ring-2 ring-primary"
                   : "bg-surface"
               }`}
             >
@@ -406,7 +443,7 @@ export function BillingClient({
                 {!isCurrent ? (
                   <button
                     data-testid={`upgrade-${planKey}`}
-                    disabled={busy || isPaidPlan}
+                    disabled={busy || !tier.planObj || isPaidPlan}
                     title={isPaidPlan ? (isAr ? "الأسعار النهائية لم تُعتمد بعد" : "Final pricing has not been decided yet") : undefined}
                     onClick={() => void upgrade(planKey)}
                     className={cn(buttonVariants({ variant: tier.highlighted ? "default" : "secondary", size: "sm" }), "w-full", tier.highlighted && "text-primary-foreground")}
@@ -460,8 +497,8 @@ export function BillingClient({
                     : (normPlan === "trial" ? "Trial Period" : normPlan === "starter" ? "Starter Plan" : normPlan === "growth" ? "Growth Plan" : normPlan === "pro" ? "Pro Plan" : inv.planKey);
                   const isFree = BigInt(inv.amountMinor) === 0n;
                   const formattedAmt = isFree
-                    ? (isAr ? "0.00 ج.م (مجاناً)" : "0.00 EGP (Free)")
-                    : `${formatEgp(BigInt(inv.amountMinor))} ${isAr ? "ج.م" : "EGP"}`;
+                    ? `${formatCurrency(0n)} (${isAr ? "مجاناً" : "Free"})`
+                    : formatCurrency(BigInt(inv.amountMinor));
                   const normStatus = (inv.status || "").toLowerCase();
                   const statusLabel = isAr
                     ? (normStatus === "paid" ? "تم السداد" : normStatus === "open" ? "معلقة" : inv.status)
@@ -477,7 +514,7 @@ export function BillingClient({
                         {formattedAmt}
                       </td>
                       <td className="px-4 py-3">
-                        <StatusPill status={inv.status === "paid" ? "paid" : "open"} label={statusLabel} />
+                        <StatusPill status={normStatus === "paid" ? "paid" : "open"} label={statusLabel} />
                       </td>
                     </tr>
                   );

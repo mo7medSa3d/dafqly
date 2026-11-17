@@ -419,10 +419,15 @@ export function resolveRelativeDate(text: string, todayIso: string, timezone: st
   void timezone;
   const t = normalizeDigits(text);
   if (/بعد\s+العيد/.test(t)) return { date: null, ambiguous: true };
-  const iso = t.match(/\b(\d{4}-\d{2}-\d{2})\b/);
-  if (iso) return { date: iso[1]!, ambiguous: false };
+  const isValidYmd = (y: number, m: number, d: number): boolean => {
+    if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+  };
+  const iso = t.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (iso && isValidYmd(+iso[1]!, +iso[2]!, +iso[3]!)) return { date: iso[0]!, ambiguous: false };
   const dmy = t.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
-  if (dmy) {
+  if (dmy && isValidYmd(+dmy[3]!, +dmy[2]!, +dmy[1]!)) {
     const date = `${dmy[3]}-${dmy[2]!.padStart(2, "0")}-${dmy[1]!.padStart(2, "0")}`;
     return { date, ambiguous: false };
   }
@@ -903,6 +908,7 @@ export interface GenerateSmartNotificationInput {
   reference?: string;
   tone?: NotificationTone;
   locale?: "ar" | "en";
+  timezone?: string;
   paymentLink?: string;
   channel?: "whatsapp" | "sms";
 }
@@ -1002,8 +1008,8 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
     }
   }
 
-  // Optimal dispatch window in Cairo timezone (10:00 AM - 12:00 PM business hours)
-  const suggestedSendTime = "10:30 AM (Africa/Cairo)";
+  const tz = input.timezone?.trim();
+  const suggestedSendTime = tz ? `10:30 AM (${tz})` : "10:30 AM";
 
   return {
     notificationText: text,

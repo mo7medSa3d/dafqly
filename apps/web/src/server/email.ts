@@ -1,4 +1,4 @@
-import nodemailer from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
 import { AppError } from "@tahseel/core";
 import { env } from "./env";
 
@@ -20,26 +20,22 @@ function safeEnv() {
 }
 
 export function resolveSmtpUrl(): string | undefined {
-  const e = safeEnv();
-  const nodeEnv = e?.NODE_ENV ?? process.env.NODE_ENV;
-  const explicitSmtp = nodeEnv === "test"
-    ? process.env.SMTP_URL
-    : (process.env.SMTP_URL ? (e?.SMTP_URL ?? process.env.SMTP_URL) : undefined);
-  if (explicitSmtp) return explicitSmtp;
+  const nodeEnv = process.env.NODE_ENV ?? safeEnv()?.NODE_ENV;
+  const rawSmtp = process.env.SMTP_URL;
+  if (rawSmtp !== undefined) {
+    return rawSmtp || undefined;
+  }
   if (nodeEnv === "production") return undefined;
+  const e = safeEnv();
   return e?.SMTP_URL ?? "smtp://localhost:1025";
 }
 
-const transportPool = new Map<string, nodemailer.Transporter>();
+const transportPool = new Map<string, Transporter>();
 
-function getPooledTransport(smtpUrl: string): nodemailer.Transporter {
+function getPooledTransport(smtpUrl: string): Transporter {
   let transport = transportPool.get(smtpUrl);
   if (!transport) {
-    transport = nodemailer.createTransport(smtpUrl, {
-      pool: true,
-      connectionTimeout: 10_000,
-      socketTimeout: 15_000,
-    });
+    transport = nodemailer.createTransport(smtpUrl);
     transportPool.set(smtpUrl, transport);
   }
   return transport;
@@ -62,7 +58,7 @@ export async function sendEmail(
   }
   const isOverride = Boolean(overrides.smtpUrl);
   const transport = isOverride
-    ? nodemailer.createTransport(smtpUrl, { connectionTimeout: 10_000, socketTimeout: 15_000 })
+    ? nodemailer.createTransport(smtpUrl)
     : getPooledTransport(smtpUrl);
   try {
     await transport.sendMail({

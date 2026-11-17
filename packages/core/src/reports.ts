@@ -1,4 +1,4 @@
-import { daysOverdue, isCollectibleStatus } from "./invoices";
+import { addDaysIso, daysOverdue, isCollectibleStatus } from "./invoices";
 
 /**
  * Dashboard KPIs and CSV export (BUILD_PLAN F11, ADR-023). Pure functions
@@ -35,10 +35,12 @@ import { daysOverdue, isCollectibleStatus } from "./invoices";
  * three different roundings of one number.)
  */
 export function formatPct(rateFraction: number): string {
-  return `${(rateFraction * 100).toFixed(1)}%`;
+  const safe = Number.isFinite(rateFraction) ? rateFraction : 0;
+  return `${(safe * 100).toFixed(1)}%`;
 }
 export function formatDso(days: number): string {
-  return days.toFixed(1);
+  const safe = Number.isFinite(days) ? days : 0;
+  return safe.toFixed(1);
 }
 
 export interface ReportInvoice {
@@ -123,7 +125,7 @@ export function computeKpis(input: {
   // inclusive window ending today). Cancelled and written-off invoices are
   // not real sales, so they must not inflate the denominator and flatter
   // DSO; disputed invoices stay in (they are issued sales under review).
-  const windowStart = addDays(input.today, -89);
+  const windowStart = addDaysIso(input.today, -89);
   let invoiced90 = 0;
   for (const inv of input.invoices) {
     if (inv.status === "cancelled" || inv.status === "written_off") continue;
@@ -202,8 +204,8 @@ export function computeReminderPerformance(input: {
  * attacker-controlled text. Prefix such cells with a single quote — the
  * standard OWASP mitigation — so spreadsheet apps treat them as text.
  */
-export function toCsv(rows: readonly (readonly (string | number)[])[]): string {
-  const escape = (v: string | number): string => {
+export function toCsv(rows: readonly (readonly (string | number | bigint)[])[]): string {
+  const escape = (v: string | number | bigint): string => {
     let s = String(v);
     // Numbers are real data (a negative amount is a number, not a formula);
     // only string cells — debtor names, notes, references — get the guard.
@@ -213,7 +215,3 @@ export function toCsv(rows: readonly (readonly (string | number)[])[]): string {
   return "\uFEFF" + rows.map((r) => r.map(escape).join(",")).join("\r\n") + "\r\n";
 }
 
-function addDays(iso: string, days: number): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y!, m! - 1, d!) + days * 86_400_000).toISOString().slice(0, 10);
-}

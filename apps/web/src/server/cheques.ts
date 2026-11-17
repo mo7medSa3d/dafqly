@@ -10,7 +10,7 @@ import {
 import { withTenant, type Db } from "@tahseel/db";
 import type { OcrLlmProvider, StorageProvider } from "@tahseel/providers";
 import { confirmClaimedPaymentInTx, rejectClaimedPaymentInTx } from "./gateway";
-import { lockDebtor, lockInvoicesById, recomputeInvoicePaid } from "./ledger";
+import { lockDebtor, lockInvoicesById, recomputeDebtorCredit, recomputeInvoicesPaid } from "./ledger";
 import { replanLater } from "./engine";
 import { storeUpload } from "./files";
 import { upsertNotificationInTx } from "./notifications";
@@ -104,14 +104,14 @@ export async function listCheques(app: Db, tenantId: string, opts: { status?: Ch
   return withTenant(app, tenantId, async (tx) => {
     const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
     const defaultCurrency = tenant?.settings.currency ?? "EGP";
-    const rows = await tx.select().from(cheques);
+    const rows = await tx.select().from(cheques)
+      .where(opts.status ? eq(cheques.status, opts.status) : undefined);
     const invoiceIds = [...new Set(rows.flatMap((row) => row.invoiceId ? [row.invoiceId] : []))];
     const invoiceRows = invoiceIds.length
       ? await tx.select({ id: invoices.id, currency: invoices.currency }).from(invoices).where(inArray(invoices.id, invoiceIds))
       : [];
     const currencyByInvoice = new Map(invoiceRows.map((row) => [row.id, row.currency]));
     return rows
-      .filter((r) => !opts.status || r.status === opts.status)
       .sort((a, b) => (a.dueDate === b.dueDate ? (a.id < b.id ? -1 : 1) : a.dueDate < b.dueDate ? -1 : 1))
       .map((row) => toView(row, row.invoiceId ? (currencyByInvoice.get(row.invoiceId) ?? defaultCurrency) : defaultCurrency));
   });
@@ -134,20 +134,24 @@ async function reverseConfirmedPayment(tx: Db, tenantId: string, actor: string, 
     allocs.map((a) => ({ invoiceId: a.invoiceId, amountMinor: a.amountMinor })),
     payment.amountMinor,
   );
-  if (plan.reversedMinor <= 0n) return [];
+  if (payment.amountMinor <= 0n) return [];
   const reversalId = uuidv7();
   await tx.insert(payments).values({
     id: reversalId, tenantId, debtorId: payment.debtorId, invoiceId: payment.invoiceId,
-    amountMinor: -plan.reversedMinor, currency: payment.currency, method: "cheque",
+    amountMinor: -payment.amountMinor, currency: payment.currency, method: "cheque",
     receivedOn: payment.receivedOn, referenceNo: `reversal:${reason}`,
     status: "confirmed", source: "manual", reversalOf: payment.id, confirmedBy: actor,
   });
-  for (const a of plan.allocations) {
-    await tx.insert(paymentAllocations).values({ tenantId, paymentId: reversalId, invoiceId: a.invoiceId, amountMinor: a.amountMinor });
+  if (plan.allocations.length > 0) {
+    await tx.insert(paymentAllocations).values(
+      plan.allocations.map((a) => ({ tenantId, paymentId: reversalId, invoiceId: a.invoiceId, amountMinor: a.amountMinor })),
+    );
+    await recomputeInvoicesPaid(tx, tenantId, plan.allocations.map((a) => a.invoiceId));
+  } else {
+    await recomputeDebtorCredit(tx, tenantId, payment.debtorId);
   }
-  for (const a of plan.allocations) await recomputeInvoicePaid(tx, tenantId, a.invoiceId);
   await audit(tx, tenantId, actor, "payment.reversed", "payment", reversalId, {
-    reversalOf: payment.id, reversedMinor: plan.reversedMinor.toString(), reason,
+    reversalOf: payment.id, reversedMinor: payment.amountMinor.toString(), reason,
   });
   return plan.allocations.map((a) => a.invoiceId);
 }
@@ -289,21 +293,35 @@ export interface ChequeAlertView { id: string; chequeId: string; alertKind: Cheq
 export async function runChequeAlerts(app: Db, tenantId: string, todayIso: string): Promise<ChequeAlertView[]> {
   return withTenant(app, tenantId, async (tx) => {
     const rows = await tx.select().from(cheques);
-    const created: ChequeAlertView[] = [];
-    for (const cheque of rows) {
-      const kind = dueAlertKind({ dueDate: cheque.dueDate, status: cheque.status }, todayIso);
-      if (!kind) continue;
-      const inserted = await tx.insert(chequeAlerts).values({
-        tenantId, chequeId: cheque.id, alertKind: kind, alertDate: todayIso,
-      }).onConflictDoNothing().returning();
-      if (inserted.length > 0) {
-        await audit(tx, tenantId, null, "cheque.alert", "cheque", cheque.id, {
-          alertKind: kind, direction: cheque.direction, dueDate: cheque.dueDate,
-        });
-        created.push({ id: inserted[0]!.id, chequeId: cheque.id, alertKind: kind, alertDate: todayIso });
-      }
-    }
-    return created;
+    const candidates = rows
+      .map((cheque) => ({ cheque, kind: dueAlertKind({ dueDate: cheque.dueDate, status: cheque.status }, todayIso) }))
+      .filter((x): x is { cheque: typeof rows[number]; kind: ChequeAlertKind } => x.kind !== null);
+    if (candidates.length === 0) return [];
+    const inserted = await tx.insert(chequeAlerts).values(
+      candidates.map(({ cheque, kind }) => ({ tenantId, chequeId: cheque.id, alertKind: kind, alertDate: todayIso })),
+    ).onConflictDoNothing().returning();
+    if (inserted.length === 0) return [];
+    const byChequeId = new Map(candidates.map((c) => [c.cheque.id, c]));
+    await tx.insert(auditLog).values(
+      inserted.map((row) => {
+        const c = byChequeId.get(row.chequeId)!;
+        return {
+          tenantId,
+          actorUserId: null,
+          action: "cheque.alert",
+          entity: "cheque",
+          entityId: row.chequeId,
+          before: null,
+          after: { alertKind: c.kind, direction: c.cheque.direction, dueDate: c.cheque.dueDate } as never,
+        };
+      }),
+    );
+    return inserted.map((row) => ({
+      id: row.id,
+      chequeId: row.chequeId,
+      alertKind: row.alertKind as ChequeAlertKind,
+      alertDate: row.alertDate,
+    }));
   });
 }
 

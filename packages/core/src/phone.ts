@@ -1,4 +1,4 @@
-import { parsePhoneNumberFromString } from "libphonenumber-js";
+import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
 import { normalizeDigits } from "./digits";
 
 export class PhoneError extends Error {
@@ -29,19 +29,21 @@ export interface NormalizedPhone {
   whatsappCapable: boolean;
 }
 
-export function normalizeEgPhone(input: string): NormalizedPhone {
-  const cleaned = normalizeDigits(input).replace(/[\s()-]/g, "");
+export function normalizePhone(input: string, defaultCountry: CountryCode = "EG"): NormalizedPhone {
+  const cleaned = normalizeDigits(input).replace(/[\s()-]/g, "").replace(/^00(?=\d{5,})/, "+");
   if (cleaned === "") throw new PhoneError(input, "empty");
-  const parsed = parsePhoneNumberFromString(cleaned, "EG");
-  if (!parsed || !parsed.isValid()) throw new PhoneError(input, "not a valid Egyptian number");
+  const parsed = parsePhoneNumberFromString(cleaned, defaultCountry);
+  if (!parsed || !parsed.isValid()) throw new PhoneError(input, "not a valid phone number");
   const type = parsed.getType();
   // The bundled libphonenumber metadata returns an undefined type for many
-  // valid EG numbers (found by the F2 golden fixtures in M1: every debtor
-  // was being flagged not-WhatsApp-capable). When the type is unknown, fall
-  // back to the Egyptian numbering plan: mobile NSNs are 10 digits starting
-  // 10/11/12/15; landline NSNs start with the area code (2-9).
+  // valid numbers; fall back to the EG mobile plan when country is EG, and
+  // treat other valid international numbers with unknown type as mobile.
   const isMobile = type !== undefined
     ? type === "MOBILE" || type === "FIXED_LINE_OR_MOBILE"
-    : /^1[0125]\d{8}$/.test(parsed.nationalNumber);
+    : parsed.country === "EG"
+      ? /^1[0125]\d{8}$/.test(parsed.nationalNumber)
+      : true;
   return { e164: parsed.number, valid: true, isMobile, whatsappCapable: isMobile };
 }
+
+export const normalizeEgPhone = normalizePhone;

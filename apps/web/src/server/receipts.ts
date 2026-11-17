@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import {
   AppError, allocatePayment, decideReceiptOutcome, evaluateReceiptChecks, formatMoney,
-  localDateOf, matchReceiptAmount, suggestDebtorByName, type ReceiptCheck, type ReceiptExtraction,
+  localDateOf, matchReceiptAmount, normalizeCurrencyCode, suggestDebtorByName, type ReceiptCheck, type ReceiptExtraction,
 } from "@tahseel/core";
 import {
   auditLog, debtors, files, invoices, messages, paymentAllocations, payments, tenants, usageLedger,
@@ -79,13 +79,15 @@ export async function processReceiptImage(
   const extractionResult = await deps.llm.extractReceipt(bytes, mime);
   const extraction = extractionResult.data;
   const extractedCurrency = (extraction?.currency ?? "").toUpperCase();
-  const paymentCurrency = ["EGP", "SAR", "USD", "AED", "EUR", "KWD", "JPY"].includes(extractedCurrency) ? extractedCurrency : "EGP";
 
   return withTenant(app, tenantId, async (tx) => {
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     if (!tenant) throw new AppError("NOT_FOUND", "Tenant not found", 404);
+    const paymentCurrency = ["EGP", "SAR", "USD", "AED", "EUR", "KWD", "JPY"].includes(extractedCurrency)
+      ? extractedCurrency
+      : normalizeCurrencyCode(tenant.settings?.currency);
 
-    const allDebtors = await tx.select().from(debtors).where(isNull(debtors.deletedAt));
+    const allDebtors = await tx.select().from(debtors).where(and(eq(debtors.tenantId, tenantId), isNull(debtors.deletedAt)));
     if (allDebtors.length === 0) throw new AppError("NOT_FOUND", "No debtors exist in workspace", 404);
 
     let debtor = input.debtorId
@@ -102,7 +104,7 @@ export async function processReceiptImage(
         }
       }
       if (!debtor && extraction.amount_minor && extraction.amount_minor > 0) {
-        const openInvs = await tx.select().from(invoices).where(and(inArray(invoices.status, ["open", "partially_paid"]), eq(invoices.currency, paymentCurrency)));
+        const openInvs = await tx.select().from(invoices).where(and(eq(invoices.tenantId, tenantId), inArray(invoices.status, ["open", "partially_paid"]), eq(invoices.currency, paymentCurrency)));
         const match = openInvs.find((i) => (i.amountMinor - i.paidMinor) === BigInt(extraction.amount_minor!));
         if (match) {
           debtor = allDebtors.find((d) => d.id === match.debtorId) ?? null;
@@ -131,13 +133,13 @@ export async function processReceiptImage(
     // this hash (this file's own row must not self-match) + existing payment
     // reusing the same fileId + every non-rejected reference number.
     const [otherWithHash] = await tx.select({ id: files.id }).from(files)
-      .where(and(eq(files.sha256, sha256), ne(files.id, fileId!))).limit(1);
+      .where(and(eq(files.tenantId, tenantId), eq(files.sha256, sha256), ne(files.id, fileId!))).limit(1);
     const [existingPaymentForFile] = input.fileId
-      ? await tx.select({ id: payments.id }).from(payments).where(eq(payments.evidenceFileId, fileId!)).limit(1)
+      ? await tx.select({ id: payments.id }).from(payments).where(and(eq(payments.tenantId, tenantId), eq(payments.evidenceFileId, fileId!))).limit(1)
       : [undefined];
     const seenHashes = new Set<string>(uploadWasDuplicate || otherWithHash || existingPaymentForFile ? [sha256] : []);
     const paidRefs = await tx.select({ referenceNo: payments.referenceNo }).from(payments)
-      .where(and(isNotNull(payments.referenceNo), ne(payments.status, "rejected")));
+      .where(and(eq(payments.tenantId, tenantId), isNotNull(payments.referenceNo), ne(payments.status, "rejected")));
     const seenReferences = new Set(paidRefs.map((p) => p.referenceNo!).filter(Boolean));
 
     const checksResult = evaluateReceiptChecks({ extraction, sha256, seenHashes, seenReferences, now });
@@ -230,7 +232,7 @@ export async function processReceiptImage(
         await tx.insert(paymentAllocations).values({ tenantId, paymentId, invoiceId: a.invoiceId, amountMinor: a.amountMinor });
       }
       for (const a of allocations) await recomputeInvoicePaid(tx, tenantId, a.invoiceId);
-      if (allocations.length === 0) await recomputeDebtorCredit(tx, tenantId, debtor.id);
+      if (creditMinor > 0n || allocations.length === 0) await recomputeDebtorCredit(tx, tenantId, debtor.id);
       allocatedInvoiceIds = allocations.map((a) => a.invoiceId);
     }
 
@@ -274,11 +276,10 @@ export async function processReceiptImage(
       amount: formatMoney(BigInt(extraction.amount_minor), paymentCurrency, { locale: "ar" }),
       remaining: formatMoney(remainingMinor, paymentCurrency, { locale: "ar" }),
     });
-    const [msg] = await tx.insert(messages).values({
+    await tx.insert(messages).values({
       tenantId, debtorId: debtor.id, direction: "out", channel: "whatsapp", provider: "whatsapp",
       templateKey, bodyText: body, status: "queued",
-    }).returning();
-    void msg;
+    });
     if (deps.notifyText) {
       await deps.notifyText(debtor.phoneE164, body, `receipt-reply:${paymentId}`)
         .catch(() => { /* the reply is recorded; a send failure never undoes the claim */ });
@@ -298,7 +299,7 @@ export async function processReceiptImage(
 export async function listReceiptClaims(app: Db, tenantId: string) {
   return withTenant(app, tenantId, async (tx) => {
     const rows = await tx.select().from(payments)
-      .where(and(eq(payments.source, "receipt_ai"), eq(payments.status, "claimed")))
+      .where(and(eq(payments.tenantId, tenantId), eq(payments.source, "receipt_ai"), eq(payments.status, "claimed")))
       .orderBy(desc(payments.createdAt));
     if (rows.length === 0) return [];
 
@@ -306,13 +307,13 @@ export async function listReceiptClaims(app: Db, tenantId: string) {
     const debtorList = debtorIds.length > 0
       ? await tx.select({ id: debtors.id, displayName: debtors.displayName })
           .from(debtors)
-          .where(inArray(debtors.id, debtorIds))
+          .where(and(eq(debtors.tenantId, tenantId), inArray(debtors.id, debtorIds)))
       : [];
     const debtorMap = new Map(debtorList.map((d) => [d.id, d.displayName]));
 
     return rows.map((p) => ({
       id: p.id, debtorId: p.debtorId, debtorName: debtorMap.get(p.debtorId) ?? "",
-      amountMinor: p.amountMinor.toString(), method: p.method, receivedOn: p.receivedOn,
+      amountMinor: p.amountMinor.toString(), currency: p.currency, method: p.method, receivedOn: p.receivedOn,
       referenceNo: p.referenceNo, evidenceFileId: p.evidenceFileId,
       createdAt: p.createdAt.toISOString(),
     }));

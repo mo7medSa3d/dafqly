@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gt, gte, ilike, inArray, isNull, lt, ne, or, sql } 
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import {
-  AppError, allocatePayment, canTransition, deriveStatusFromPaid, disputedFor,
+  AppError, CURRENCY_MINOR_EXPONENT, allocatePayment, canTransition, deriveStatusFromPaid, disputedFor,
   isCollectibleStatus, isOverdue, agingBucket, likePattern, maskPhone, mergeTimeline, normalizeEgPhone, outstandingFor, parseLimit, parseMoney,
   reconcileLedger,
   resolveDueOn, resolveStatusAfterPayment, validateExplicitAllocations,
@@ -177,7 +177,7 @@ export async function createDebtor(app: Db, tenantId: string, actor: string, inp
   try {
     normalized = normalizeEgPhone(input.phone);
   } catch {
-    throw new AppError("INVALID_PHONE", "Phone number is not a valid Egyptian number", 400);
+    throw new AppError("INVALID_PHONE", "Phone number is not a valid phone number", 400);
   }
   return withTenant(app, tenantId, async (tx) => {
     const [existing] = await tx.select().from(debtors)
@@ -300,7 +300,7 @@ export async function listDebtorsPage2(app: Db, tenantId: string, opts: { cursor
 export const createInvoiceInput = z.object({
   debtorId: z.string().uuid(),
   amount: moneyString,
-  currency: z.string().trim().length(3).default("EGP"),
+  currency: z.string().trim().length(3).optional(),
   issuedOn: dateString,
   dueOn: dateString.optional(),
   reference: z.string().trim().max(80).optional(),
@@ -336,18 +336,22 @@ async function findDebtorOr404(tx: Db, debtorId: string) {
 }
 
 export async function createInvoice(app: Db, tenantId: string, actor: string, input: CreateInvoiceInput): Promise<InvoiceView> {
-  const currency = (input.currency ?? "EGP").toUpperCase();
-  if (!["EGP", "SAR", "USD", "AED", "EUR", "KWD", "JPY"].includes(currency)) {
-    throw new AppError("UNSUPPORTED_CURRENCY", `Currency ${currency} is not supported`, 400);
+  const explicitCurrency = input.currency?.toUpperCase();
+  if (explicitCurrency && !Object.prototype.hasOwnProperty.call(CURRENCY_MINOR_EXPONENT, explicitCurrency)) {
+    throw new AppError("UNSUPPORTED_CURRENCY", `Currency ${explicitCurrency} is not supported`, 400);
   }
-  // F-06: parse in the invoice's own currency (KWD 3 decimals, JPY 0) —
-  // the old parseEgp read every amount ÷100.
-  const amountMinor = parseMoney(input.amount, currency);
   let view: InvoiceView;
   try {
     view = await withTenant(app, tenantId, async (tx) => {
       await findDebtorOr404(tx, input.debtorId);
       const settings = await tenantSettings(tx, tenantId);
+      const currency = (explicitCurrency ?? settings.currency ?? "EGP").toUpperCase();
+      if (!Object.prototype.hasOwnProperty.call(CURRENCY_MINOR_EXPONENT, currency)) {
+        throw new AppError("UNSUPPORTED_CURRENCY", `Currency ${currency} is not supported`, 400);
+      }
+      // F-06: parse in the invoice's own currency (KWD 3 decimals, JPY 0) —
+      // the old parseEgp read every amount ÷100.
+      const amountMinor = parseMoney(input.amount, currency);
       const dueOn = resolveDueOn(input.issuedOn, input.dueOn ?? null, settings.defaultTermsDays);
       let reference = input.reference?.trim() || null;
       if (!reference) {
@@ -546,24 +550,43 @@ export interface PaymentView {
   allocations: { invoiceId: string; amountMinor: string }[];
 }
 
-/** Recomputes an invoice's paid_minor from CONFIRMED allocations only (§6) and re-derives its status. Exported for the M3 gateway/statement services, which settle money through the same rule. */
-export async function recomputeInvoicePaid(tx: Db, tenantId: string, invoiceId: string) {
-  const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId));
-  if (!inv) return;
-  const allocs = await tx.select({ amountMinor: paymentAllocations.amountMinor, status: payments.status })
+/** Recomputes paid_minor from CONFIRMED allocations only (§6) for a batch of invoices and reconciles debtor promises/credit once per debtor. */
+export async function recomputeInvoicesPaid(tx: Db, tenantId: string, invoiceIds: string[]): Promise<void> {
+  const uniqueIds = [...new Set(invoiceIds)];
+  if (uniqueIds.length === 0) return;
+  const invRows = await tx.select().from(invoices).where(inArray(invoices.id, uniqueIds));
+  if (invRows.length === 0) return;
+  const allocs = await tx.select({
+    invoiceId: paymentAllocations.invoiceId,
+    amountMinor: paymentAllocations.amountMinor,
+  })
     .from(paymentAllocations)
     .innerJoin(payments, eq(payments.id, paymentAllocations.paymentId))
-    .where(eq(paymentAllocations.invoiceId, invoiceId));
-  const confirmed = allocs.filter((a) => a.status === "confirmed").reduce((s, a) => s + a.amountMinor, 0n);
-  const status = resolveStatusAfterPayment(inv.status, inv.amountMinor, confirmed);
-  if (confirmed !== inv.paidMinor || status !== inv.status) {
-    await tx.update(invoices).set({ paidMinor: confirmed, status, updatedAt: new Date() }).where(eq(invoices.id, invoiceId));
+    .where(and(inArray(paymentAllocations.invoiceId, uniqueIds), eq(payments.status, "confirmed")));
+  const confirmedByInvoice = new Map<string, bigint>();
+  for (const a of allocs) {
+    confirmedByInvoice.set(a.invoiceId, (confirmedByInvoice.get(a.invoiceId) ?? 0n) + a.amountMinor);
   }
-  // Reconcile promises for every confirmed payment path (manual, gateway,
-  // cheque clearing or reviewed receipt), not only the manual-payment form.
-  await reconcileAcceptedPromises(tx, tenantId, inv.debtorId);
-  // Keep the debtor's stored credit in step with the ledger (F05).
-  await recomputeDebtorCredit(tx, tenantId, inv.debtorId);
+  const now = new Date();
+  const debtorIds = new Set<string>();
+  for (const inv of invRows) {
+    debtorIds.add(inv.debtorId);
+    const confirmed = confirmedByInvoice.get(inv.id) ?? 0n;
+    const status = resolveStatusAfterPayment(inv.status, inv.amountMinor, confirmed);
+    if (confirmed !== inv.paidMinor || status !== inv.status) {
+      await tx.update(invoices).set({ paidMinor: confirmed, status, updatedAt: now }).where(eq(invoices.id, inv.id));
+    }
+  }
+  // Reconcile promises and stored credit once per affected debtor (F05).
+  for (const debtorId of debtorIds) {
+    await reconcileAcceptedPromises(tx, tenantId, debtorId);
+    await recomputeDebtorCredit(tx, tenantId, debtorId);
+  }
+}
+
+/** Recomputes an invoice's paid_minor from CONFIRMED allocations only (§6) and re-derives its status. Exported for the M3 gateway/statement services, which settle money through the same rule. */
+export async function recomputeInvoicePaid(tx: Db, tenantId: string, invoiceId: string) {
+  await recomputeInvoicesPaid(tx, tenantId, [invoiceId]);
 }
 
 /** A promise is kept only when confirmed allocations recorded after acceptance cover its agreed amount. */
@@ -575,38 +598,45 @@ async function reconcileAcceptedPromises(tx: Db, tenantId: string, debtorId: str
   if (tracked.length === 0) return;
   const settings = await tenantSettings(tx, tenantId);
   const defaultCurrency = settings.currency ?? "EGP";
+  const confirmedAllocs = await tx.select({
+    invoiceId: paymentAllocations.invoiceId,
+    amountMinor: paymentAllocations.amountMinor,
+    currency: invoices.currency,
+    method: payments.method,
+    createdAt: payments.createdAt,
+    updatedAt: payments.updatedAt,
+  })
+    .from(paymentAllocations)
+    .innerJoin(payments, eq(payments.id, paymentAllocations.paymentId))
+    .innerJoin(invoices, eq(invoices.id, paymentAllocations.invoiceId))
+    .where(and(
+      eq(payments.tenantId, tenantId), eq(payments.debtorId, debtorId), eq(payments.status, "confirmed"),
+    ));
+  const now = new Date();
+  const toKeep: string[] = [];
+  const toReopen: string[] = [];
   for (const promise of tracked) {
     const acceptedAt = promise.reviewedAt ?? promise.createdAt;
-    const collectedByCurrency = await tx.select({
-      currency: invoices.currency,
-      amountMinor: sql<bigint>`coalesce(sum(${paymentAllocations.amountMinor}), 0)::bigint`,
-    })
-      .from(paymentAllocations)
-      .innerJoin(payments, eq(payments.id, paymentAllocations.paymentId))
-      .innerJoin(invoices, eq(invoices.id, paymentAllocations.invoiceId))
-      .where(and(
-        eq(payments.tenantId, tenantId), eq(payments.debtorId, debtorId), eq(payments.status, "confirmed"),
-        or(
-          gte(payments.createdAt, acceptedAt),
-          and(eq(payments.method, "cheque"), gte(payments.updatedAt, acceptedAt)),
-        ),
-        promise.invoiceId ? eq(paymentAllocations.invoiceId, promise.invoiceId) : sql`true`,
-      ))
-      .groupBy(invoices.currency);
-    const isCovered = promise.invoiceId
-      ? collectedByCurrency.some((c) => c.amountMinor >= promise.amountMinor)
-      : collectedByCurrency.some((c) => c.currency === defaultCurrency && c.amountMinor >= promise.amountMinor);
-    if (isCovered && promise.status === "accepted") {
-      const fulfilledAt = new Date();
-      await tx.update(promisesToPay).set({ status: "kept", fulfilledAt, updatedAt: fulfilledAt }).where(and(
-        eq(promisesToPay.id, promise.id), eq(promisesToPay.status, "accepted"),
-      ));
-    } else if (!isCovered && promise.status === "kept") {
-      // A later reversal must not leave a fulfilled promise falsely green.
-      await tx.update(promisesToPay).set({ status: "accepted", fulfilledAt: null, updatedAt: new Date() }).where(and(
-        eq(promisesToPay.id, promise.id), eq(promisesToPay.status, "kept"),
-      ));
+    const byCurrency = new Map<string, bigint>();
+    for (const a of confirmedAllocs) {
+      if (promise.invoiceId && a.invoiceId !== promise.invoiceId) continue;
+      if (a.createdAt < acceptedAt && !(a.method === "cheque" && a.updatedAt >= acceptedAt)) continue;
+      byCurrency.set(a.currency, (byCurrency.get(a.currency) ?? 0n) + a.amountMinor);
     }
+    const isCovered = promise.invoiceId
+      ? [...byCurrency.values()].some((amt) => amt >= promise.amountMinor)
+      : (byCurrency.get(defaultCurrency) ?? 0n) >= promise.amountMinor;
+    if (isCovered && promise.status === "accepted") toKeep.push(promise.id);
+    else if (!isCovered && promise.status === "kept") toReopen.push(promise.id);
+  }
+  if (toKeep.length > 0) {
+    await tx.update(promisesToPay).set({ status: "kept", fulfilledAt: now, updatedAt: now })
+      .where(and(inArray(promisesToPay.id, toKeep), eq(promisesToPay.status, "accepted")));
+  }
+  if (toReopen.length > 0) {
+    // A later reversal must not leave a fulfilled promise falsely green.
+    await tx.update(promisesToPay).set({ status: "accepted", fulfilledAt: null, updatedAt: now })
+      .where(and(inArray(promisesToPay.id, toReopen), eq(promisesToPay.status, "kept")));
   }
 }
 
@@ -701,10 +731,12 @@ export async function recordPayment(app: Db, tenantId: string, actor: string, in
       if (replay) return replay;
       throw new AppError("CONFLICT", "Payment could not be recorded", 409);
     }
-    for (const a of plan.allocations) {
-      await tx.insert(paymentAllocations).values({ tenantId, paymentId, invoiceId: a.invoiceId, amountMinor: a.amountMinor });
+    if (plan.allocations.length > 0) {
+      await tx.insert(paymentAllocations).values(
+        plan.allocations.map((a) => ({ tenantId, paymentId, invoiceId: a.invoiceId, amountMinor: a.amountMinor })),
+      );
+      await recomputeInvoicesPaid(tx, tenantId, plan.allocations.map((a) => a.invoiceId));
     }
-    for (const a of plan.allocations) await recomputeInvoicePaid(tx, tenantId, a.invoiceId);
     const credit = await recomputeDebtorCredit(tx, tenantId, input.debtorId);
     await audit(tx, tenantId, actor, "payment.recorded", "payment", paymentId, null, {
       amountMinor: amountMinor.toString(), allocatedMinor: plan.allocatedMinor.toString(),

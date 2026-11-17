@@ -1,7 +1,7 @@
 import {
-  createLlmProvider, FailoverLlmProvider, FakeLlmProvider, FakeStorageProvider,
-  hasUsableLlmConfig, resolveLlmProviderConfigs, S3CompatibleStorageProvider,
-  type LlmProviderConfig, type OcrLlmProvider, type StorageProvider,
+  createAiProvider, FakeLlmProvider, FakeStorageProvider,
+  hasUsableLlmConfig, resolveAiConfig, S3CompatibleStorageProvider,
+  type OcrLlmProvider, type StorageProvider,
 } from "@tahseel/providers";
 import {
   createEngineDeps, planForInvoice, planForTenant, type EngineDeps,
@@ -65,7 +65,9 @@ async function getQueues(): Promise<QueueState | null> {
     let redis: (RedisLike & { disconnect?: () => void }) | null = null;
     try {
       const [{ Queue }, { Redis }] = await Promise.all([
+        // @ts-expect-error - optional dynamic import
         import(/* webpackIgnore: true */ "bullmq") as Promise<{ Queue: new (name: string, opts: { connection: unknown }) => BullQueueLike }>,
+        // @ts-expect-error - optional dynamic import
         import(/* webpackIgnore: true */ "ioredis") as Promise<{ Redis: new (url: string, opts: Record<string, unknown>) => RedisLike & { disconnect?: () => void } }>,
       ]);
       redis = new Redis(e.REDIS_URL, {
@@ -171,15 +173,9 @@ export function aiDeps(): AiDeps {
     allowInsecureLocal: e.ALLOW_LOCAL_S3,
   });
 
-  // Provider-agnostic wiring: the env describes ANY provider(s) as data and the
-  // registry builds them (see packages/providers/src/config.ts). Several
-  // providers = automatic failover in the listed order.
-  const configs = llmProviderConfigs();
+  // Single unified AI provider configured once in code/env for all tenants.
   if (hasUsableLlmConfig(e)) {
-    const members = configs.map((config) => ({ name: config.name ?? config.kind, provider: createLlmProvider(config) }));
-    const llm: OcrLlmProvider = members.length === 1 ? members[0]!.provider : new FailoverLlmProvider(members, {
-      onFailover: ({ from, to, error }) => console.warn("[ai] provider failover", { from, to, error }),
-    });
+    const llm = createAiProvider(resolveAiConfig(e));
     aiSingleton = { llm, storage, usingFakeLlm: false };
   } else {
     aiSingleton = { llm: new FakeLlmProvider(), storage, usingFakeLlm: true };
@@ -188,11 +184,6 @@ export function aiDeps(): AiDeps {
     aiSingleton = { ...aiSingleton, llm: budgetedLlmProvider(aiSingleton.llm) };
   }
   return aiSingleton;
-}
-
-/** The resolved provider list (primary first). Throws a clear error on invalid AI_* configuration. */
-function llmProviderConfigs(): LlmProviderConfig[] {
-  return resolveLlmProviderConfigs(env());
 }
 
 /** Test seam: replace the AI singletons (integration suites inject their own fakes). */

@@ -22,9 +22,11 @@ import { readRequestBodyLimited, RequestBodyTooLargeError } from "@/server/reque
  *   inbox rows for replay.
  */
 
+const NO_STORE = { "Cache-Control": "no-store" };
+
 /** H2/M4: webhook floods are throttled per client IP (never the spoofable leftmost XFF entry). */
 function webhook429(retryAfterSeconds: number): Response {
-  return Response.json({ error: { code: "RATE_LIMITED", message: "Too many requests" } }, { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } });
+  return Response.json({ error: { code: "RATE_LIMITED", message: "Too many requests" } }, { status: 429, headers: { ...NO_STORE, "Retry-After": String(retryAfterSeconds) } });
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -40,10 +42,13 @@ export async function GET(req: Request): Promise<Response> {
     createHash("sha256").update(token ?? "").digest(),
     createHash("sha256").update(expected ?? "").digest(),
   );
-  if (mode === "subscribe" && matches && challenge) {
-    return new Response(challenge, { status: 200, headers: { "Content-Type": "text/plain" } });
+  if (mode === "subscribe" && matches && challenge && challenge.length <= 256) {
+    return new Response(challenge, {
+      status: 200,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff", ...NO_STORE },
+    });
   }
-  return new Response("forbidden", { status: 403 });
+  return new Response("forbidden", { status: 403, headers: NO_STORE });
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -55,7 +60,7 @@ export async function POST(req: Request): Promise<Response> {
   if (!badSig.allowed) return webhook429(badSig.retryAfterSeconds);
   const secret = env().WHATSAPP_APP_SECRET;
   if (!secret) {
-    return Response.json({ error: { code: "WEBHOOK_NOT_CONFIGURED", message: "WHATSAPP_APP_SECRET is not set" } }, { status: 503 });
+    return Response.json({ error: { code: "WEBHOOK_NOT_CONFIGURED", message: "WHATSAPP_APP_SECRET is not set" } }, { status: 503, headers: NO_STORE });
   }
   // Enforce a byte limit while streaming, before allocating the full body.
   let rawBytes: Uint8Array;
@@ -63,21 +68,21 @@ export async function POST(req: Request): Promise<Response> {
     rawBytes = await readRequestBodyLimited(req, 1_000_000);
   } catch (err) {
     if (err instanceof RequestBodyTooLargeError) {
-      return Response.json({ error: { code: "BODY_TOO_LARGE", message: "webhook body exceeds 1 MB" } }, { status: 413 });
+      return Response.json({ error: { code: "BODY_TOO_LARGE", message: "webhook body exceeds 1 MB" } }, { status: 413, headers: NO_STORE });
     }
-    return Response.json({ error: { code: "BAD_BODY", message: "could not read webhook body" } }, { status: 400 });
+    return Response.json({ error: { code: "BAD_BODY", message: "could not read webhook body" } }, { status: 400, headers: NO_STORE });
   }
   const signature = req.headers.get("x-hub-signature-256");
   if (!verifyWebhookSignature(rawBytes, signature, secret)) {
     // Consume one token from the bad-signature bucket on every failure.
     rateLimit(`webhook:whatsapp:bad-sig:${ip}`, { limit: 10, windowSeconds: 60 });
-    return Response.json({ error: { code: "BAD_SIGNATURE", message: "signature verification failed" } }, { status: 401 });
+    return Response.json({ error: { code: "BAD_SIGNATURE", message: "signature verification failed" } }, { status: 401, headers: NO_STORE });
   }
   let payload: unknown;
   try {
     payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBytes));
   } catch {
-    return Response.json({ error: { code: "BAD_JSON", message: "body is not JSON" } }, { status: 400 });
+    return Response.json({ error: { code: "BAD_JSON", message: "body is not JSON" } }, { status: 400, headers: NO_STORE });
   }
   const owner = ownerDb();
   const deps = engineDeps();
@@ -90,25 +95,29 @@ export async function POST(req: Request): Promise<Response> {
   deps.onInboundImage = async (info) => {
     await recordPendingReceiptIntent(appDb(), info.tenantId, info);
   };
-  let events: WebhookEvent[] = [];
+  let events: WebhookEvent[];
   try {
     const persisted = await persistWebhookEvents(owner, payload);
     events = persisted.events;
-    if (events.length === 0) {
-      return Response.json({ received: true, events: 0, deduplicated: true });
-    }
+  } catch {
+    // Persistence failed before inbox capture: return 500 so Meta retries.
+    return Response.json({ error: { code: "PERSIST_FAILED", message: "could not persist webhook" } }, { status: 500, headers: NO_STORE });
+  }
+  if (events.length === 0) {
+    return Response.json({ received: true, events: 0, deduplicated: true }, { headers: NO_STORE });
+  }
+  try {
     const summary = await processWebhookEvents(deps, events, new Date());
     await owner.update(webhookEvents).set({ processedAt: new Date(), processError: null })
       .where(inArray(webhookEvents.dedupeKey, events.map((e) => e.dedupeKey)));
-    return Response.json({ received: true, events: events.length, ...summary });
+    return Response.json({ received: true, events: events.length, ...summary }, { headers: NO_STORE });
   } catch (err) {
     // Persisted but not processed: record the failure for operator recovery,
     // still 200 so Meta does not hammer us; inbox payloads are PII-redacted.
-    if (events.length > 0) {
-      await owner.update(webhookEvents).set({ processError: err instanceof Error ? err.message : "processing failed" })
-        .where(and(inArray(webhookEvents.dedupeKey, events.map((e) => e.dedupeKey)), isNull(webhookEvents.processedAt)))
-        .catch(() => {});
-    }
-    return Response.json({ received: true, events: events.length, processing: "failed-recorded" });
+    const processError = (err instanceof Error ? err.message : "processing failed").slice(0, 1000);
+    await owner.update(webhookEvents).set({ processError })
+      .where(and(inArray(webhookEvents.dedupeKey, events.map((e) => e.dedupeKey)), isNull(webhookEvents.processedAt)))
+      .catch(() => {});
+    return Response.json({ received: true, events: events.length, processing: "failed-recorded" }, { headers: NO_STORE });
   }
 }

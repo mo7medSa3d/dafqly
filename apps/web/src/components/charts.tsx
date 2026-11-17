@@ -1,8 +1,9 @@
 "use client";
 import { useLocale } from "next-intl";
-import { currencyMinorExponent } from "@tahseel/core";
+import { currencyMinorExponent, formatPct } from "@tahseel/core";
 
 export function axisLabel(minor: number, isAr: boolean, currency = "EGP"): string {
+  if (!Number.isFinite(minor)) return "0";
   const major = minor / 10 ** currencyMinorExponent(currency);
   const loc = isAr ? "ar-EG" : "en-US";
   if (major >= 1000) {
@@ -27,12 +28,12 @@ export function ReminderFunnelChart({
   labels: { sent: string; delivered: string; replied: string; paidWithin7d: string };
 }) {
   const isAr = useLocale() === "ar";
-  const base = Math.max(sent, 1);
+  const base = sent > 0 ? sent : 1;
   const stages = [
-    { key: "sent", label: labels.sent, value: sent, pct: 100, color: "var(--chart-3)" },
-    { key: "delivered", label: labels.delivered, value: delivered, pct: Math.round((delivered / base) * 100), color: "var(--chart-2)" },
-    { key: "replied", label: labels.replied, value: replied, pct: Math.round((replied / base) * 100), color: "var(--chart-1)" },
-    { key: "paid", label: labels.paidWithin7d, value: paidWithin7d, pct: Math.round((paidWithin7d / base) * 100), color: "var(--primary)" },
+    { key: "sent", label: labels.sent, value: sent, pct: sent > 0 ? 100 : 0, pctText: formatPct(sent > 0 ? 1 : 0), color: "var(--chart-3)" },
+    { key: "delivered", label: labels.delivered, value: delivered, pct: sent > 0 ? (delivered / base) * 100 : 0, pctText: formatPct(sent > 0 ? delivered / base : 0), color: "var(--chart-2)" },
+    { key: "replied", label: labels.replied, value: replied, pct: sent > 0 ? (replied / base) * 100 : 0, pctText: formatPct(sent > 0 ? replied / base : 0), color: "var(--chart-1)" },
+    { key: "paid", label: labels.paidWithin7d, value: paidWithin7d, pct: sent > 0 ? (paidWithin7d / base) * 100 : 0, pctText: formatPct(sent > 0 ? paidWithin7d / base : 0), color: "var(--primary)" },
   ];
   const segTotal = Math.max(1, sent + delivered + replied + paidWithin7d);
 
@@ -52,7 +53,7 @@ export function ReminderFunnelChart({
                 {s.label}
               </span>
               <span className="tnum font-extrabold text-foreground" dir="ltr">
-                {s.value.toLocaleString(isAr ? "ar-EG" : "en-US")} <span className="text-muted-foreground">· {s.pct}%</span>
+                {s.value.toLocaleString(isAr ? "ar-EG" : "en-US")} <span className="text-muted-foreground">· {s.pctText}</span>
               </span>
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-muted">

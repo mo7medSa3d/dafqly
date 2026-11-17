@@ -4,7 +4,7 @@ import { cn, todayIso } from "@/lib/utils";
 import { inputVariants } from "@/components/ui/input";
 import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { formatMoney, getCurrencySymbol, parseMoney, type SupportedCurrency } from "@tahseel/core";
+import { formatMoney, getCurrencySymbol, normalizeCurrencyCode, parseMoney } from "@tahseel/core";
 import { BrandMark } from "./BrandMark";
 import { SecurityNotice, StatusPill, btnGhost, btnPrimary } from "./ui";
 import { PaymentSuccessIllustration, SecurityLockBadge } from "./illustrations";
@@ -38,11 +38,11 @@ export function StatementClient({ token, initial }: { token: string; initial: St
   // — see app/s/[token]/page.tsx) via the statementPortal messages.
   const t = useTranslations("statementPortal");
   const locale = useLocale();
-  const currency = (data.currency ?? "EGP") as SupportedCurrency;
+  const currency = normalizeCurrencyCode(data.currency);
   const symbol = getCurrencySymbol(currency, locale);
   const fmt = (minor: string) => formatMoney(BigInt(minor), currency, { locale });
   const fmtCur = (minor: string, cur?: string) =>
-    formatMoney(BigInt(minor), ((cur ?? currency) as SupportedCurrency), { locale });
+    formatMoney(BigInt(minor), normalizeCurrencyCode(cur ?? currency), { locale });
   // All keys exist in the statementPortal messages; unknown future values
   // fall back to the raw status/method string.
   const statusLabel = (status: string) =>
@@ -54,15 +54,19 @@ export function StatementClient({ token, initial }: { token: string; initial: St
   const [disputeFor, setDisputeFor] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [promiseInvoiceId, setPromiseInvoiceId] = useState("");
   const [promiseAmount, setPromiseAmount] = useState("");
   const [promiseDate, setPromiseDate] = useState(todayIso(1));
   const [promiseNote, setPromiseNote] = useState("");
 
   async function refresh() {
-    const res = await fetch(`/api/public/statement/${token}`);
-    if (res.ok) setData((await res.json()) as StatementDataView);
+    try {
+      const res = await fetch(`/api/public/statement/${token}`);
+      if (res.ok) setData((await res.json()) as StatementDataView);
+    } catch {
+      // Non-fatal: optimistic state already reflects the user's submitted action
+    }
   }
 
   async function onPay(invoiceId?: string) {
@@ -76,7 +80,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
       if (!res.ok || !body.checkoutUrl) throw new Error("pay failed");
       window.location.assign(body.checkoutUrl);
     } catch {
-      setMsg(t("payFailed"));
+      setMsg({ kind: "err", text: t("payFailed") });
       setBusy(false);
     }
   }
@@ -102,10 +106,10 @@ export function StatementClient({ token, initial }: { token: string; initial: St
           { id: "pending", invoiceId, reason: disputeReason, createdAt: new Date().toISOString() },
         ],
       }));
-      setMsg(t("disputeOk"));
+      setMsg({ kind: "ok", text: t("disputeOk") });
       await refresh();
     } catch {
-      setMsg(t("disputeFailed"));
+      setMsg({ kind: "err", text: t("disputeFailed") });
     } finally { setBusy(false); }
   }
 
@@ -115,9 +119,9 @@ export function StatementClient({ token, initial }: { token: string; initial: St
     try {
       amountMinor = parseMoney(promiseAmount, activePromiseCurrency);
     } catch {
-      setMsg(t("promiseInvalid")); return;
+      setMsg({ kind: "err", text: t("promiseInvalid") }); return;
     }
-    if (amountMinor <= 0n) { setMsg(t("promiseInvalid")); return; }
+    if (amountMinor <= 0n) { setMsg({ kind: "err", text: t("promiseInvalid") }); return; }
     setBusy(true); setMsg(null);
     try {
       const res = await fetch(`/api/public/statement/${token}/promise`, {
@@ -125,10 +129,10 @@ export function StatementClient({ token, initial }: { token: string; initial: St
         body: JSON.stringify({ invoiceId: promiseInvoiceId || undefined, amountMinor: String(amountMinor), promisedOn: promiseDate, note: promiseNote.trim() || undefined }),
       });
       if (!res.ok) throw new Error("promise request failed");
-      setPromiseAmount(""); setPromiseNote("");
-      setMsg(t("promiseOk"));
+      setPromiseInvoiceId(""); setPromiseAmount(""); setPromiseNote("");
+      setMsg({ kind: "ok", text: t("promiseOk") });
       await refresh();
-    } catch { setMsg(t("promiseFailed")); }
+    } catch { setMsg({ kind: "err", text: t("promiseFailed") }); }
     finally { setBusy(false); }
   }
 
@@ -138,7 +142,6 @@ export function StatementClient({ token, initial }: { token: string; initial: St
   return (
     <main data-testid="statement-page" className="mx-auto flex min-h-dvh w-full max-w-xl flex-col gap-5 p-4 sm:p-6">
       <header className="bg-primary relative overflow-hidden rounded-xl p-6 text-primary-foreground">
-        <div className="absolute inset-0" aria-hidden />
         <div className="relative flex flex-col gap-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex flex-col gap-1">
@@ -155,17 +158,16 @@ export function StatementClient({ token, initial }: { token: string; initial: St
           </div>
           <div className="flex items-center justify-between gap-3 border-t border-primary-foreground/20 pt-4">
             <div className="min-w-0 flex-1"><p className="text-sm opacity-85">{t("totalDue")}</p>
-            <p className="mt-1 text-4xl font-extrabold leading-none">
+            <p className="mt-1 text-3xl font-extrabold leading-none sm:text-4xl">
               <span data-testid="statement-total" className="tnum" dir="ltr">{fmt(data.totalDueMinor)}</span>
-              
             </p>
-            {(data.totalsByCurrency?.length ?? 0) > 1 && (
+            {((data.totalsByCurrency?.length ?? 0) > 1 || (data.totalsByCurrency?.length === 1 && normalizeCurrencyCode(data.totalsByCurrency[0]!.currency) !== currency)) && (
               <p className="mt-2 text-xs opacity-85" data-testid="statement-totals-by-currency">
-                {data.totalsByCurrency!.map((t) => `${fmtCur(t.minor, t.currency)}`).join(" · ")}
+                {data.totalsByCurrency!.map((row) => fmtCur(row.minor, row.currency)).join(" · ")}
               </p>
             )}
-            {data.gatewayEnabled && openInvoices.some((inv) => inv.currency === "EGP") && (
-              <button data-testid="statement-pay-total" disabled={busy} onClick={() => void onPay()}
+            {data.gatewayEnabled && openInvoices.some((inv) => normalizeCurrencyCode(inv.currency ?? currency) === "EGP") && (
+              <button data-testid="statement-pay-total" disabled={busy} aria-busy={busy} onClick={() => void onPay()}
                 className={cn(buttonVariants({ variant: "secondary", size: "default" }), "mt-4 w-full bg-background text-foreground shadow-none hover:bg-background hover:opacity-90")}>
                 {t("payTotal")}
               </button>
@@ -175,7 +177,20 @@ export function StatementClient({ token, initial }: { token: string; initial: St
         </div>
       </header>
 
-      {msg && <p role="status" data-testid="statement-msg" className="rounded-xl border border-primary/30 bg-callout p-4 text-sm font-semibold text-primary">{msg}</p>}
+      {msg && (
+        <p
+          role={msg.kind === "err" ? "alert" : "status"}
+          data-testid="statement-msg"
+          className={cn(
+            "rounded-xl border p-4 text-sm font-semibold",
+            msg.kind === "err"
+              ? "border-danger/30 bg-danger-bg text-danger"
+              : "border-primary/30 bg-callout text-primary"
+          )}
+        >
+          {msg.text}
+        </p>
+      )}
 
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-extrabold">{t("invoices")}</h2>
@@ -200,16 +215,17 @@ export function StatementClient({ token, initial }: { token: string; initial: St
                 {(inv.status === "open" || inv.status === "partially_paid") && (
                   <div className="mt-1.5 flex flex-col gap-2">
                     <div className="flex flex-wrap gap-2">
-                      {data.gatewayEnabled && inv.currency === "EGP" && (
-                        <button data-testid={`statement-pay-${inv.id}`} disabled={busy} onClick={() => void onPay(inv.id)}
-                          className={`${btnPrimary} flex-1`}>
+                      {data.gatewayEnabled && normalizeCurrencyCode(inv.currency ?? currency) === "EGP" && (
+                        <button data-testid={`statement-pay-${inv.id}`} disabled={busy} aria-busy={busy} onClick={() => void onPay(inv.id)}
+                          className={`${btnPrimary} min-w-[9rem] flex-1`}>
                           {t("payThisInvoice")}
                         </button>
                       )}
                       {!disputedIds.has(inv.id) && (
                         <button data-testid={`statement-dispute-${inv.id}`} disabled={busy}
-                          onClick={() => setDisputeFor(disputeFor === inv.id ? null : inv.id)}
-                          className={`${btnGhost} flex-1`}>
+                          aria-expanded={disputeFor === inv.id}
+                          onClick={() => { setDisputeFor(disputeFor === inv.id ? null : inv.id); setReason(""); }}
+                          className={`${btnGhost} min-w-[9rem] flex-1`}>
                           {t("disputeInvoice")}
                         </button>
                       )}
@@ -222,7 +238,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
                             onChange={(e) => setReason(e.target.value)}
                             className={cn(inputVariants, "w-full")} rows={3} />
                         </label>
-                        <button data-testid={`dispute-submit-${inv.id}`} disabled={busy || reason.trim() === ""}
+                        <button data-testid={`dispute-submit-${inv.id}`} disabled={busy || reason.trim() === ""} aria-busy={busy}
                           className={btnPrimary}>
                           {t("submitDispute")}
                         </button>
@@ -241,14 +257,35 @@ export function StatementClient({ token, initial }: { token: string; initial: St
         <div><h2 className="text-lg font-extrabold">{t("promiseTitle")}</h2><p className="mt-1 text-xs text-text-muted">{t("promiseHint")}</p></div>
         <form className="grid gap-3 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); void onRequestPromise(); }}>
           <label className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t("promiseInvoice")}</span><select className={cn(inputVariants)} value={promiseInvoiceId} onChange={(e) => setPromiseInvoiceId(e.target.value)}><option value="">{t("promiseAnyInvoice")}</option>{openInvoices.map((inv) => <option key={inv.id} value={inv.id}>{inv.reference ?? t("invoiceFallback")} — {t("promiseRemaining")} {fmtCur(inv.outstandingMinor, inv.currency)}</option>)}</select></label>
-          <label className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t("promiseAmount")} ({(() => { const sel = openInvoices.find((i) => i.id === promiseInvoiceId); return sel ? getCurrencySymbol(sel.currency, locale) : symbol; })()})</span><input required inputMode="decimal" className={cn(inputVariants)} value={promiseAmount} onChange={(e) => setPromiseAmount(e.target.value)} placeholder="1500.00"/></label>
+          <label className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t("promiseAmount")} ({(() => { const sel = openInvoices.find((i) => i.id === promiseInvoiceId); return sel ? getCurrencySymbol(normalizeCurrencyCode(sel.currency ?? currency), locale) : symbol; })()})</span><input required inputMode="decimal" className={cn(inputVariants)} value={promiseAmount} onChange={(e) => setPromiseAmount(e.target.value)} placeholder="1500.00"/></label>
           <label className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t("promiseDate")}</span><input required type="date" min={todayIso()} className={cn(inputVariants)} value={promiseDate} onChange={(e) => setPromiseDate(e.target.value)}/></label>
           <label className="flex flex-col gap-1.5 text-sm font-semibold"><span>{t("promiseNote")}</span><input maxLength={500} className={cn(inputVariants)} value={promiseNote} onChange={(e) => setPromiseNote(e.target.value)} placeholder={t("promiseNotePlaceholder")}/></label>
-          <button type="submit" disabled={busy || Number(promiseAmount) <= 0} className={`${btnPrimary} sm:col-span-2`}>{t("promiseSubmit")}</button>
+          <button type="submit" disabled={busy || !promiseAmount.trim()} aria-busy={busy} className={`${btnPrimary} sm:col-span-2`}>{t("promiseSubmit")}</button>
         </form>
       </section>}
 
-      {data.promises.length > 0 && <section className="flex flex-col gap-3"><h2 className="text-lg font-extrabold">{t("promisesTitle")}</h2><div className="overflow-hidden rounded-xl border border-border bg-surface"><ul className="divide-y divide-border">{data.promises.map((p) => { const inv = p.invoiceId ? data.invoices.find((i) => i.id === p.invoiceId) : undefined; return <li key={p.id} className="flex flex-wrap items-center gap-2 p-4 text-sm"><span className="font-extrabold" dir="ltr">{fmtCur(p.amountMinor, inv?.currency)}</span><span className="text-text-muted">· {p.promisedOn}</span><span className={`ms-auto rounded px-2.5 py-1 text-xs font-bold ${p.status === "accepted" ? "bg-status-paid-bg text-status-paid-fg" : p.status === "pending" ? "bg-status-due-bg text-status-due-fg" : "bg-surface-muted text-text-subtle"}`}>{promiseStatusLabel(p.status)}</span></li>; })}</ul></div></section>}
+      {data.promises.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg font-extrabold">{t("promisesTitle")}</h2>
+          <div className="overflow-hidden rounded-xl border border-border bg-surface">
+            <ul className="divide-y divide-border">
+              {data.promises.map((p) => {
+                const inv = p.invoiceId ? data.invoices.find((i) => i.id === p.invoiceId) : undefined;
+                return (
+                  <li key={p.id} className="flex flex-wrap items-center gap-2 p-4 text-sm">
+                    <span className="tnum font-extrabold" dir="ltr">{fmtCur(p.amountMinor, inv?.currency)}</span>
+                    {inv?.reference && <span className="text-xs font-semibold text-primary" dir="ltr">{inv.reference}</span>}
+                    <span className="text-text-muted">· <span dir="ltr">{p.promisedOn}</span></span>
+                    <span className={`ms-auto rounded px-2.5 py-1 text-xs font-bold ${p.status === "accepted" ? "bg-status-paid-bg text-status-paid-fg" : p.status === "pending" ? "bg-status-due-bg text-status-due-fg" : "bg-surface-muted text-text-subtle"}`}>
+                      {promiseStatusLabel(p.status)}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </section>
+      )}
 
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-extrabold">{t("paymentsTitle")}</h2>
@@ -277,9 +314,17 @@ export function StatementClient({ token, initial }: { token: string; initial: St
         body={t("securityBody")}
       />
 
-      <footer className="flex items-center justify-center gap-2 pb-2 text-center text-xs text-text-muted">
-        <BrandMark variant="mono" size={16} />
-        <span>{t("footer", { business: data.businessName })}</span>
+      <footer className="flex flex-wrap items-center justify-center gap-3 pb-2 text-center text-xs text-text-muted">
+        <span className="flex items-center gap-2">
+          <BrandMark variant="mono" size={16} />
+          <span>{t("footer", { business: data.businessName })}</span>
+        </span>
+        <a
+          href={`?lang=${locale === "ar" ? "en" : "ar"}`}
+          className="font-semibold text-link underline-offset-4 hover:underline"
+        >
+          {locale === "ar" ? "English" : "العربية"}
+        </a>
       </footer>
     </main>
   );

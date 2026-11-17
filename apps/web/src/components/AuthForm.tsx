@@ -31,8 +31,8 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       const raw = window.localStorage.getItem("dafqly:workspace-card");
       if (!raw) return;
       const parsed = JSON.parse(raw) as { businessName?: string; email?: string };
-      if (!name && parsed.businessName) setName(parsed.businessName);
-      if (!email && parsed.email) setEmail(parsed.email);
+      if (parsed.businessName) setName((prev) => prev || parsed.businessName || "");
+      if (parsed.email) setEmail((prev) => prev || parsed.email || "");
     } catch (err) { console.warn("[AuthForm] saved workspace card unreadable, ignoring it", err); }
   }, [initialBiz, initialEmail]);
   const [password, setPassword] = useState("");
@@ -48,21 +48,23 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const result = mode === "signup"
-      ? await signUp.email({ name, email, password })
-      : await signIn.email({ email, password });
-    setBusy(false);
-    if (result.error) {
+    try {
+      const result = mode === "signup"
+        ? await signUp.email({ name: name.trim(), email: email.trim(), password })
+        : await signIn.email({ email: email.trim(), password });
+      if (result.error) {
+        setError(t("failed"));
+        setShake((n) => n + 1);
+        return;
+      }
+      router.push(`/${locale}/${mode === "signup" ? "onboarding" : "dashboard"}`);
+      router.refresh();
+    } catch {
       setError(t("failed"));
       setShake((n) => n + 1);
-      return;
+    } finally {
+      setBusy(false);
     }
-    if (mode === "signup") {
-      router.push(`/${locale}/onboarding`);
-    } else {
-      router.push(`/${locale}/dashboard`);
-    }
-    router.refresh();
   }
 
   const perks = [
@@ -195,9 +197,9 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
           <SecurityNotice compact body={ar ? "بيانات حسابك ومعاملاتك المالية مشفّرة ومحمية بالكامل." : "Your account and financial data are encrypted and protected."} />
 
-          <a className="text-center text-sm font-bold text-foreground underline-offset-4 hover:underline" href={`/${locale}/${mode === "signup" ? "login" : "signup"}`}>
+          <Link className="text-center text-sm font-bold text-foreground underline-offset-4 hover:underline" href={`/${locale}/${mode === "signup" ? "login" : "signup"}`}>
             {mode === "signup" ? t("haveAccount") : t("noAccount")}
-          </a>
+          </Link>
         </div>
       </div>
     </main>

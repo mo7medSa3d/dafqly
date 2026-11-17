@@ -28,6 +28,9 @@ export async function processReplanInvoice(
   deps: TickDeps,
   data: { tenantId: string; invoiceId: string },
 ): Promise<{ planned: number; cancelled: number; at: string }> {
+  if (!data?.tenantId || !data?.invoiceId) {
+    throw new Error("replan-invoice requires tenantId and invoiceId");
+  }
   const now = deps.clock.now();
   const result = await planForInvoice(deps.engine, data.tenantId, data.invoiceId, now);
   return { ...result, at: now.toISOString() };
@@ -37,20 +40,24 @@ export async function processReplanTenant(
   deps: TickDeps,
   data: { tenantId: string },
 ): Promise<{ planned: number; cancelled: number; at: string }> {
+  if (!data?.tenantId) {
+    throw new Error("replan-tenant requires tenantId");
+  }
   const now = deps.clock.now();
   const result = await planForTenant(deps.engine, data.tenantId, now);
   return { ...result, at: now.toISOString() };
 }
 
 export async function processDispatchTick(deps: TickDeps): Promise<{
-  sent: number; groups: number; skipped: Record<string, number>; dryRun: boolean; at: string;
+  sent: number; groups: number; rescheduled: number; failed: number; paused: boolean;
+  skipped: Record<string, number>; dryRun: boolean; at: string;
 }> {
   const now = deps.clock.now();
   const summary = await dispatchDue(deps.engine, now, { tenantId: deps.tenantId });
   return {
-    sent: summary.remindersSent, groups: summary.groupsSent, skipped: summary.skipped,
-    dryRun: deps.dryRun,
-    at: now.toISOString(),
+    sent: summary.remindersSent, groups: summary.groupsSent,
+    rescheduled: summary.rescheduled, failed: summary.failed, paused: summary.paused,
+    skipped: summary.skipped, dryRun: deps.dryRun, at: now.toISOString(),
   };
 }
 
@@ -63,7 +70,7 @@ export async function processMaintenanceTick(deps: TickDeps): Promise<{
   webhookEvents: number; messages: number; replayedWebhooks: number; failedWebhooks: number; at: string;
 }> {
   const now = deps.clock.now();
-  const purged = await purgeOldWebhookPayloads(deps.engine.owner);
+  const purged = await purgeOldWebhookPayloads(deps.engine.owner, 90, now);
   const replayed = await replayFailedWebhooks(deps.engine, now);
   return {
     ...purged,

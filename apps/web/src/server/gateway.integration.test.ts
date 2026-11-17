@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createHmac, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { ownerDb, appDb } from "./db";
 import { user as userTable, tenants, paymentLinks, payments, webhookEvents } from "@tahseel/db/schema";
@@ -26,7 +26,7 @@ if (!hasDb && process.env.REQUIRE_DB_TESTS === "1") throw new Error("REQUIRE_DB_
 const d = hasDb ? describe : describe.skip;
 
 const HMAC_SECRET = "m3-test-hmac-secret-0123456789abcdef";
-let txnSeq = 900000;
+let txnSeq = Math.floor(Date.now() % 1_000_000_000);
 function callbackPayload(opts: {
   reference: string; amountCents: number; overrides?: Record<string, unknown>;
 }) {
@@ -136,7 +136,6 @@ d("F5 gateway payments (service layer)", () => {
     expect(inbox).toHaveLength(0);
     const detail = await getDebtorDetail(app(), tenantId, debtor.id);
     expect(detail.invoices[0]!.status).toBe("open");
-    void createHmac;
   });
 
   it("amount mismatch creates NO payment, flags the link, and reconciliation reports it", async () => {
@@ -246,7 +245,7 @@ d("F5 gateway payments (service layer)", () => {
 
   it("claimed payments: confirm allocates and settles; reject never touches balances", async () => {
     const debtor = await newDebtor("دفعات مدعاة");
-    const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "500.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
+    const _inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "500.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
     const mkClaim = async (amount: bigint) => {
       const [row] = await ownerDb().insert(payments).values({
         tenantId, debtorId: debtor.id, amountMinor: amount, method: "instapay",
@@ -265,7 +264,6 @@ d("F5 gateway payments (service layer)", () => {
     await rejectClaimedPayment(app(), tenantId, user.id, claim2);
     detail = await getDebtorDetail(app(), tenantId, debtor.id);
     expect(detail.invoices.find((i) => i.id === inv2.id)).toMatchObject({ paidMinor: "0", status: "open" });
-    void inv;
   });
 
   // H3: two concurrent full refunds — exactly one succeeds, the provider is

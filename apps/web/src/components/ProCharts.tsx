@@ -2,6 +2,7 @@
 import { useId, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useLocale } from "next-intl";
+import { formatPct } from "@tahseel/core";
 import { useCurrency } from "./CurrencyContext";
 import { InitialAvatar } from "./ui";
 import { axisLabel } from "./charts";
@@ -148,19 +149,22 @@ export function ForecastArea({
   weeks,
   expectedLabel,
   conservativeLabel,
+  beyondHorizon,
 }: {
   weeks: ForecastPoint[];
   expectedLabel: string;
   conservativeLabel: string;
+  beyondHorizon?: { expectedMinor: number; conservativeMinor: number };
 }) {
   const isAr = useLocale() === "ar";
   const { symbol, formatAmountOnly, currency } = useCurrency();
   const uid = useId().replace(/:/g, "");
   const [hover, setHover] = useState<number | null>(null);
   const [mode, setMode] = useState<"area" | "bars">("area");
+  if (!weeks.length) return null;
   const W = 760;
   const H = 248;
-  const L = 46;
+  const L = 54;
   const R = 14;
   const T = 18;
   const B = 32;
@@ -175,10 +179,10 @@ export function ForecastArea({
   const total = weeks.reduce((s, w) => s + w.expectedMinor, 0);
   const totalCon = weeks.reduce((s, w) => s + w.conservativeMinor, 0);
   const peak = weeks.reduce((b, w, i) => (w.expectedMinor > weeks[b]!.expectedMinor ? i : b), 0);
-  const day = (iso: string) =>
-    new Date(`${iso}T00:00:00`).toLocaleDateString(isAr ? "ar-EG" : "en-GB", { day: "numeric", month: "short" });
+  const dateFmt = new Intl.DateTimeFormat(isAr ? "ar-EG" : "en-GB", { day: "numeric", month: "short" });
+  const day = (iso: string) => dateFmt.format(new Date(`${iso}T00:00:00`));
   const h = hover ?? null;
-  if (!weeks.length) return null;
+  const hasBeyond = Boolean(beyondHorizon && (beyondHorizon.expectedMinor > 0 || beyondHorizon.conservativeMinor > 0));
 
   const slotW = (W - L - R) / Math.max(1, weeks.length);
   const barW = Math.min(18, Math.max(8, slotW * 0.28));
@@ -264,7 +268,7 @@ export function ForecastArea({
             return (
               <g key={i}>
                 <line x1={L} x2={W - R} y1={y(v)} y2={y(v)} stroke="currentColor" opacity=".09" />
-                <text x={L - 8} y={y(v) + 3} textAnchor="end" fontSize="10" fill="currentColor" opacity=".5">
+                <text x={L - 8} y={y(v) + 3} textAnchor="end" fontSize="10" fill="currentColor" opacity=".5" style={{ direction: "ltr" }}>
                   {axisLabel(v, isAr, currency)}
                 </text>
               </g>
@@ -283,10 +287,12 @@ export function ForecastArea({
                 const cx = x(i);
                 const yExp = y(w.expectedMinor);
                 const yCon = y(w.conservativeMinor);
+                const hExp = Math.max(0, H - B - yExp);
+                const hCon = Math.max(0, H - B - yCon);
                 return (
                   <g key={w.weekStart} opacity={h !== null && h !== i ? 0.45 : 1}>
-                    <rect x={cx - barW - 2} y={yExp} width={barW} height={Math.max(2, H - B - yExp)} rx="4" fill="var(--chart-2)" />
-                    <rect x={cx + 2} y={yCon} width={barW} height={Math.max(2, H - B - yCon)} rx="4" fill="var(--chart-1)" />
+                    {hExp > 0 && <rect x={cx - barW - 2} y={yExp} width={barW} height={hExp} rx="4" fill="var(--chart-2)" />}
+                    {hCon > 0 && <rect x={cx + 2} y={yCon} width={barW} height={hCon} rx="4" fill="var(--chart-1)" />}
                   </g>
                 );
               })}
@@ -332,6 +338,15 @@ export function ForecastArea({
           </div>
         )}
       </div>
+
+      {hasBeyond && beyondHorizon && (
+        <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+          {isAr ? "مستحقات بعد أفق ٨ أسابيع:" : "Due beyond 8-week horizon:"}{" "}
+          <span className="tnum font-bold text-foreground" dir="ltr">
+            {fmt(beyondHorizon.expectedMinor)} {symbol}
+          </span>
+        </p>
+      )}
 
       <details className="rounded-xl border border-border text-xs">
         <summary className="cursor-pointer px-3 py-2 font-bold text-muted-foreground hover:text-foreground">
@@ -380,7 +395,7 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
   const gap = 3;
   let acc = 0;
   const severe = buckets.filter((b) => ["31-60", "60+"].includes(b.key)).reduce((s, b) => s + b.amountMinor, 0);
-  const sevPct = total ? Math.round((severe / total) * 100) : 0;
+  const sevRatio = total > 0 ? severe / total : 0;
   const shown = active ? buckets.find((b) => b.key === active) : null;
 
   return (
@@ -393,6 +408,7 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
             const seg = Math.max(0, len - (len > gap ? gap : 0));
             const off = -acc;
             acc += len;
+            if (b.amountMinor <= 0) return null;
             return (
               <circle
                 key={b.key}
@@ -415,10 +431,10 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
           <p className="text-[11px] font-bold text-muted-foreground">{shown ? shown.label : isAr ? "الإجمالي" : "Total"}</p>
           <p className="tnum text-base font-extrabold text-card-foreground" dir="ltr">
-            {formatAmountOnly(BigInt(shown ? shown.amountMinor : total))}
+            {formatAmountOnly(BigInt(Math.round(shown ? shown.amountMinor : total)))}
           </p>
           <p className="text-[10px] font-semibold text-muted-foreground">
-            {shown && total ? `${Math.round((shown.amountMinor / total) * 100)}%` : symbol}
+            {shown && total ? formatPct(shown.amountMinor / total) : symbol}
           </p>
         </div>
       </div>
@@ -436,13 +452,13 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
               {b.label}
             </span>
             <span className="tnum font-bold text-muted-foreground" dir="ltr">
-              {total ? Math.round((b.amountMinor / total) * 100) : 0}%
+              {total ? formatPct(b.amountMinor / total) : formatPct(0)}
             </span>
           </li>
         ))}
-        {sevPct > 0 && (
+        {severe > 0 && (
           <li className="mt-1 rounded-lg bg-danger-bg px-2.5 py-1.5 font-bold text-destructive">
-            {isAr ? `${sevPct}% من الرصيد تجاوز ٣٠ يوماً` : `${sevPct}% over 30 days`}
+            {isAr ? `${formatPct(sevRatio)} من الرصيد تجاوز ٣٠ يوماً` : `${formatPct(sevRatio)} over 30 days`}
           </li>
         )}
       </ul>
@@ -453,13 +469,15 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
 /* ------------------------------------------------------------------ Gauge */
 
 export function Gauge({ value, label, caption }: { value: number; label: string; caption?: string }) {
-  const pct = Math.max(0, Math.min(100, value));
+  const safe = Number.isFinite(value) ? value : 0;
+  const pct = Math.max(0, Math.min(100, safe));
+  const pctLabel = formatPct(pct / 100);
   const R = 70;
   const arc = Math.PI * R;
   const tone = pct >= 70 ? "var(--chart-2)" : pct >= 40 ? "var(--chart-1)" : "var(--destructive)";
   return (
     <div className="flex flex-col items-center gap-1.5 text-center">
-      <svg viewBox="0 0 180 104" className="w-full max-w-[230px]" role="img" aria-label={`${label}: ${Math.round(pct)}%`}>
+      <svg viewBox="0 0 180 104" className="w-full max-w-[230px]" role="img" aria-label={`${label}: ${pctLabel}`}>
         <path d="M20 90 A70 70 0 0 1 160 90" fill="none" stroke="var(--muted)" strokeWidth="14" strokeLinecap="round" />
         <path
           d="M20 90 A70 70 0 0 1 160 90"
@@ -470,8 +488,8 @@ export function Gauge({ value, label, caption }: { value: number; label: string;
           strokeDasharray={`${(pct / 100) * arc} ${arc}`}
           className="pc-gauge"
         />
-        <text x="90" y="80" textAnchor="middle" fontSize="26" fontWeight="800" fill="currentColor" className="tnum">
-          {Math.round(pct)}%
+        <text x="90" y="80" textAnchor="middle" fontSize="24" fontWeight="800" fill="currentColor" className="tnum">
+          {pctLabel}
         </text>
       </svg>
       <p className="text-sm font-bold">{label}</p>
@@ -504,7 +522,7 @@ export function RankedBars({ items }: { items: RankedItem[] }) {
               <InitialAvatar name={d.name} size={28} />
               <span className="min-w-0 flex-1 truncate text-sm font-bold">{d.name}</span>
               <span className="tnum text-sm font-extrabold text-foreground" dir="ltr">
-                {formatAmountOnly(BigInt(d.amountMinor))} <span className="text-[11px] font-normal text-muted-foreground">{symbol}</span>
+                {formatAmountOnly(BigInt(Math.round(d.amountMinor)))} <span className="text-[11px] font-normal text-muted-foreground">{symbol}</span>
               </span>
             </span>
             <span className="h-1.5 overflow-hidden rounded-full bg-muted">

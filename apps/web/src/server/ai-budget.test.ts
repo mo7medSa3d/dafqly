@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseEnv } from "@tahseel/core";
+import { primaryModelFor, resolveLlmProviderConfigs } from "@tahseel/providers";
 import { estimateAiCostUsdMicros, providerDefinitelyRejected } from "./ai-budget";
 
 describe("global AI USD metering", () => {
@@ -16,13 +17,15 @@ describe("global AI USD metering", () => {
       SESSION_SECRET: "x".repeat(32),
       PHONE_HASH_PEPPER: "y".repeat(32),
     });
+    const resolvedDefaultModel = primaryModelFor(resolveLlmProviderConfigs(env), "fast");
+    expect(resolvedDefaultModel).toBe("gemini-2.5-flash");
     const defaults = new Map([
-      [env.AI_MODEL, 4_500_000n],
-      [env.GEMINI_MODEL_FAST, 2_800_000n],
-      [env.GEMINI_MODEL_VISION, 4_500_000n],
-      [env.LLM_MODEL_AGENT, 12_000_000n],
-      [env.LLM_MODEL_FAST, 600_000n],
-      [env.LLM_MODEL_VISION, 12_000_000n],
+      [resolvedDefaultModel!, 2_800_000n],
+      ["gemini-3.8-flash", 4_500_000n],
+      ["gpt-4o-mini", 750_000n],
+      ["claude-sonnet-4-5", 18_000_000n],
+      ["deepseek-chat", 1_370_000n],
+      ["llama-3.3-70b-versatile", 1_380_000n],
     ]);
     expect(defaults.size).toBeGreaterThan(0);
     for (const [model, expected] of defaults) {

@@ -279,3 +279,35 @@ tbody tr:hover { background: color-mix(in srgb, var(--foreground) 4%, transparen
 
 /* Icons: lighter, modern outline weight (Lucide default is 2) */
 svg.lucide { stroke-width: 1.75; }
+
+
+/* Landing page SVG & layout animations */
+@keyframes dafqly-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-7px); }
+}
+@keyframes dafqly-beam {
+  from { stroke-dashoffset: 48; }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes dafqly-scan {
+  0%, 100% { transform: translateY(0px); opacity: 0.85; }
+  50% { transform: translateY(84px); opacity: 1; }
+}
+@keyframes dafqly-pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.7; }
+  70% { transform: scale(1.18); opacity: 0; }
+  100% { transform: scale(1.18); opacity: 0; }
+}
+
+.dafqly-float { animation: dafqly-float 5.5s ease-in-out infinite; }
+.dafqly-float-slow { animation: dafqly-float 7s ease-in-out infinite 0.8s; }
+.dafqly-beam { stroke-dasharray: 6 6; animation: dafqly-beam 1.8s linear infinite; }
+.dafqly-scan { animation: dafqly-scan 3.4s ease-in-out infinite; }
+.dafqly-pulse-ring { transform-box: fill-box; transform-origin: center; animation: dafqly-pulse-ring 2.6s cubic-bezier(0.2, 0.8, 0.2, 1) infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dafqly-float, .dafqly-float-slow, .dafqly-beam, .dafqly-scan, .dafqly-pulse-ring {
+    animation: none !important;
+  }
+}

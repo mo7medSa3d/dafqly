@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, lte, ne } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import {
@@ -46,22 +46,36 @@ export interface TenantQuota extends QuotaStatus {
 
 /** Current-month message quota status for a tenant. */
 export async function getQuotaStatus(app: Db, tenantId: string, now: Date = new Date()): Promise<TenantQuota> {
-  const catalogue = await getPlanCatalogue(app);
-  return withTenant(app, tenantId, async (tx) => {
-    const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
-    if (!tenant) throw new AppError("NOT_FOUND", "Tenant not found", 404);
-    const tz = tenant.timezone ?? "Africa/Cairo";
-    const month = localDateOf(now, tz).slice(0, 7);
-    const rows = await tx.select().from(usageLedger)
-      .where(and(eq(usageLedger.tenantId, tenantId), inArray(usageLedger.kind, ["whatsapp_utility", "sms"])));
-    let used = 0;
-    for (const r of rows) {
-      if (localDateOf(r.at, tz).slice(0, 7) === month) used += r.units;
-    }
-    const plan = planByKey(tenant.plan, catalogue) ?? planByKey("trial", catalogue)!;
-    const qs = quotaStatus({ usedUnits: used, quota: plan.monthlyMessageQuota });
-    return { ...qs, planKey: tenant.plan, month };
-  });
+  const [catalogue, result] = await Promise.all([
+    getPlanCatalogue(app),
+    withTenant(app, tenantId, async (tx) => {
+      const [tenant] = await tx.select({ plan: tenants.plan, timezone: tenants.timezone }).from(tenants).where(eq(tenants.id, tenantId));
+      if (!tenant) throw new AppError("NOT_FOUND", "Tenant not found", 404);
+      const tz = tenant.timezone ?? "Africa/Cairo";
+      const month = localDateOf(now, tz).slice(0, 7);
+      // Bound DB scan to +-1 day around the UTC month while keeping exact tenant-local month filtering.
+      const [yr, mo] = month.split("-").map(Number);
+      const windowStart = new Date(Date.UTC(yr!, mo! - 1, 1) - 86_400_000);
+      const windowEnd = new Date(Date.UTC(yr!, mo!, 1) + 86_400_000);
+      const rows = await tx
+        .select({ at: usageLedger.at, units: usageLedger.units })
+        .from(usageLedger)
+        .where(and(
+          eq(usageLedger.tenantId, tenantId),
+          inArray(usageLedger.kind, ["whatsapp_utility", "sms"]),
+          gte(usageLedger.at, windowStart),
+          lte(usageLedger.at, windowEnd),
+        ));
+      let used = 0;
+      for (const r of rows) {
+        if (localDateOf(r.at, tz).slice(0, 7) === month) used += r.units;
+      }
+      return { planKey: tenant.plan, month, used };
+    }),
+  ]);
+  const plan = planByKey(result.planKey, catalogue) ?? planByKey("trial", catalogue) ?? PLANS_SEED[0]!;
+  const qs = quotaStatus({ usedUnits: result.used, quota: plan.monthlyMessageQuota });
+  return { ...qs, planKey: result.planKey, month: result.month };
 }
 
 // ------------------------------------------------------- subscription flow
@@ -80,8 +94,9 @@ const toInvoiceView = (r: typeof subscriptionInvoices.$inferSelect): Subscriptio
 
 function addMonthsIso(iso: string, months: number): string {
   const [y, m, d] = iso.split("-").map(Number);
-  const dt = new Date(Date.UTC(y!, m! - 1 + months, d));
-  return dt.toISOString().slice(0, 10);
+  const targetMonth = m! - 1 + months;
+  const lastDay = new Date(Date.UTC(y!, targetMonth + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(y!, targetMonth, Math.min(d!, lastDay))).toISOString().slice(0, 10);
 }
 
 export interface BillingDeps { app: Db; provider: PaymentProvider; providerIsFake: boolean }
@@ -110,7 +125,7 @@ export async function changePlan(
     throw new AppError("PRICING_NOT_FINAL", "Plan prices are not final yet — paid plan changes are disabled until pricing is decided", 409);
   }
 
-  const created = await withTenant(deps.app, tenantId, async (tx) => {
+  const { row: created, currency, tenantName } = await withTenant(deps.app, tenantId, async (tx) => {
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     if (!tenant) throw new AppError("NOT_FOUND", "Tenant not found", 404);
     const periodStart = localDateOf(now, tenant.timezone ?? "Africa/Cairo");
@@ -129,10 +144,14 @@ export async function changePlan(
         updatedAt: new Date(),
       },
     }).returning();
-    await audit(tx, tenantId, actor, "subscription.invoice_generated", "subscription_invoice", id, {
-      planKey: plan.key, amountMinor: plan.priceMinor, priceIsPlaceholder: true,
+    await audit(tx, tenantId, actor, "subscription.invoice_generated", "subscription_invoice", row!.id, {
+      planKey: plan.key, amountMinor: plan.priceMinor, priceIsPlaceholder: PLAN_PRICES_ARE_PLACEHOLDERS,
     });
-    return row!;
+    return {
+      row: row!,
+      currency: tenant.settings?.currency ?? "EGP",
+      tenantName: tenant.name || tenant.businessNameAr,
+    };
   });
 
   // Free plans (trial, price 0) need no payment: effective immediately.
@@ -140,9 +159,10 @@ export async function changePlan(
     let link: Awaited<ReturnType<typeof deps.provider.createPaymentLink>> | null = null;
     try {
       link = await deps.provider.createPaymentLink({
-        amountMinor: BigInt(plan.priceMinor), currency: "EGP",
+        amountMinor: BigInt(plan.priceMinor),
+        currency,
         reference: `sub_${created.id}`,
-        debtorName: "DAFQLY tenant", debtorEmail: "billing@tahseel.test", debtorPhone: "+201000000000",
+        debtorName: tenantName,
       });
     } catch (err) {
       console.error("[billing] subscription payment link creation failed", { tenantId, invoiceId: created.id, err });
@@ -158,7 +178,6 @@ export async function changePlan(
       });
       return { invoice: toInvoiceView(updated), effectiveImmediately: false };
     }
-    if (!link) throw new AppError("PAYMENT_FAILED", "The payment provider rejected the subscription charge", 502);
     const paid = await withTenant(deps.app, tenantId, async (tx) => {
       const [row] = await tx.update(subscriptionInvoices)
         .set({ status: "paid", providerRef: link.transactionId, updatedAt: new Date() })
@@ -197,11 +216,15 @@ export async function listSubscriptionInvoices(app: Db, tenantId: string): Promi
  * provider flow in changePlan / a future webhook, never this job.
  */
 export async function generateSubscriptionInvoices(owner: Db, app: Db, now: Date = new Date()): Promise<{ generated: number }> {
-  const catalogue = await getPlanCatalogue(owner);
-  const allTenants = await owner.select().from(tenants);
+  const [catalogue, paidTenants] = await Promise.all([
+    getPlanCatalogue(owner),
+    owner
+      .select({ id: tenants.id, plan: tenants.plan, timezone: tenants.timezone })
+      .from(tenants)
+      .where(ne(tenants.plan, "trial")),
+  ]);
   let generated = 0;
-  for (const tenant of allTenants) {
-    if (tenant.plan === "trial") continue;
+  for (const tenant of paidTenants) {
     const plan = planByKey(tenant.plan, catalogue);
     if (!plan) continue;
     const todayIso = localDateOf(now, tenant.timezone ?? "Africa/Cairo");
@@ -211,8 +234,12 @@ export async function generateSubscriptionInvoices(owner: Db, app: Db, now: Date
       // A plan change mid-month creates an invoice whose period STARTS on
       // the change date; the job must not bill the same period twice just
       // because its own period starts on the 1st.
-      const existing = await tx.select().from(subscriptionInvoices);
-      if (existing.some((i) => i.periodStart <= todayIso && i.periodEnd > todayIso)) return 0;
+      const existing = await tx
+        .select({ id: subscriptionInvoices.id })
+        .from(subscriptionInvoices)
+        .where(and(lte(subscriptionInvoices.periodStart, todayIso), gt(subscriptionInvoices.periodEnd, todayIso)))
+        .limit(1);
+      if (existing.length > 0) return 0;
       const rows = await tx.insert(subscriptionInvoices).values({
         tenantId: tenant.id, planKey: plan.key, periodStart, periodEnd,
         amountMinor: BigInt(plan.priceMinor), status: "issued",

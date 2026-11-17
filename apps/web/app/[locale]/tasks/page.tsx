@@ -9,8 +9,15 @@ import { CollectionWorkspaceClient } from "@/components/CollectionWorkspaceClien
 
 export const dynamic = "force-dynamic";
 
-export default async function TasksPage({ params }: { params: Promise<{ locale: string }> }) {
+export default async function TasksPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ locale: string }>;
+  searchParams: Promise<{ tab?: string }>;
+}) {
   const { locale } = await params;
+  const { tab } = await searchParams;
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session?.user) redirect(`/${locale}/login`);
   const mine = await listTenantsForUser(ownerDb(), session.user.id);
@@ -18,7 +25,7 @@ export default async function TasksPage({ params }: { params: Promise<{ locale: 
   if (!tenant) redirect(`/${locale}/onboarding`);
   return (
     <AppShell locale={locale} demoMode={runtimeModeFlags()} digits={tenant.settings?.easternDigits ? "eastern" : "latin"} businessName={tenant.businessNameAr} currency={tenant.settings?.currency ?? "EGP"} testId="tasks">
-      <CollectionWorkspaceClient locale={locale} role={tenant.role} />
+      <CollectionWorkspaceClient locale={locale} role={tenant.role} initialTab={tab} />
     </AppShell>
   );
 }

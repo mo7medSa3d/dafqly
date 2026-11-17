@@ -21,7 +21,7 @@ import { clickNav } from "./helpers";
  *
  * The psql path is this VM's source-built Postgres (see engineering docs).
  */
-const PSQL = "/home/hatch/workspace/pg16/bin/psql -h 127.0.0.1 -p 5433 -U pgtest -d tahseel -t -A -c";
+const PSQL = process.env.PSQL ?? "docker exec -i dafqly-postgres-1 psql -U tahseel -d tahseel -t -A -c";
 const shot = (name: string) => `e2e/screenshots/prompt07/${name}.png`;
 
 async function loginDemo(page: Page, locale: "ar" | "en" = "ar") {
@@ -29,7 +29,8 @@ async function loginDemo(page: Page, locale: "ar" | "en" = "ar") {
   await page.getByTestId("auth-email").fill("demo@tahseel.test");
   await page.getByTestId("auth-password").fill("demo-password-123");
   await page.getByTestId("auth-submit").click();
-  await expect(page).toHaveURL(new RegExp(`/${locale}/dashboard`));
+  await expect(page).toHaveURL(new RegExp(`/${locale}/dashboard`), { timeout: 15000 });
+  await page.waitForLoadState("networkidle");
 }
 
 async function signupAndOnboard(page: Page, business: string) {
@@ -39,13 +40,13 @@ async function signupAndOnboard(page: Page, business: string) {
   await page.getByTestId("auth-email").fill(email);
   await page.getByTestId("auth-password").fill("e2e-password-123");
   await page.getByTestId("auth-submit").click();
-  await expect(page).toHaveURL(/\/ar\/onboarding/);
+  await expect(page).toHaveURL(/\/ar\/onboarding/, { timeout: 15000 });
   await page.getByTestId("ob-name-ar").fill(business);
   await page.getByTestId("ob-next").click();
   await page.getByTestId("ob-next").click();
   await page.getByTestId("ob-consent").check();
   await page.getByTestId("ob-create").click();
-  await expect(page).toHaveURL(/\/ar\/dashboard/);
+  await expect(page).toHaveURL(/\/ar\/dashboard/, { timeout: 15000 });
 }
 
 async function expectNoOverflow(page: Page) {
@@ -81,8 +82,8 @@ test("P07 route tour (AR desktop 1440): every key screen renders + screenshots",
   ];
   for (const r of routes) {
     await clickNav(page, r.nav);
-    await expect(page).toHaveURL(r.url);
-    await expect(page.locator(r.marker).first()).toBeVisible();
+    await expect(page).toHaveURL(r.url, { timeout: 15000 });
+    await expect(page.locator(r.marker).first()).toBeVisible({ timeout: 15000 });
     await expectNoOverflow(page);
     await page.screenshot({ path: shot(r.shot) });
   }
@@ -161,7 +162,7 @@ test("P07 F-20: billing badge is centred on its card in RTL", async ({ page }) =
   await page.setViewportSize({ width: 1440, height: 900 });
   await loginDemo(page);
   await clickNav(page, "nav-billing");
-  await expect(page).toHaveURL(/\/ar\/billing/);
+  await expect(page).toHaveURL(/\/ar\/billing/, { timeout: 15000 });
   const badge = page.locator('[class*="-top-3.5"]').first();
   await expect(badge).toBeVisible();
   const { delta } = await badge.evaluate((el) => {

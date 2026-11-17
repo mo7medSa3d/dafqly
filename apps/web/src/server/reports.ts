@@ -72,17 +72,6 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
         outstanding: string; overdue: string; invoiced90: string;
         aging_current: string; aging_0_7: string; aging_8_30: string; aging_31_60: string; aging_60p: string;
       }];
-    // M03: collected and refunded are separate lines (same rule as core
-    // computeKpis) — a reversal in this month never nets against another
-    // month's collected, and this month's refund stays visible.
-    const [col] = await tx.execute(sql`
-      select
-        coalesce(sum(amount_minor) filter (where amount_minor > 0), 0)::bigint as collected,
-        coalesce(-sum(amount_minor) filter (where amount_minor < 0), 0)::bigint as refunded
-      from payments
-      where status = 'confirmed' and currency = ${currency}
-        and received_on >= date_trunc('month', ${todayIso}::date)::date
-        and received_on < (date_trunc('month', ${todayIso}::date) + interval '1 month')::date`) as unknown as [{ collected: string; refunded: string }];
     const top = await tx.execute(sql`
       select debtor_id as "debtorId", coalesce(sum(amount_minor - paid_minor), 0)::bigint as outstanding
       from invoices
@@ -102,20 +91,27 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
         and received_on >= date_trunc('month', ${todayIso}::date)::date
         and received_on < (date_trunc('month', ${todayIso}::date) + interval '1 month')::date
       group by currency order by currency`) as unknown as { currency: string; collected: string; refunded: string }[];
-    const collectedMap = new Map(collectedByCurrency.map((c) => [c.currency, Number(c.collected)]));
-    const refundedMap = new Map(collectedByCurrency.map((c) => [c.currency, Number(c.refunded)]));
+    const collectedMap = new Map(collectedByCurrency.map((c) => [c.currency, toSafeMinor(BigInt(c.collected), `collected ${c.currency}`)]));
+    const refundedMap = new Map(collectedByCurrency.map((c) => [c.currency, toSafeMinor(BigInt(c.refunded), `refunded ${c.currency}`)]));
     const byCurrencyMerged = byCurrency.map((b) => ({
       currency: b.currency,
-      outstandingMinor: Number(b.outstanding),
-      overdueMinor: Number(b.overdue),
+      outstandingMinor: toSafeMinor(BigInt(b.outstanding), `outstanding ${b.currency}`),
+      overdueMinor: toSafeMinor(BigInt(b.overdue), `overdue ${b.currency}`),
       collectedInMonthMinor: collectedMap.get(b.currency) ?? 0,
       refundedInMonthMinor: refundedMap.get(b.currency) ?? 0,
     }));
     for (const c of collectedByCurrency) {
       if (!byCurrencyMerged.some((b) => b.currency === c.currency)) {
-        byCurrencyMerged.push({ currency: c.currency, outstandingMinor: 0, overdueMinor: 0, collectedInMonthMinor: Number(c.collected), refundedInMonthMinor: Number(c.refunded) });
+        byCurrencyMerged.push({
+          currency: c.currency,
+          outstandingMinor: 0,
+          overdueMinor: 0,
+          collectedInMonthMinor: collectedMap.get(c.currency) ?? 0,
+          refundedInMonthMinor: refundedMap.get(c.currency) ?? 0,
+        });
       }
     }
+    byCurrencyMerged.sort((a, b) => (a.currency < b.currency ? -1 : a.currency > b.currency ? 1 : 0));
     const names = top.length === 0 ? new Map<string, string>() : new Map(
       (await tx.select({ id: debtors.id, displayName: debtors.displayName }).from(debtors)
         .where(inArray(debtors.id, top.map((t) => t.debtorId)))).map((d) => [d.id, d.displayName]),
@@ -135,23 +131,30 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
            group by i.id, i.last_reminded_at) x
          where (x.paid_on - (x.last_reminded_at at time zone ${timezone})::date) between 0 and 7) as paid_within_7d`) as unknown as [{ sent: number; delivered: number; replied: number; paid_within_7d: number }];
 
-    const totalOutstandingMinor = Number(agg!.outstanding);
-    const collectedInMonthMinor = Number(col!.collected);
-    const refundedInMonthMinor = Number(col!.refunded);
+    const totalOutstandingMinor = toSafeMinor(BigInt(agg!.outstanding), "totalOutstanding");
+    const collectedInMonthMinor = collectedMap.get(currency) ?? 0;
+    const refundedInMonthMinor = refundedMap.get(currency) ?? 0;
     const netCollected = Math.max(0, collectedInMonthMinor - refundedInMonthMinor);
-    const invoiced90 = Number(agg!.invoiced90);
+    const invoiced90 = toSafeMinor(BigInt(agg!.invoiced90), "invoiced90");
     return {
       totalOutstandingMinor,
-      overdueAmountMinor: Number(agg!.overdue),
+      overdueAmountMinor: toSafeMinor(BigInt(agg!.overdue), "overdueAmount"),
       collectedInMonthMinor,
       refundedInMonthMinor,
       collectionRate: netCollected + totalOutstandingMinor > 0 ? netCollected / (netCollected + totalOutstandingMinor) : 0,
       dsoDays: invoiced90 > 0 ? Math.round(((totalOutstandingMinor / invoiced90) * 90) * 100) / 100 : 0,
       agingBuckets: {
-        current: Number(agg!.aging_current), "0-7": Number(agg!.aging_0_7), "8-30": Number(agg!.aging_8_30),
-        "31-60": Number(agg!.aging_31_60), "60+": Number(agg!.aging_60p),
+        current: toSafeMinor(BigInt(agg!.aging_current), "aging.current"),
+        "0-7": toSafeMinor(BigInt(agg!.aging_0_7), "aging.0-7"),
+        "8-30": toSafeMinor(BigInt(agg!.aging_8_30), "aging.8-30"),
+        "31-60": toSafeMinor(BigInt(agg!.aging_31_60), "aging.31-60"),
+        "60+": toSafeMinor(BigInt(agg!.aging_60p), "aging.60+"),
       },
-      topDebtors: top.map((t) => ({ debtorId: t.debtorId, displayName: names.get(t.debtorId) ?? t.debtorId, outstandingMinor: Number(t.outstanding) })),
+      topDebtors: top.map((t) => ({
+        debtorId: t.debtorId,
+        displayName: names.get(t.debtorId) ?? t.debtorId,
+        outstandingMinor: toSafeMinor(BigInt(t.outstanding), `topDebtor ${t.debtorId}`),
+      })),
       reminderPerformance: { sent: perf!.sent, delivered: perf!.delivered, replied: perf!.replied, paidWithin7d: perf!.paid_within_7d },
       currency,
       byCurrency: byCurrencyMerged,
@@ -244,8 +247,8 @@ export async function loadCollectedByInvoice(tx: Db): Promise<Map<string, bigint
  * through this guard — anything above 2^53 fails loudly, never silently
  * truncated. */
 function toSafeMinor(value: bigint, what: string): number {
-  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new AppError("AMOUNT_TOO_LARGE", `Forecast amount exceeds the safe-integer range (${what})`, 500);
+  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new AppError("AMOUNT_TOO_LARGE", `Report amount is outside the safe-integer range (${what})`, 500);
   }
   return Number(value);
 }
@@ -257,9 +260,33 @@ export async function getForecast(app: Db, tenantId: string, todayIso: string): 
     // the old code loaded every invoice and summed minor units across
     // currencies as if they were one.
     const currency = tenant?.settings.currency ?? "EGP";
-    const invs = await tx.select().from(invoices).where(eq(invoices.currency, currency));
-    const paidOn = await loadPaidOnByInvoice(tx);
-    const collected = await loadCollectedByInvoice(tx);
+    const invs = await tx
+      .select({
+        id: invoices.id,
+        debtorId: invoices.debtorId,
+        status: invoices.status,
+        amountMinor: invoices.amountMinor,
+        paidMinor: invoices.paidMinor,
+        dueOn: invoices.dueOn,
+      })
+      .from(invoices)
+      .where(eq(invoices.currency, currency));
+    const allocs = await tx
+      .select({
+        invoiceId: paymentAllocations.invoiceId,
+        receivedOn: payments.receivedOn,
+        amountMinor: paymentAllocations.amountMinor,
+      })
+      .from(paymentAllocations)
+      .innerJoin(payments, eq(payments.id, paymentAllocations.paymentId))
+      .where(eq(payments.status, "confirmed"));
+    const paidOn = new Map<string, string>();
+    const collected = new Map<string, bigint>();
+    for (const a of allocs) {
+      const cur = paidOn.get(a.invoiceId);
+      if (!cur || a.receivedOn > cur) paidOn.set(a.invoiceId, a.receivedOn);
+      collected.set(a.invoiceId, (collected.get(a.invoiceId) ?? 0n) + a.amountMinor);
+    }
     const paidHistory: PaidHistoryRow[] = invs
       .filter((i) => i.status === "paid" && paidOn.has(i.id))
       .map((i) => ({
@@ -268,7 +295,7 @@ export async function getForecast(app: Db, tenantId: string, todayIso: string): 
       }));
     return forecastCashflow({
       openInvoices: invs
-        .filter((i) => i.status === "open" || i.status === "partially_paid")
+        .filter((i) => (i.status === "open" || i.status === "partially_paid") && i.amountMinor > i.paidMinor)
         .map((i) => ({ id: i.id, debtorId: i.debtorId, dueOn: i.dueOn, outstandingMinor: toSafeMinor(i.amountMinor - i.paidMinor, `open invoice ${i.id}`) })),
       paidHistory, today: todayIso, currency, weeks: 8,
     });
@@ -281,13 +308,13 @@ export async function exportInvoicesCsv(app: Db, tenantId: string): Promise<{ fi
   return withTenant(app, tenantId, async (tx) => {
     const [t] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
     const isAr = t?.settings?.exportLanguage === "ar";
-    const rows = await tx.select().from(invoices);
+    const rows = await tx.select().from(invoices).orderBy(invoices.issuedOn, invoices.id);
     const headers = isAr
       ? ["المعرف", "معرف_العميل", "رقم_الفاتورة", "المبلغ_بالوحدة_الصغرى", "المدفوع_بالوحدة_الصغرى", "العملة", "تاريخ_الإصدار", "تاريخ_الاستحقاق", "الحالة"]
       : ["id", "debtor_id", "reference", "amount_minor", "paid_minor", "currency", "issued_on", "due_on", "status"];
     const csv = toCsv([
       headers,
-      ...rows.map((i) => [i.id, i.debtorId, i.reference ?? "", Number(i.amountMinor), Number(i.paidMinor), i.currency, i.issuedOn, i.dueOn, i.status]),
+      ...rows.map((i) => [i.id, i.debtorId, i.reference ?? "", i.amountMinor, i.paidMinor, i.currency, i.issuedOn, i.dueOn, i.status]),
     ]);
     return { filename: isAr ? "الفواتير.csv" : "invoices.csv", csv };
   });
@@ -297,13 +324,13 @@ export async function exportPaymentsCsv(app: Db, tenantId: string): Promise<{ fi
   return withTenant(app, tenantId, async (tx) => {
     const [t] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
     const isAr = t?.settings?.exportLanguage === "ar";
-    const rows = await tx.select().from(payments);
+    const rows = await tx.select().from(payments).orderBy(payments.receivedOn, payments.id);
     const headers = isAr
       ? ["المعرف", "معرف_العميل", "المبلغ_بالوحدة_الصغرى", "العملة", "طريقة_الدفع", "تاريخ_الاستلام", "الرقم_المرجعي", "الحالة", "المصدر"]
       : ["id", "debtor_id", "amount_minor", "currency", "method", "received_on", "reference_no", "status", "source"];
     const csv = toCsv([
       headers,
-      ...rows.map((p) => [p.id, p.debtorId, Number(p.amountMinor), p.currency, p.method, p.receivedOn, p.referenceNo ?? "", p.status, p.source]),
+      ...rows.map((p) => [p.id, p.debtorId, p.amountMinor, p.currency, p.method, p.receivedOn, p.referenceNo ?? "", p.status, p.source]),
     ]);
     return { filename: isAr ? "المدفوعات.csv" : "payments.csv", csv };
   });
@@ -313,7 +340,7 @@ export async function exportDebtorsCsv(app: Db, tenantId: string): Promise<{ fil
   return withTenant(app, tenantId, async (tx) => {
     const [t] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
     const isAr = t?.settings?.exportLanguage === "ar";
-    const rows = await tx.select().from(debtors).where(and(isNull(debtors.deletedAt)));
+    const rows = await tx.select().from(debtors).where(and(isNull(debtors.deletedAt))).orderBy(debtors.createdAt, debtors.id);
     const headers = isAr
       ? ["المعرف", "اسم_العميل", "الهاتف", "حالة_الواتساب", "مؤشر_المخاطر", "إلغاء_الاشتراك"]
       : ["id", "display_name", "phone_e164", "whatsapp_status", "risk_flag", "opted_out"];

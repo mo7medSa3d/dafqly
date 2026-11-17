@@ -6,7 +6,7 @@ import {
 import { createHash } from "node:crypto";
 import {
   planReminders, groupDueReminders, classifyProviderError, backoffDelayMs, isOptOutText, evaluateQualityGuard,
-  normalizeEgPhone, formatCurrencyMinor, isInQuietHours, nextAllowedSlot, localDateOf, zonedTimeToUtc, quotaStatus,
+  normalizeEgPhone, formatCurrencyMinor, isInQuietHours, nextAllowedSlot, localDateOf, safeTimezone, zonedTimeToUtc, quotaStatus,
   STATEMENT_DEFAULT_EXPIRY_DAYS,
   DEFAULT_WEEKLY_CAP, MAX_SEND_ATTEMPTS, type PlanPolicy,
 } from "@tahseel/core";
@@ -111,9 +111,14 @@ export async function quotaExceededFromDb(app: Db, tenantId: string, now: Date):
   return withTenant(app, tenantId, async (tx) => {
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     if (!tenant) return false;
-    const tz = tenant.timezone ?? "Africa/Cairo";
+    const tz = safeTimezone(tenant.timezone);
     const month = localDateOf(now, tz).slice(0, 7);
-    const rows = await tx.select().from(usageLedger).where(eq(usageLedger.tenantId, tenantId));
+    const lookback = new Date(now.getTime() - 32 * 86_400_000);
+    const rows = await tx.select().from(usageLedger).where(and(
+      eq(usageLedger.tenantId, tenantId),
+      inArray(usageLedger.kind, ["whatsapp_utility", "sms"]),
+      gte(usageLedger.at, lookback),
+    ));
     let used = 0;
     for (const r of rows) {
       if ((r.kind === "whatsapp_utility" || r.kind === "sms") && localDateOf(r.at, tz).slice(0, 7) === month) used += r.units;
@@ -126,7 +131,7 @@ export async function quotaExceededFromDb(app: Db, tenantId: string, now: Date):
 
 export function policyFor(tenant: { timezone: string; settings: TenantSettings }): PlanPolicy {
   return {
-    timezone: tenant.timezone,
+    timezone: safeTimezone(tenant.timezone),
     quietStart: tenant.settings.quietStart,
     quietEnd: tenant.settings.quietEnd,
     fridayMorningSkip: tenant.settings.fridayMorningSkip,
@@ -153,8 +158,12 @@ export interface PlanResult { planned: number; cancelled: number }
 /** Re-plan one invoice: upsert future steps, cancel obsolete ones, never touch sent/queued steps (§7-F4). `notBefore` is the F8 promise override: no step is planned before that instant. */
 export async function planForInvoice(deps: EngineDeps, tenantId: string, invoiceId: string, now: Date, opts: { notBefore?: Date } = {}): Promise<PlanResult> {
   return withTenant(deps.app, tenantId, async (tx) => {
+    const [invPeek] = await tx.select({ id: invoices.id, debtorId: invoices.debtorId }).from(invoices).where(eq(invoices.id, invoiceId));
+    if (!invPeek) return { planned: 0, cancelled: 0 };
+    // Maintain consistent lock hierarchy (debtor -> invoice) to prevent deadlocks with payments:
+    await tx.select().from(debtors).where(eq(debtors.id, invPeek.debtorId)).for("share");
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
-    const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId));
+    const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for("update");
     if (!tenant || !invoice) return { planned: 0, cancelled: 0 };
     const steps = planReminders(
       { id: invoice.id, status: invoice.status, dueOn: invoice.dueOn },
@@ -254,6 +263,7 @@ interface DueRow {
 
 export interface GroupWork {
   businessName: string;
+  locale?: "ar" | "en";
   groupKey: string;
   channel: "whatsapp" | "sms";
   debtorId: string;
@@ -400,11 +410,15 @@ async function prepareTenant(deps: EngineDeps, tenantId: string, now: Date, limi
       if (debtor.optedOutAt !== null || optedOutHashes.has(debtor.phoneHash)) {
         await set({ status: "skipped", skipReason: "opted_out" }); bump(summary.skipped, "opted_out"); continue;
       }
+      if (!debtor.phoneValid) { await set({ status: "skipped", skipReason: "phone_invalid" }); bump(summary.skipped, "phone_invalid"); continue; }
       let normalized: ReturnType<typeof normalizeEgPhone> | null = null;
       try { normalized = normalizeEgPhone(debtor.phoneE164); } catch { normalized = null; }
-      if (!normalized) { await set({ status: "skipped", skipReason: "phone_invalid" }); bump(summary.skipped, "phone_invalid"); continue; }
-      if (row.channel === "whatsapp" && !normalized.whatsappCapable) {
-        await set({ status: "skipped", skipReason: "phone_not_whatsapp" }); bump(summary.skipped, "phone_not_whatsapp"); continue;
+      if (normalized) {
+        if (row.channel === "whatsapp" && !normalized.whatsappCapable) {
+          await set({ status: "skipped", skipReason: "phone_not_whatsapp" }); bump(summary.skipped, "phone_not_whatsapp"); continue;
+        }
+      } else if (!/^\+[1-9]\d{6,14}$/.test(debtor.phoneE164)) {
+        await set({ status: "skipped", skipReason: "phone_invalid" }); bump(summary.skipped, "phone_invalid"); continue;
       }
       if (inQuiet) {
         // Quiet hours RESCHEDULE (never silently skip): move to the next allowed slot.
@@ -431,32 +445,56 @@ async function prepareTenant(deps: EngineDeps, tenantId: string, now: Date, limi
     const mondayLocal = new Date(new Date(`${localToday}T00:00:00Z`).getTime() - ((dow + 6) % 7) * 86_400_000)
       .toISOString().slice(0, 10);
     const weekStartUtc = zonedTimeToUtc(mondayLocal, "00:00", policy.timezone);
+    const locale: "ar" | "en" = tenant.settings.exportLanguage === "en" ? "en" : "ar";
+    const businessName = locale === "en"
+      ? (tenant.settings.businessNameEn || tenant.name || tenant.businessNameAr)
+      : (tenant.businessNameAr || tenant.name);
+    const survivorById = new Map(survivors.map((r) => [r.id, r]));
+    const recentOut = debtorIds.length > 0
+      ? await tx.select({
+          debtorId: messages.debtorId,
+          channel: messages.channel,
+          createdAt: messages.createdAt,
+        }).from(messages).where(and(
+          inArray(messages.debtorId, debtorIds),
+          eq(messages.direction, "out"),
+          gte(messages.createdAt, weekStartUtc),
+        ))
+      : [];
+    const sentTodayDbMap = new Map<string, number>();
+    const sentWeekDbMap = new Map<string, number>();
+    const dayStartMs = dayStartUtc.getTime();
+    for (const m of recentOut) {
+      if (!m.debtorId) continue;
+      sentWeekDbMap.set(m.debtorId, (sentWeekDbMap.get(m.debtorId) ?? 0) + 1);
+      if (m.createdAt.getTime() >= dayStartMs) {
+        const key = `${m.debtorId}|${m.channel}`;
+        sentTodayDbMap.set(key, (sentTodayDbMap.get(key) ?? 0) + 1);
+      }
+    }
+
     const work: GroupWork[] = [];
     const acceptedToday = new Map<string, number>();
     const acceptedWeek = new Map<string, number>();
     for (const group of groups) {
-      const sentTodayDb = await tx.select({ id: messages.id }).from(messages)
-        .where(and(eq(messages.debtorId, group.debtorId), eq(messages.direction, "out"),
-          eq(messages.channel, group.channel), gte(messages.createdAt, dayStartUtc)));
-      const sentToday = [...sentTodayDb, ...Array.from({ length: acceptedToday.get(`${group.debtorId}|${group.channel}`) ?? 0 }, () => ({ id: "in-cycle" }))];
-      const groupRows = survivors.filter((r) => group.reminderIds.includes(r.id));
-      if (sentToday.length > 0) {
+      const todayKey = `${group.debtorId}|${group.channel}`;
+      const sentTodayCount = (sentTodayDbMap.get(todayKey) ?? 0) + (acceptedToday.get(todayKey) ?? 0);
+      const groupRows = group.reminderIds.map((id) => survivorById.get(id)).filter((r): r is DueRow => r !== undefined);
+      if (sentTodayCount > 0) {
         // Daily cap: one message per debtor per channel per day — push the group to tomorrow's send slot.
-        const tomorrow = zonedTimeToUtc(localDateOf(new Date(now.getTime() + 86_400_000), policy.timezone), policy.sendTimeLocal, policy.timezone);
-        for (const r of groupRows) {
-          await tx.update(reminders).set({ status: "scheduled", dueAt: nextAllowedSlot(tomorrow, policy), updatedAt: now })
-            .where(eq(reminders.id, r.id));
-        }
+        const [y, m, d] = localToday.split("-").map(Number);
+        const tomorrowLocal = new Date(Date.UTC(y!, m! - 1, d! + 1)).toISOString().slice(0, 10);
+        const tomorrow = zonedTimeToUtc(tomorrowLocal, policy.sendTimeLocal, policy.timezone);
+        await tx.update(reminders).set({
+          status: "scheduled", dueAt: nextAllowedSlot(tomorrow, policy), nextAttemptAt: null, groupKey: null, updatedAt: now,
+        }).where(inArray(reminders.id, groupRows.map((r) => r.id)));
         summary.rescheduled += groupRows.length;
         continue;
       }
-      const sentThisWeekDb = await tx.select({ id: messages.id }).from(messages)
-        .where(and(eq(messages.debtorId, group.debtorId), eq(messages.direction, "out"), gte(messages.createdAt, weekStartUtc)));
-      const sentThisWeekCount = sentThisWeekDb.length + (acceptedWeek.get(group.debtorId) ?? 0);
+      const sentThisWeekCount = (sentWeekDbMap.get(group.debtorId) ?? 0) + (acceptedWeek.get(group.debtorId) ?? 0);
       if (sentThisWeekCount >= policy.weeklyCap) {
-        for (const r of groupRows) {
-          await tx.update(reminders).set({ status: "skipped", skipReason: "weekly_cap", updatedAt: now }).where(eq(reminders.id, r.id));
-        }
+        await tx.update(reminders).set({ status: "skipped", skipReason: "weekly_cap", updatedAt: now })
+          .where(inArray(reminders.id, groupRows.map((r) => r.id)));
         bump(summary.skipped, "weekly_cap");
         continue;
       }
@@ -470,7 +508,8 @@ async function prepareTenant(deps: EngineDeps, tenantId: string, now: Date, limi
       acceptedToday.set(`${group.debtorId}|${group.channel}`, (acceptedToday.get(`${group.debtorId}|${group.channel}`) ?? 0) + 1);
       acceptedWeek.set(group.debtorId, (acceptedWeek.get(group.debtorId) ?? 0) + 1);
       work.push({
-        businessName: tenant.businessNameAr ?? tenant.name,
+        businessName,
+        locale,
         groupKey, channel: group.channel, debtorId: group.debtorId,
         debtorPhone: debtorById.get(group.debtorId)?.phoneE164 ?? "",
         templateKey: first.template_key, reminderIds: groupRows.map((r) => r.id),
@@ -578,12 +617,14 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
     };
   });
   if (live === null) return;
+  const locale = group.locale ?? "ar";
+  const joiner = locale === "en" ? ", " : "؛ ";
   const business = group.businessName;
   const variables: Record<string, string> = {
     business,
-    amount: live.outstandingByCurrency.map((item) => `${formatCurrencyMinor(item.amountMinor, item.currency)} ${item.currency}`).join("؛ "),
+    amount: live.outstandingByCurrency.map((item) => `${formatCurrencyMinor(item.amountMinor, item.currency)} ${item.currency}`).join(joiner),
     due_date: live.earliestDueOn,
-    remaining: live.outstandingByCurrency.map((item) => `${formatCurrencyMinor(item.amountMinor, item.currency)} ${item.currency}`).join("؛ "),
+    remaining: live.outstandingByCurrency.map((item) => `${formatCurrencyMinor(item.amountMinor, item.currency)} ${item.currency}`).join(joiner),
   };
   // F10/F5: when the tenant enabled it, the debtor's statement/payment URL
   // rides along as a URL variable. The registry's v1 templates declare no
@@ -618,7 +659,7 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
         tenantId, debtorId: group.debtorId, invoiceId: live.invoiceIds[0] ?? null,
         direction: "out", channel: group.channel, provider: group.channel === "sms" ? "sms" : "whatsapp",
         providerMessageId, templateKey: group.templateKey,
-        bodyText: renderTemplate(group.templateKey as TemplateKey, "ar", variables) + (payLinkUrl ? `\n${payLinkUrl}` : ""),
+        bodyText: renderTemplate(group.templateKey as TemplateKey, locale, variables) + (payLinkUrl ? `\n${payLinkUrl}` : ""),
         status: "sent",
         // The engine clock is injected (fake clock in tests): message rows
         // carry engine time, not wall time, so caps and timelines agree.

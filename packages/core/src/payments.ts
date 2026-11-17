@@ -93,14 +93,14 @@ export const paymobTransactionSchema = z.object({
   is_voided: requiredBool,
   order: z.object({
     id: z.union([z.number(), z.string()]),
-    merchant_order_id: z.string().optional(),
+    merchant_order_id: z.string().nullish(),
   }),
   owner: z.union([z.number(), z.string()]).default(0),
   pending: requiredBool,
   source_data: z.object({
-    pan: z.string().default(""),
-    sub_type: z.string().default(""),
-    type: z.string().default(""),
+    pan: z.string().nullish().transform((v) => v ?? ""),
+    sub_type: z.string().nullish().transform((v) => v ?? ""),
+    type: z.string().nullish().transform((v) => v ?? ""),
   }).default({ pan: "", sub_type: "", type: "" }),
   success: requiredBool,
 });

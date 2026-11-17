@@ -27,17 +27,35 @@ export function WhatsAppShareButton({
 
   const handleClick = () => {
     const encoded = encodeURIComponent(message);
-    const phoneDigits = phone ? phone.replace(/^\+/, "").replace(/\s+/g, "") : "";
+    const phoneDigits = phone ? phone.replace(/[^\d]/g, "") : "";
     const url = phoneDigits
       ? `https://wa.me/${phoneDigits}?text=${encoded}`
       : `https://wa.me/?text=${encoded}`;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
-  const handleCopy = (e: React.MouseEvent) => {
+  const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(message);
+    let ok = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(message);
+        ok = true;
+      }
+    } catch { /* fallback below */ }
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = message;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch { /* ignore */ }
+    }
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -52,6 +70,7 @@ export function WhatsAppShareButton({
         onClick={handleClick}
         className={`${size === "md" ? btnGhost : btnSmall} ${className}`}
         title={t("whatsapp")}
+        aria-label={buttonText ?? t("whatsapp")}
       >
         <WhatsappLogo size={size === "md" ? 20 : 16} className="text-status-paid-fg" aria-hidden />
         {buttonText && <span>{buttonText}</span>}
@@ -60,9 +79,10 @@ export function WhatsAppShareButton({
       {showCopy && (
         <button
           type="button"
-          onClick={handleCopy}
+          onClick={(e) => void handleCopy(e)}
           className={`${btnSmall} px-2`}
-          title={copied ? t("copied") : t("whatsapp")}
+          title={copied ? t("copied") : "Copy"}
+          aria-label={copied ? t("copied") : "Copy"}
         >
           {copied ? (
             <Check size={14} strokeWidth={2.5} className="text-status-paid-fg" />

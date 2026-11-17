@@ -79,7 +79,8 @@ export function rateLimitPeek(key: string, opts: { limit: number; windowSeconds:
   const refillPerMs = opts.limit / windowMs;
   const bucket = buckets.get(key);
   if (!bucket || now - bucket.updatedAt > bucket.windowMs) return { allowed: true, remaining: opts.limit, retryAfterSeconds: 0 };
-  const tokens = Math.min(opts.limit, bucket.tokens + (now - bucket.updatedAt) * refillPerMs);
+  const elapsed = Math.max(0, now - bucket.updatedAt);
+  const tokens = Math.min(opts.limit, bucket.tokens + elapsed * refillPerMs);
   if (tokens >= 1) return { allowed: true, remaining: Math.floor(tokens) - 1, retryAfterSeconds: 0 };
   return { allowed: false, remaining: 0, retryAfterSeconds: Math.ceil((1 - tokens) / (refillPerMs * 1000)) };
 }
@@ -104,8 +105,9 @@ export function rateLimit(key: string, opts: { limit: number; windowSeconds: num
     }
     bucket = { tokens: opts.limit, updatedAt: now, windowMs };
   }
-  bucket.tokens = Math.min(opts.limit, bucket.tokens + (now - bucket.updatedAt) * refillPerMs);
-  bucket.updatedAt = now;
+  const elapsed = Math.max(0, now - bucket.updatedAt);
+  bucket.tokens = Math.min(opts.limit, bucket.tokens + elapsed * refillPerMs);
+  bucket.updatedAt = Math.max(now, bucket.updatedAt);
   if (bucket.tokens >= 1) {
     bucket.tokens -= 1;
     buckets.set(key, bucket);

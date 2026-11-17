@@ -1,7 +1,7 @@
 "use client";
 import { cn, todayIso as localTodayIso } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { useCurrency } from "./CurrencyContext";
 import { BellRinging, CalendarBlank, Camera, Checks, ShieldCheck, Sparkle } from "@/components/ui/solid-icons";
@@ -48,7 +48,8 @@ export function ChequesClient() {
   const [alerts, setAlerts] = useState<AlertRow[]>([]);
   const [debtors, setDebtors] = useState<DebtorLite[]>([]);
   const [invoices, setInvoices] = useState<InvoiceLite[]>([]);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ text: string; isError?: boolean } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const todayIso = localTodayIso();
   const due30Iso = localTodayIso(30);
@@ -65,18 +66,21 @@ export function ChequesClient() {
   const [loading, setLoading] = useState(true);
   const load = useCallback(async () => {
     try {
+      setLoadError(null);
       const [list, cal, al, ds] = await Promise.all([
         trpc.cheques.list.query(), trpc.cheques.calendar.query(),
-        trpc.cheques.alerts.query(), trpc.debtors.list.query({ limit: 50 }),
+        trpc.cheques.alerts.query(), trpc.debtors.list.query({ limit: 200 }),
       ]);
       setCheques(list as ChequeRow[]);
       setCalendar(cal as WeekGroup[]);
       setAlerts(al as AlertRow[]);
       setDebtors((ds.items as DebtorLite[]).map((x) => ({ id: x.id, displayName: x.displayName })));
+    } catch (err: unknown) {
+      setLoadError(err instanceof Error && err.message ? err.message : t("failed"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
@@ -117,21 +121,24 @@ export function ChequesClient() {
             invoiceRef: out.matchedInvoice?.reference ?? null,
           });
         }
-        setMsg(t("prefilled"));
+        setMsg({ text: t("prefilled") });
       }
-    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+    } catch (err: unknown) {
+      setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
+    } finally { setBusy(false); }
   }
 
   async function onRegister(e: React.FormEvent) {
     e.preventDefault();
+    if (busy || !form.debtorId || !form.number.trim() || !form.bank.trim() || !form.amount.trim()) return;
     setBusy(true); setMsg(null);
     try {
       await trpc.cheques.register.mutate({
         debtorId: form.debtorId,
         direction: form.direction as "receivable" | "payable",
-        number: form.number,
-        bank: form.bank,
-        amount: form.amount,
+        number: form.number.trim(),
+        bank: form.bank.trim(),
+        amount: form.amount.trim(),
         issueDate: form.issueDate,
         dueDate: form.dueDate,
         invoiceId: form.invoiceId || undefined,
@@ -141,26 +148,55 @@ export function ChequesClient() {
         debtorId: "", direction: "receivable", number: "", bank: "", amount: "",
         issueDate: todayIso, dueDate: due30Iso, invoiceId: "", imageFileId: "",
       });
-      setMsg(t("registered"));
+      setMatchedInfo(null);
+      setMsg({ text: t("registered") });
       await load();
-    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+    } catch (err: unknown) {
+      setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
+    } finally { setBusy(false); }
   }
 
   async function onTransition(id: string, to: string) {
+    if (busy) return;
     setBusy(true); setMsg(null);
     try {
       await trpc.cheques.transition.mutate({ id, to: to as never });
+      setMsg({ text: t("saved") });
       await load();
-    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+    } catch (err: unknown) {
+      setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
+    } finally { setBusy(false); }
   }
 
   async function onRunAlerts() {
-    setBusy(true);
+    if (busy) return;
+    setBusy(true); setMsg(null);
     try { await trpc.cheques.runAlerts.mutate(); await load(); }
-    catch { setMsg(t("failed")); } finally { setBusy(false); }
+    catch (err: unknown) {
+      setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
+    } finally { setBusy(false); }
   }
 
-  const debtorName = (id: string) => debtors.find((d) => d.id === id)?.displayName ?? id;
+  const debtorMap = useMemo(() => new Map(debtors.map((d) => [d.id, d.displayName])), [debtors]);
+  const debtorName = (id: string) => debtorMap.get(id) ?? id;
+
+  const portfolioSummary = useMemo(() => {
+    const held = new Map<string, bigint>();
+    const cleared = new Map<string, bigint>();
+    const bounced = new Map<string, bigint>();
+    for (const c of cheques) {
+      const amt = BigInt(c.amountMinor || "0");
+      if (c.status === "held" || c.status === "deposited") {
+        held.set(c.currency, (held.get(c.currency) ?? 0n) + amt);
+      } else if (c.status === "cleared") {
+        cleared.set(c.currency, (cleared.get(c.currency) ?? 0n) + amt);
+      } else if (c.status === "bounced") {
+        bounced.set(c.currency, (bounced.get(c.currency) ?? 0n) + amt);
+      }
+    }
+    const toSorted = (m: Map<string, bigint>) => [...m.entries()].sort(([a], [b]) => a.localeCompare(b));
+    return { held: toSorted(held), cleared: toSorted(cleared), bounced: toSorted(bounced) };
+  }, [cheques]);
   const money = (minor: string, currency: string) => (
     <span className="tnum" dir="ltr">
       {formatAmountOnly(BigInt(minor), { currency })} <span className="text-[11px] font-bold text-text-muted">{currency}</span>
@@ -171,18 +207,19 @@ export function ChequesClient() {
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
       {/* Main Column: Cheques List, Alerts, Calendar (8 cols) */}
       <section className="flex flex-col gap-6 lg:col-span-8">
-        {msg && <p role="status" className="rounded-xl border border-border bg-surface px-4 py-3 font-bold text-primary">{msg}</p>}
+        {loadError && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-danger/30 bg-danger-bg px-4 py-3 text-sm font-semibold text-danger">
+            <span>{loadError}</span>
+            <button type="button" onClick={() => void load()} className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "underline")}>
+              {isAr ? "إعادة المحاولة" : "Retry"}
+            </button>
+          </div>
+        )}
+        {msg && <p role={msg.isError ? "alert" : "status"} className={cn("rounded-xl border px-4 py-3 font-bold", msg.isError ? "border-danger/30 bg-danger-bg text-danger" : "border-border bg-surface text-primary")}>{msg.text}</p>}
 
         {/* Cheques Portfolio Visual Summary Strip */}
         {cheques.length > 0 && (() => {
-          const sumByCurrency = (rows: ChequeRow[]) => {
-            const sums = new Map<string, bigint>();
-            for (const row of rows) sums.set(row.currency, (sums.get(row.currency) ?? 0n) + BigInt(row.amountMinor || "0"));
-            return [...sums.entries()].sort(([a], [b]) => a.localeCompare(b));
-          };
-          const held = sumByCurrency(cheques.filter((c) => c.status === "held" || c.status === "deposited"));
-          const cleared = sumByCurrency(cheques.filter((c) => c.status === "cleared"));
-          const bounced = sumByCurrency(cheques.filter((c) => c.status === "bounced"));
+          const { held, cleared, bounced } = portfolioSummary;
           const totals = (items: Array<[string, bigint]>) => items.length === 0
             ? <span className="tnum text-lg font-extrabold text-text-muted">—</span>
             : items.map(([currency, minor]) => <span key={currency} className="tnum text-lg font-extrabold text-primary" dir="ltr">{formatAmountOnly(minor, { currency })} <span className="text-xs font-bold text-text-muted">{currency}</span></span>);
@@ -263,6 +300,7 @@ export function ChequesClient() {
                         {(NEXT[c.status] ?? []).map((n) => (
                           <button
                             key={n.to}
+                            type="button"
                             data-testid={`cheque-to-${n.to}`}
                             disabled={busy}
                             onClick={() => void onTransition(c.id, n.to)}
@@ -322,7 +360,7 @@ export function ChequesClient() {
               <span className="font-bold text-sm">{t("photoTitle")}</span>
               <span className="text-xs text-text-muted">{t("photoHint")}</span>
               <input data-testid="cheque-photo" type="file" accept="image/*" disabled={busy} className="sr-only"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) void onPhoto(f); }} />
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void onPhoto(f); }} />
             </label>
 
             {matchedInfo && (
@@ -365,9 +403,9 @@ export function ChequesClient() {
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
               <label className={labelCls}><span>{t("number")}</span>
-                <input data-testid="cheque-number" required value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} className={inputCls} /></label>
+                <input data-testid="cheque-number" required maxLength={40} value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} className={inputCls} /></label>
               <label className={labelCls}><span>{t("bank")}</span>
-                <input data-testid="cheque-bank" required value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} className={inputCls} /></label>
+                <input data-testid="cheque-bank" required maxLength={160} value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} className={inputCls} /></label>
               <label className={labelCls}><span>{t("amount")}</span>
                 <input data-testid="cheque-amount" required value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={inputCls} /></label>
               <label className={labelCls}><span>{t("invoice")}</span>

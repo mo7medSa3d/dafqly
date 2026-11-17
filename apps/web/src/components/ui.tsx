@@ -127,7 +127,7 @@ export function SecurityNotice({
   compact?: boolean;
 }) {
   return (
-    <div className={`flex items-center gap-3 rounded-xl border border-border bg-muted/60 ${compact ? "px-4 py-3" : "px-4 py-3"}`}>
+    <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/60 px-4 py-3">
       {compact ? (
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><LockKey size={17} aria-hidden /></span>
       ) : <SecurityLockBadge size={38} />}
@@ -151,7 +151,7 @@ export function BackLink({ href, label }: { href: string; label: string }) {
 
 /** Initial avatar used in list rows (debtor/customer identity). */
 export function InitialAvatar({ name, size = 40 }: { name: string; size?: number }) {
-  const initial = (name.trim()[0] ?? "؟").toUpperCase();
+  const initial = (name.trim()[0] ?? "?").toUpperCase();
   return (
     <span
       aria-hidden

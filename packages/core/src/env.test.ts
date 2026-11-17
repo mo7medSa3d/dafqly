@@ -16,10 +16,8 @@ describe("parseEnv", () => {
     expect(env.DEFAULT_LOCALE).toBe("ar");
     expect(env.RUN_SANDBOX_TESTS).toBe(false);
     expect(env.AI_DAILY_TOKEN_LIMIT).toBe(100_000);
-    expect(env.AI_MODEL).toBe("gemini-3.8-flash");
-    expect(env.GEMINI_MODEL_FAST).toBe("gemini-3.5-flash-lite");
-    expect(env.LLM_MODEL_AGENT).toBe("claude-sonnet-5-5");
-    expect(env.LLM_MODEL_FAST).toBe("claude-haiku-5-5");
+    expect(env.AI_MODEL).toBe("");
+    expect(env.AI_PROVIDER).toBe("gemini");
   });
   it("fails fast on missing DB URL and placeholder secrets", () => {
     expect(() => parseEnv({ ...base, DATABASE_URL: undefined })).toThrow(EnvError);
@@ -61,7 +59,7 @@ describe("parseEnv", () => {
     expect(parseEnv({ ...secure, DRY_RUN_MESSAGING: "true" }).DRY_RUN_MESSAGING).toBe(true);
     // The AI guard is only reachable once the earlier live-messaging guard
     // passes, so this assertion needs a fully configured WhatsApp setup.
-    expect(() => parseEnv({ ...secure, GEMINI_API_KEY: "", AI_API_KEY: "", WHATSAPP_API_VERSION: "v24.0", WHATSAPP_PHONE_NUMBER_ID: "123", WHATSAPP_ACCESS_TOKEN: "token" })).toThrow(/Production requires .* AI_API_KEY/i);
+    expect(() => parseEnv({ ...secure, GEMINI_API_KEY: "", AI_API_KEY: "", WHATSAPP_API_VERSION: "v24.0", WHATSAPP_PHONE_NUMBER_ID: "123", WHATSAPP_ACCESS_TOKEN: "token" })).toThrow(/Production requires .*AI_API_KEY/i);
   });
   it("only allows the supported AI provider identifiers", () => {
     expect(() => parseEnv({ ...base, AI_PROVIDER: "fake" })).toThrow(/AI_PROVIDER/i);

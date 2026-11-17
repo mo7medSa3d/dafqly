@@ -2,10 +2,10 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { ownerDb, appDb } from "./db";
-import { user as userTable, tenants, payments, usageLedger, reminders } from "@tahseel/db/schema";
+import { user as userTable, tenants, payments, usageLedger, reminders, invoices } from "@tahseel/db/schema";
 import { withTenant } from "@tahseel/db";
 import { createTenantForUser } from "./services";
-import { createDebtor, createInvoice, recordPayment, getDebtorDetail, transitionInvoice } from "./ledger";
+import { createDebtor, createInvoice, recordPayment, getDebtorDetail } from "./ledger";
 import { registerCheque, transitionCheque, listCheques, runChequeAlerts, listChequeAlerts } from "./cheques";
 import { confirmClaimedPayment } from "./gateway";
 import { getQuotaStatus, changePlan, generateSubscriptionInvoices, listSubscriptionInvoices } from "./billing";
@@ -181,9 +181,8 @@ d("M5 services (F9/F11/F12/F13)", () => {
     const debtorB2 = await createDebtor(app(), tenantB, user.id, { displayName: "عميل التوقع", phone: "01055554444" });
     // 9 paid invoices: still not enough.
     for (let i = 0; i < 9; i++) {
-      const inv = await createInvoice(app(), tenantB, user.id, { debtorId: debtorB2.id, amount: "100", issuedOn: addDaysIso(today, -60), dueOn: addDaysIso(today, -50) });
+      await createInvoice(app(), tenantB, user.id, { debtorId: debtorB2.id, amount: "100", issuedOn: addDaysIso(today, -60), dueOn: addDaysIso(today, -50) });
       await recordPayment(app(), tenantB, user.id, { debtorId: debtorB2.id, amount: "100", method: "cash", receivedOn: addDaysIso(today, -45) });
-      void inv;
     }
     let f = await getForecast(app(), tenantB, today);
     expect(f.enoughData).toBe(false);
@@ -215,7 +214,7 @@ d("M5 services (F9/F11/F12/F13)", () => {
     // A paid invoice with only part collected trains on the collected sum.
     const partial = await createInvoice(app(), tenantB, user.id, { debtorId: debtor.id, amount: "100", issuedOn: addDaysIso(today, -60), dueOn: addDaysIso(today, -50) });
     await recordPayment(app(), tenantB, user.id, { debtorId: debtor.id, amount: "40", method: "cash", receivedOn: addDaysIso(today, -45) });
-    await transitionInvoice(app(), tenantB, user.id, partial.id, "paid");
+    await withTenant(app(), tenantB, (tx) => tx.update(invoices).set({ status: "paid" }).where(eq(invoices.id, partial.id)));
     const collected = await withTenant(app(), tenantB, (tx) => loadCollectedByInvoice(tx));
     expect(collected.get(partial.id)).toBe(4000n);
   });
@@ -284,6 +283,5 @@ d("M5 services (F9/F11/F12/F13)", () => {
     expect(g2.generated).toBe(0);
     const invoices = await listSubscriptionInvoices(app(), tenantB);
     expect(invoices.filter((i) => i.planKey === "trial")).toHaveLength(1);
-    void payments; void invoices;
   });
 });

@@ -75,9 +75,9 @@ export class PaymobProvider implements PaymentProvider {
     const amount = Number(input.amountMinor);
     if (!Number.isSafeInteger(amount) || amount <= 0) throw new PaymobError(400, "amount must be a positive integer of piasters");
     const nameParts = (input.debtorName ?? "Customer").trim().split(/\s+/);
-    const firstName = nameParts[0] ?? "Customer";
+    const firstName = nameParts[0] || "Customer";
     const lastName = nameParts.slice(1).join(" ") || "NA";
-    const email = input.debtorEmail ?? "customer@paymob.local";
+    const email = input.debtorEmail?.trim() || "customer@paymob.local";
     const data = await this.call("/v1/intention/", {
       amount,
       currency: input.currency,
@@ -85,7 +85,7 @@ export class PaymobProvider implements PaymentProvider {
       items: [{ name: "Invoice payment", amount, description: `Tahseel payment ${input.reference}`, quantity: 1 }],
       billing_data: {
         first_name: firstName, last_name: lastName, email,
-        phone_number: input.debtorPhone ?? "NA",
+        phone_number: input.debtorPhone?.trim() || "NA",
         apartment: "NA", floor: "NA", street: "NA", building: "NA",
         shipping_method: "NA", postal_code: "NA", city: "NA", country: "EGY", state: "NA",
       },
@@ -108,7 +108,7 @@ export class PaymobProvider implements PaymentProvider {
     this.assertConfigured();
     const rawTxnId = input.transactionId.trim();
     const transactionId = Number(rawTxnId);
-    if (!rawTxnId || !Number.isSafeInteger(transactionId) || transactionId <= 0) {
+    if (!/^\d+$/.test(rawTxnId) || !Number.isSafeInteger(transactionId) || transactionId <= 0) {
       throw new PaymobError(400, "transaction_id must be a positive numeric Paymob transaction id");
     }
     const amountCents = Number(input.amountMinor);

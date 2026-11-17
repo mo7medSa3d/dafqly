@@ -1,4 +1,4 @@
-import { daysOverdue } from "./invoices";
+import { addDaysIso, daysOverdue } from "./invoices";
 
 /**
  * Cash-flow forecast (BUILD_PLAN F12, ADR-023): no ML. A debtor's lateness
@@ -95,11 +95,6 @@ export function makeLatenessResolver(
   };
 }
 
-function addDays(iso: string, days: number): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y!, m! - 1, d!) + days * 86_400_000).toISOString().slice(0, 10);
-}
-
 export interface ForecastWeek { weekStart: string; expectedMinor: number; conservativeMinor: number }
 export interface ForecastResult {
   enoughData: boolean;
@@ -142,7 +137,7 @@ export function forecastCashflow(input: {
   for (const row of input.paidHistory) assertSafeMinor(row.amountMinor, `paid history ${row.debtorId}/${row.dueOn}`);
   const weekCount = input.weeks ?? 8;
   const weeks: ForecastWeek[] = Array.from({ length: weekCount }, (_, i) => ({
-    weekStart: addDays(input.today, i * 7), expectedMinor: 0, conservativeMinor: 0,
+    weekStart: addDaysIso(input.today, i * 7), expectedMinor: 0, conservativeMinor: 0,
   }));
   const beyondHorizon = { expectedMinor: 0, conservativeMinor: 0 };
   const paidCount = input.paidHistory.length;
@@ -170,10 +165,10 @@ export function forecastCashflow(input: {
     if (inv.outstandingMinor <= 0) continue;
     const { stats, level } = resolveLateness(inv.debtorId);
     basisByLevel[level]++;
-    const e = bucket(addDays(inv.dueOn, stats.median));
+    const e = bucket(addDaysIso(inv.dueOn, stats.median));
     if (e < weekCount) weeks[e]!.expectedMinor += inv.outstandingMinor;
     else beyondHorizon.expectedMinor += inv.outstandingMinor;
-    const c = bucket(addDays(inv.dueOn, stats.p80));
+    const c = bucket(addDaysIso(inv.dueOn, stats.p80));
     if (c < weekCount) weeks[c]!.conservativeMinor += inv.outstandingMinor;
     else beyondHorizon.conservativeMinor += inv.outstandingMinor;
   }
@@ -184,7 +179,7 @@ export function forecastCashflow(input: {
       tenantMedianDays: tenantStats?.median ?? null, tenantP80Days: tenantStats?.p80 ?? null,
       method: "Expected date = due date + median days-late; conservative date = due date + 80th-percentile days-late. "
         + "Per-debtor stats when the debtor has >= 3 paid invoices, else tenant stats, else the conservative default (median 7, p80 21). "
-        + "Weeks are 7-day windows starting today; amounts whose expected/conservative date falls past the 8-week horizon are reported in beyondHorizon, never dropped.",
+        + `Weeks are 7-day windows starting today; amounts whose expected/conservative date falls past the ${weekCount}-week horizon are reported in beyondHorizon, never dropped.`,
     },
   };
 }
@@ -211,10 +206,10 @@ export function backtestForecast(input: {
   const training = input.history.filter((r) => r.paidOn <= input.cutoff);
   const future = input.history.filter((r) => r.paidOn > input.cutoff);
   const weeks: BacktestWeek[] = Array.from({ length: horizon }, (_, i) => ({
-    weekStart: addDays(input.cutoff, i * 7 + 1), predictedMinor: 0, actualMinor: 0, absErrorMinor: 0,
+    weekStart: addDaysIso(input.cutoff, i * 7 + 1), predictedMinor: 0, actualMinor: 0, absErrorMinor: 0,
   }));
   const bucket = (dateIso: string): number => {
-    const offset = daysOverdue(addDays(input.cutoff, 1), dateIso);
+    const offset = daysOverdue(addDaysIso(input.cutoff, 1), dateIso);
     if (offset < 0) return 0;
     return Math.floor(offset / 7);
   };
@@ -223,7 +218,7 @@ export function backtestForecast(input: {
     const a = bucket(row.paidOn);
     if (a < horizon) weeks[a]!.actualMinor += row.amountMinor;
     const { stats } = resolveTraining(row.debtorId);
-    const p = bucket(addDays(row.dueOn, stats.median));
+    const p = bucket(addDaysIso(row.dueOn, stats.median));
     if (p < horizon) weeks[p]!.predictedMinor += row.amountMinor;
   }
   let totalErr = 0;

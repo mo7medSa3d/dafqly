@@ -37,9 +37,11 @@ export default async function StatementPage({
   if (!limit.allowed) {
     return (
       <div lang={errorLocale} dir={errorLocale === "ar" ? "rtl" : "ltr"}>
-        <main data-testid="statement-rate-limited" className="mx-auto flex min-h-dvh w-full max-w-xl flex-col items-center justify-center gap-3 p-6 text-center">
-          <h1 className="text-xl font-bold">{errorMessages.rateLimitedTitle}</h1>
-          <p className="text-text-muted">{errorMessages.rateLimitedBody}</p>
+        <main data-testid="statement-rate-limited" className="mx-auto flex min-h-dvh w-full max-w-xl flex-col items-center justify-center p-6">
+          <div role="alert" className="w-full rounded-xl border border-border bg-surface p-6 text-center">
+            <h1 className="text-xl font-bold">{errorMessages.rateLimitedTitle}</h1>
+            <p className="mt-2 text-sm text-text-muted">{errorMessages.rateLimitedBody}</p>
+          </div>
         </main>
       </div>
     );
@@ -48,9 +50,11 @@ export default async function StatementPage({
   if (!data) {
     return (
       <div lang={errorLocale} dir={errorLocale === "ar" ? "rtl" : "ltr"}>
-        <main data-testid="statement-not-found" className="mx-auto flex min-h-dvh w-full max-w-xl flex-col items-center justify-center gap-3 p-6 text-center">
-          <h1 className="text-xl font-bold">{errorMessages.notFoundTitle}</h1>
-          <p className="text-text-muted">{errorMessages.notFoundBody}</p>
+        <main data-testid="statement-not-found" className="mx-auto flex min-h-dvh w-full max-w-xl flex-col items-center justify-center p-6">
+          <div role="alert" className="w-full rounded-xl border border-border bg-surface p-6 text-center">
+            <h1 className="text-xl font-bold">{errorMessages.notFoundTitle}</h1>
+            <p className="mt-2 text-sm text-text-muted">{errorMessages.notFoundBody}</p>
+          </div>
         </main>
       </div>
     );

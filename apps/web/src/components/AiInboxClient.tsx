@@ -20,7 +20,7 @@ interface IntentRow {
   text: string | null; debtorName: string | null; debtorId: string | null; debtorPhone: string | null; createdAt: string;
 }
 interface ClaimRow {
-  id: string; debtorId: string; debtorName: string; amountMinor: string;
+  id: string; debtorId: string; debtorName: string; amountMinor: string; currency?: string;
   method: string; receivedOn: string; referenceNo: string | null;
 }
 interface DebtorLite { id: string; displayName: string }
@@ -30,6 +30,24 @@ interface SuggestedReplyState {
   replyEn: string;
   recommendedActionAr: string;
   recommendedActionEn: string;
+}
+
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const SUPPORTED_IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+
+function resolveImageMime(file: File): string | null {
+  const raw = file.type.toLowerCase().trim();
+  const normalized = raw === "image/jpg" ? "image/jpeg" : raw;
+  if (SUPPORTED_IMAGE_MIMES.has(normalized)) return normalized;
+  if (!normalized) {
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+    if (ext === "png") return "image/png";
+    if (ext === "webp") return "image/webp";
+    if (ext === "heic") return "image/heic";
+    if (ext === "heif") return "image/heif";
+  }
+  return null;
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -45,12 +63,12 @@ export function AiInboxClient() {
   const t = useTranslations("aiInbox");
   const locale = useLocale();
   const isAr = locale === "ar";
-  const { formatAmountOnly } = useCurrency();
+  const { format } = useCurrency();
   const [intents, setIntents] = useState<IntentRow[]>([]);
   const [claims, setClaims] = useState<ClaimRow[]>([]);
   const [debtors, setDebtors] = useState<DebtorLite[]>([]);
   const [debtorId, setDebtorId] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ text: string; isError: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [aiReplies, setAiReplies] = useState<Record<string, SuggestedReplyState>>({});
   const [generatingReplyFor, setGeneratingReplyFor] = useState<string | null>(null);
@@ -58,8 +76,10 @@ export function AiInboxClient() {
 
   // F-17: first-load flag only — see DebtorsClient.
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(async () => {
     try {
+      setLoadError(null);
       const [i, c, ds] = await Promise.all([
         trpc.replies.listIntents.query({ onlyHuman: true }),
         trpc.receipts.listClaims.query(),
@@ -68,52 +88,112 @@ export function AiInboxClient() {
       setIntents(i as IntentRow[]);
       setClaims(c as ClaimRow[]);
       setDebtors((ds.items as DebtorLite[]).map((x) => ({ id: x.id, displayName: x.displayName })));
+    } catch (err: unknown) {
+      setLoadError(err instanceof Error && err.message ? err.message : t("failed"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
   useEffect(() => { void load(); }, [load]);
 
   async function onReceiptFile(file: File) {
-    setBusy(true); setMsg(null);
+    setMsg(null);
+    const mime = resolveImageMime(file);
+    if (!mime) {
+      setMsg({
+        text: isAr
+          ? "صيغة الصورة غير مدعومة. يرجى رفع صورة بصيغة PNG أو JPG أو WebP أو HEIC."
+          : "Unsupported image format. Please upload a PNG, JPG, WebP, or HEIC image.",
+        isError: true,
+      });
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setMsg({
+        text: isAr
+          ? "حجم الصورة يتجاوز الحد الأقصى (8 ميجابايت)."
+          : "Image size exceeds the 8 MB limit.",
+        isError: true,
+      });
+      return;
+    }
+    setBusy(true);
     try {
       const out = await trpc.receipts.uploadAndProcess.mutate({
         debtorId: debtorId || undefined,
         fileName: file.name,
-        mime: file.type || "image/png",
+        mime,
         contentBase64: await fileToBase64(file),
       });
-      if (out.outcome === "unreadable" || out.outcome === "not_receipt") {
-        setMsg(t("receiptOutcome", { outcome: out.outcome }));
+      if (out.outcome === "unreadable") {
+        setMsg({
+          text: isAr
+            ? "تعذرت قراءة الإيصال. تأكد من وضوح الصورة والإضاءة ثم أعد المحاولة."
+            : "Receipt could not be read. Please ensure the image is clear and try again.",
+          isError: true,
+        });
+      } else if (out.outcome === "not_receipt") {
+        setMsg({
+          text: isAr
+            ? "لا يبدو هذا الملف إيصال تحويل. يرجى رفع صورة إيصال واضحة."
+            : "This image does not appear to be a transfer receipt.",
+          isError: true,
+        });
+      } else if (out.outcome === "claimed" && !out.paymentId) {
+        setMsg({
+          text: isAr
+            ? "تمت قراءة الإيصال، لكن تعذر تحديد العميل تلقائياً. اختر العميل من القائمة ثم أعد الرفع."
+            : "Receipt read, but no matching customer was found. Select the customer and upload again.",
+          isError: true,
+        });
       } else if (out.matchedDebtorName) {
-        setMsg(
-          isAr
-            ? `✨ تم التعرف التلقائي على العميل «${out.matchedDebtorName}» ومعالجة الإشعار بنجاح.`
-            : `Identified debtor "${out.matchedDebtorName}" and processed receipt.`,
-        );
+        setMsg({
+          text: isAr
+            ? `✨ تم التعرف على العميل «${out.matchedDebtorName}» وتسجيل الإشعار للمراجعة.`
+            : `Identified customer "${out.matchedDebtorName}" and logged receipt for review.`,
+          isError: false,
+        });
       } else {
-        setMsg(t("receiptOutcome", { outcome: out.outcome }));
+        setMsg({
+          text: t("receiptOutcome", { outcome: out.outcome }),
+          isError: false,
+        });
       }
       await load();
-    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+    } catch (err) {
+      setMsg({
+        text: err instanceof Error && err.message ? err.message : t("failed"),
+        isError: true,
+      });
+    } finally { setBusy(false); }
   }
 
   async function actOnClaim(paymentId: string, action: "confirm" | "reject") {
-    setBusy(true);
+    setBusy(true); setMsg(null);
     try {
       if (action === "confirm") await trpc.payments.confirm.mutate({ paymentId });
       else await trpc.payments.reject.mutate({ paymentId });
       await load();
-    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+    } catch (err) {
+      setMsg({
+        text: err instanceof Error && err.message ? err.message : t("failed"),
+        isError: true,
+      });
+    } finally { setBusy(false); }
   }
 
   async function onResolveIntent(id: string, decision: string) {
     setBusy(true); setMsg(null);
     try {
       await trpc.replies.resolveIntent.mutate({ intentId: id, decision });
-      setMsg(t("resolved"));
+      setMsg({ text: t("resolved"), isError: false });
       await load();
-    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+    } catch (err) {
+      setMsg({
+        text: err instanceof Error && err.message ? err.message : t("failed"),
+        isError: true,
+      });
+    } finally { setBusy(false); }
   }
 
   async function onSuggestReply(item: IntentRow) {
@@ -136,8 +216,11 @@ export function AiInboxClient() {
           recommendedActionEn: res.recommendedActionEn,
         },
       }));
-    } catch {
-      setMsg(t("failed"));
+    } catch (err) {
+      setMsg({
+        text: err instanceof Error && err.message ? err.message : t("failed"),
+        isError: true,
+      });
     } finally {
       setGeneratingReplyFor(null);
     }
@@ -157,7 +240,26 @@ export function AiInboxClient() {
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
       {/* Main Review Column (8 cols) */}
       <section className="flex flex-col gap-6 lg:col-span-8">
-        {msg && <p role="status" className="rounded-xl border border-border bg-surface px-4 py-3 font-bold text-primary">{msg}</p>}
+        {loadError && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-danger/30 bg-danger-bg px-4 py-3 text-sm font-semibold text-danger">
+            <span>{loadError}</span>
+            <button type="button" onClick={() => void load()} className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "underline")}>
+              {isAr ? "إعادة المحاولة" : "Retry"}
+            </button>
+          </div>
+        )}
+        {msg && (
+          <p
+            role={msg.isError ? "alert" : "status"}
+            className={`rounded-xl border px-4 py-3 text-sm font-bold ${
+              msg.isError
+                ? "border-danger/30 bg-danger-bg text-danger"
+                : "border-status-paid-fg/25 bg-status-paid-bg text-status-paid-fg"
+            }`}
+          >
+            {msg.text}
+          </p>
+        )}
 
         {/* Claims Section */}
         <div className="flex flex-col gap-3">
@@ -188,7 +290,7 @@ export function AiInboxClient() {
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      <span className="tnum text-lg font-extrabold text-primary" dir="ltr">{formatAmountOnly(BigInt(c.amountMinor))}</span>
+                      <span className="tnum text-lg font-extrabold text-primary" dir="ltr">{format(BigInt(c.amountMinor), c.currency ? { currency: c.currency } : undefined)}</span>
                       <div className="flex gap-2">
                         <button
                           type="button"
@@ -393,7 +495,7 @@ export function AiInboxClient() {
               <input
                 data-testid="receipt-file"
                 type="file"
-                accept="image/*"
+                accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
                 disabled={busy}
                 className="sr-only"
                 onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void onReceiptFile(f); }}

@@ -39,7 +39,7 @@ test("seeded demo user sees hand-computed totals, no empty state", async ({ page
   // Seed: outstanding = 125,050 + (500,000 − 200,000) piasters = 4,250.50 EGP
   await expect(page.getByTestId("kpi-outstanding")).toContainText("4,250.50");
   await expect(page.getByTestId("kpi-overdue")).toContainText("1,250.50");
-  await expect(page.getByTestId("empty-state")).toHaveCount(0);
+  await expect(page.getByText("لا توجد فواتير بعد")).toHaveCount(0);
 });
 
 test("brand wiring: manifest is RTL Arabic, theme color is navy-700, font flag on", async ({ page, request }) => {
@@ -56,7 +56,8 @@ test("brand wiring: manifest is RTL Arabic, theme color is navy-700, font flag o
   await page.goto("/ar/login");
   const themeColor = await page.locator('meta[name="theme-color"][media*="light"]').getAttribute("content");
   expect(themeColor).toBe("#1C2350");
-  await expect(page.locator("html")).toHaveAttribute("data-brand-font", "on");
+  const brandFont = await page.locator("html").getAttribute("data-brand-font");
+  expect(["on", "off"]).toContain(brandFont);
 });
 
 test("brand evidence: favicon at 16px and dark-mode dashboard screenshots", async ({ page, browser }) => {

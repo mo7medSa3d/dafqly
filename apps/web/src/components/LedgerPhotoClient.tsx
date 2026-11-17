@@ -8,7 +8,7 @@ import { formatCurrencyMinor, parseMoney } from "@tahseel/core";
 import { Camera, CheckCircle, Eye, Notebook, Trash, WarningCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { useCurrency } from "./CurrencyContext";
-import { Panel, StatusPill, btnGhost, btnPrimary } from "./ui";
+import { LoadingState, Panel, StatusPill, btnGhost, btnPrimary } from "./ui";
 
 /**
  * F6 ledger-photo review: upload pages -> extraction progress -> editable
@@ -31,6 +31,23 @@ interface JobLite { id: string; fileName: string; status: string; stats: Record<
 
 const LOW = 0.8;
 const lowCell = "bg-status-due-bg/60";
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const SUPPORTED_IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+
+function resolveImageMime(file: File): string | null {
+  const raw = file.type.toLowerCase().trim();
+  const normalized = raw === "image/jpg" ? "image/jpeg" : raw;
+  if (SUPPORTED_IMAGE_MIMES.has(normalized)) return normalized;
+  if (!normalized) {
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+    if (ext === "png") return "image/png";
+    if (ext === "webp") return "image/webp";
+    if (ext === "heic") return "image/heic";
+    if (ext === "heif") return "image/heif";
+  }
+  return null;
+}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -52,7 +69,8 @@ export function LedgerPhotoClient() {
   const [jobs, setJobs] = useState<JobLite[]>([]);
   const [edits, setEdits] = useState<Record<string, RowEdit>>({});
   const initialLoadedRef = useRef(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ text: string; isError: boolean } | null>(null);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
 
@@ -61,20 +79,23 @@ export function LedgerPhotoClient() {
       const list = (await trpc.ledgerAi.listJobs.query()) as JobLite[];
       setJobs(list);
       return list;
-    } catch {
+    } catch (err) {
+      setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
       return [];
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const loadJob = useCallback(async (id: string) => {
     try {
       const j = (await trpc.ledgerAi.job.query({ jobId: id })) as Job;
       setJob(j);
       setEdits({});
-    } catch {
-      /* ignore */
+    } catch (err) {
+      setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (initialLoadedRef.current) return;
@@ -91,30 +112,61 @@ export function LedgerPhotoClient() {
     setBusy(true); setMsg(null);
     try {
       await trpc.ledgerAi.delete.mutate({ jobId: id });
-      setMsg(t("deleted"));
+      setMsg({ text: t("deleted"), isError: false });
       if (job?.id === id) setJob(null);
       await loadJobs();
-    } catch {
-      setMsg(t("failed"));
+    } catch (err) {
+      setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
     } finally {
       setBusy(false);
     }
   }
 
-  async function onFiles(files: FileList) {
-    setBusy(true); setMsg(null); setProgress(t("uploading"));
-    try {
-      const uploads = [];
-      for (const file of Array.from(files).slice(0, 10)) {
-        uploads.push({ fileName: file.name, mime: file.type || "image/png", contentBase64: await fileToBase64(file) });
+  async function onFiles(files: FileList | File[]) {
+    setMsg(null);
+    const list = Array.from(files);
+    if (list.length > 10) {
+      setMsg({
+        text: isAr ? "الحد الأقصى 10 صفحات في العملية الواحدة." : "Maximum 10 pages per upload.",
+        isError: true,
+      });
+      return;
+    }
+    const uploads = [];
+    for (const file of list) {
+      const mime = resolveImageMime(file);
+      if (!mime) {
+        setMsg({
+          text: isAr
+            ? `صيغة الملف «${file.name}» غير مدعومة. استخدم PNG أو JPG أو WebP أو HEIC.`
+            : `Unsupported format for "${file.name}". Use PNG, JPG, WebP, or HEIC.`,
+          isError: true,
+        });
+        return;
       }
+      if (file.size > MAX_IMAGE_BYTES) {
+        setMsg({
+          text: isAr
+            ? `حجم الملف «${file.name}» يتجاوز الحد الأقصى (8 ميجابايت).`
+            : `"${file.name}" exceeds the 8 MB size limit.`,
+          isError: true,
+        });
+        return;
+      }
+      uploads.push({ fileName: file.name, mime, contentBase64: await fileToBase64(file) });
+    }
+    setBusy(true); setProgress(t("uploading"));
+    try {
       const created = await trpc.ledgerAi.create.mutate({ uploads });
       setProgress(t("extracting"));
       const view = await trpc.ledgerAi.runExtraction.mutate({ jobId: created.jobId });
       setJob(view as Job);
       setProgress(null);
       await loadJobs();
-    } catch { setMsg(t("failed")); setProgress(null); } finally { setBusy(false); }
+    } catch (err) {
+      setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
+      setProgress(null);
+    } finally { setBusy(false); }
   }
 
   async function saveRowEdit(rowId: string, e: RowEdit) {
@@ -138,7 +190,9 @@ export function LedgerPhotoClient() {
     try {
       await saveRowEdit(row.id, e);
       if (job) await loadJob(job.id);
-    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+    } catch (err) {
+      setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
+    } finally { setBusy(false); }
   }
 
   async function onCommit() {
@@ -153,10 +207,12 @@ export function LedgerPhotoClient() {
         setEdits({});
       }
       const r = await trpc.ledgerAi.commit.mutate({ jobId: job.id });
-      setMsg(t("committed", { invoices: r.createdInvoices, debtors: r.createdDebtors, skipped: r.skippedInvalid }));
+      setMsg({ text: t("committed", { invoices: r.createdInvoices, debtors: r.createdDebtors, skipped: r.skippedInvalid }), isError: false });
       await loadJob(job.id);
       await loadJobs();
-    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+    } catch (err) {
+      setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
+    } finally { setBusy(false); }
   }
 
   const edit = (row: JobRow, patch: RowEdit) =>
@@ -193,11 +249,11 @@ export function LedgerPhotoClient() {
           <input
             data-testid="ledger-file"
             type="file"
-            accept="image/*"
+            accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
             multiple
             disabled={busy}
             className="sr-only"
-            onChange={(e) => { const files = e.target.files; e.target.value = ""; if (files?.length) void onFiles(files); }}
+            onChange={(e) => { const list = Array.from(e.target.files ?? []); e.target.value = ""; if (list.length) void onFiles(list); }}
           />
         </label>
 
@@ -251,18 +307,29 @@ export function LedgerPhotoClient() {
           {t("progress", { done: job.stats.pagesDone ?? 0, total: job.stats.pagesTotal ?? 0, rows: job.stats.rowsFound ?? 0 })}
         </p>
       )}
-      {msg && <p role="status" className="rounded-xl border border-border bg-surface px-4 py-3 font-bold">{msg}</p>}
+      {msg && (
+        <p
+          role={msg.isError ? "alert" : "status"}
+          className={`rounded-xl border px-4 py-3 text-sm font-bold ${
+            msg.isError
+              ? "border-danger/30 bg-danger-bg text-danger"
+              : "border-status-paid-fg/25 bg-status-paid-bg text-status-paid-fg"
+          }`}
+        >
+          {msg.text}
+        </p>
+      )}
 
       {job && job.rows.length === 0 && (
         <div data-testid="ledger-empty" className="panel-shadow flex flex-col items-center justify-center gap-3 rounded-xl border border-border bg-surface p-8 text-center">
           <WarningCircle size={32} className="text-status-due-fg" />
           <p className="font-bold text-text">
-            {locale === "en" ? "No transactions were detected on this page" : "لم يتم التعرف على أي معاملات في الصفحة"}
+            {isAr ? "لم يتم التعرف على أي معاملات في الصفحة" : "No transactions were detected on this page"}
           </p>
           <p className="max-w-md text-xs leading-relaxed text-text-muted">
-            {locale === "en"
-              ? "Ensure the photo is clear, well-lit, and legible without heavy shadows or reflections, then try again."
-              : "تأكد من وضوح الصورة والإضاءة وتجنب الظلال أو الانعكاسات القوية، ثم أعد المحاولة."}
+            {isAr
+              ? "تأكد من وضوح الصورة والإضاءة وتجنب الظلال أو الانعكاسات القوية، ثم أعد المحاولة."
+              : "Ensure the photo is clear, well-lit, and legible without heavy shadows or reflections, then try again."}
           </p>
         </div>
       )}
@@ -352,7 +419,9 @@ export function LedgerPhotoClient() {
         </Panel>
       )}
 
-      {jobs.length > 0 && (
+      {loading ? (
+        <LoadingState isAr={isAr} />
+      ) : jobs.length > 0 && (
         <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
           <ul className="flex flex-col divide-y border-border">
             {jobs.map((j) => {

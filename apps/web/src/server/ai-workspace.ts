@@ -21,7 +21,7 @@ import { decodeBase64Upload, MAX_UPLOAD_BASE64_CHARS, sniffImageMime, stripImage
 import { withTenant, type Db } from "@tahseel/db";
 import { auditLog, debtors, disputes, files, invoices, messageIntents, optOuts, paymentLinks, payments, tenants, usageLedger } from "@tahseel/db/schema";
 import { planForInvoice, planForTenant, dispatchDue } from "@tahseel/reminders";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { aiDeps, engineDeps } from "./engine";
 
@@ -181,8 +181,15 @@ export async function analyzeWorkspaceReceipt(
 
   const seenHashes = new Set<string>();
   const seenReferences = new Set<string>();
+  let tenantCurrency: string | null = null;
 
   await withTenant(app, tenantId, async (tx) => {
+    const [tenantRow] = await tx
+      .select({ settings: tenants.settings })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+    tenantCurrency = normalizeCurrencyCode(tenantRow?.settings?.currency);
     const existingFile = await tx
       .select({ sha256: files.sha256 })
       .from(files)
@@ -210,7 +217,7 @@ export async function analyzeWorkspaceReceipt(
   });
 
   const analysis = parseReceiptScreenshotAnalysis({
-    extraction,
+    extraction: extraction.currency ? extraction : { ...extraction, currency: tenantCurrency ?? extraction.currency },
     sha256,
     seenHashes,
     seenReferences,
@@ -246,7 +253,7 @@ export const generateNotificationInput = z.object({
   debtorId: z.string().uuid().optional(),
   debtorName: z.string().min(1),
   amountMinor: z.number().int().positive(),
-  currency: z.string().default("ج.م"),
+  currency: z.string().optional(),
   daysOverdue: z.number().int().default(0),
   dueDate: z.string().default(() => new Date().toISOString().slice(0, 10)),
   riskFlag: z.boolean().default(false),
@@ -269,10 +276,23 @@ export async function generateWorkspaceNotification(
 
   let effectiveReference = input.reference;
   let effectivePaymentLink = input.paymentLink;
+  let effectiveCurrency = input.currency;
+  let effectiveTimezone: string | undefined;
 
-  // Automatically enrich invoice reference and active checkout URL when debtorId is provided
-  if (input.debtorId && (!effectiveReference || !effectivePaymentLink)) {
-    await withTenant(app, tenantId, async (tx) => {
+  // Resolve tenant currency/timezone and enrich invoice reference / active checkout URL
+  await withTenant(app, tenantId, async (tx) => {
+    const [tenantRow] = await tx
+      .select({ timezone: tenants.timezone, settings: tenants.settings })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+    if (!effectiveCurrency) {
+      effectiveCurrency = normalizeCurrencyCode(tenantRow?.settings?.currency);
+    }
+    if (tenantRow?.timezone) {
+      effectiveTimezone = tenantRow.timezone;
+    }
+    if (input.debtorId && (!effectiveReference || !effectivePaymentLink)) {
       if (!effectiveReference) {
         const [oldestOpen] = await tx
           .select({ reference: invoices.reference })
@@ -297,6 +317,7 @@ export async function generateWorkspaceNotification(
             and(
               eq(paymentLinks.debtorId, input.debtorId!),
               eq(paymentLinks.status, "pending"),
+              gt(paymentLinks.expiresAt, new Date()),
             ),
           )
           .orderBy(desc(paymentLinks.createdAt))
@@ -305,13 +326,13 @@ export async function generateWorkspaceNotification(
           effectivePaymentLink = activeLink.checkoutUrl;
         }
       }
-    });
-  }
+    }
+  });
 
   let result = generateSmartNotification({
     debtorName: input.debtorName,
     amountMinor: input.amountMinor,
-    currency: input.currency,
+    currency: effectiveCurrency,
     daysOverdue: input.daysOverdue,
     dueDate: input.dueDate,
     riskFlag: input.riskFlag,
@@ -319,6 +340,7 @@ export async function generateWorkspaceNotification(
     reference: effectiveReference,
     tone: input.tone,
     locale: input.locale,
+    timezone: effectiveTimezone,
     paymentLink: effectivePaymentLink,
     channel: input.channel,
   });
@@ -337,7 +359,7 @@ export async function generateWorkspaceNotification(
           immutableFacts: immutableCopyFacts(result.notificationText),
         }),
         [
-          "You are a professional accounts-receivable copy editor for an Egyptian business.",
+          "You are a professional accounts-receivable copy editor for a B2B business.",
           "The approvedDraft is the only source of truth. You may improve wording, clarity and natural tone only.",
           "Preserve every URL, ISO date and formatted amount exactly. Do not omit them.",
           "Do not add or imply approvals, discounts, legal threats, promises, payment confirmations, account suspensions, reminder pauses or operational changes.",
@@ -484,7 +506,7 @@ export async function proposeWorkspaceInstallmentPlan(
       const [activeLink] = await tx
         .select({ checkoutUrl: paymentLinks.checkoutUrl })
         .from(paymentLinks)
-        .where(and(eq(paymentLinks.debtorId, input.debtorId!), eq(paymentLinks.status, "pending")))
+        .where(and(eq(paymentLinks.debtorId, input.debtorId!), eq(paymentLinks.status, "pending"), gt(paymentLinks.expiresAt, new Date())))
         .orderBy(desc(paymentLinks.createdAt))
         .limit(1);
       if (activeLink?.checkoutUrl && planCurrency === "EGP") {
@@ -631,7 +653,7 @@ export async function suggestWorkspaceInboxReply(
       const [activeLink] = await tx
         .select({ checkoutUrl: paymentLinks.checkoutUrl })
         .from(paymentLinks)
-        .where(and(eq(paymentLinks.debtorId, input.debtorId), eq(paymentLinks.status, "pending")))
+        .where(and(eq(paymentLinks.debtorId, input.debtorId), eq(paymentLinks.status, "pending"), gt(paymentLinks.expiresAt, new Date())))
         .orderBy(desc(paymentLinks.createdAt))
         .limit(1);
       if (activeLink?.checkoutUrl) {
@@ -667,7 +689,7 @@ export async function suggestWorkspaceInboxReply(
           immutableEnglishFacts: immutableCopyFacts(suggestion.replyEn),
         }),
         [
-          "You are a bilingual customer-support copy editor for an Egyptian accounts-receivable team.",
+          "You are a bilingual customer-support copy editor for an accounts-receivable team.",
           "The approved drafts are the only source of truth. You may improve clarity and natural wording, but must retain their exact meaning and every immutable fact.",
           "Preserve every URL, ISO date and formatted money amount exactly in each respective language field.",
           "Never claim that a payment, extension, installment, dispute resolution, reminder pause or approval has already happened unless the approved draft explicitly confirms it.",
@@ -764,7 +786,7 @@ export async function dispatchSmartReminderForDebtor(
       tx
         .select({ checkoutUrl: paymentLinks.checkoutUrl })
         .from(paymentLinks)
-        .where(and(eq(paymentLinks.debtorId, input.debtorId), eq(paymentLinks.status, "pending")))
+        .where(and(eq(paymentLinks.debtorId, input.debtorId), eq(paymentLinks.status, "pending"), gt(paymentLinks.expiresAt, now)))
         .orderBy(desc(paymentLinks.createdAt))
         .limit(1),
     ]);
@@ -775,7 +797,7 @@ export async function dispatchSmartReminderForDebtor(
       : allOpenInvs[0]?.currency ?? defaultCurrency;
     const openInvs = allOpenInvs.filter((inv) => inv.currency === reminderCurrency);
     return {
-      timezone: tenantRow?.timezone ?? "Africa/Cairo",
+      timezone: tenantRow?.timezone ?? "UTC",
       settings: tenantRow?.settings,
       debtor,
       openInvs,
@@ -786,7 +808,7 @@ export async function dispatchSmartReminderForDebtor(
   });
 
   if (!ctxData) {
-    throw new Error("Debtor not found in tenant workspace");
+    throw new AppError("NOT_FOUND", "Debtor not found in tenant workspace", 404);
   }
 
   const totalOutstandingMinor = ctxData.openInvs.reduce((acc, inv) => {
@@ -854,6 +876,7 @@ export async function dispatchSmartReminderForDebtor(
     daysOverdue: maxOverdue,
     dueDate: primaryInv.dueOn,
     reference: primaryInv.reference ?? undefined,
+    timezone: ctxData.timezone,
     paymentLink: ctxData.paymentLink,
     tone: effectiveTone,
   };
@@ -962,11 +985,12 @@ export const AI_WORKSPACE_TOOLS = [
   },
   {
     name: "parse_receipt_screenshot",
-    description: "Analyze bank/InstaPay transfer receipt image and evaluate anti-fraud checks for payment verification.",
+    description: "Analyze bank or instant-transfer receipt image and evaluate anti-fraud checks for payment verification.",
     parameters: {
       type: "object",
       properties: {
         contentBase64: { type: "string", description: "Base64 encoded receipt image bytes." },
+        mime: { type: "string", enum: ["image/jpeg", "image/png", "image/webp"], description: "MIME type of the uploaded receipt image." },
         autoCloseOptIn: { type: "boolean", description: "Whether merchant enabled auto-close for verified receipts." },
       },
       required: ["contentBase64"],
@@ -979,7 +1003,7 @@ export const AI_WORKSPACE_TOOLS = [
       type: "object",
       properties: {
         debtorName: { type: "string", description: "Customer/debtor name." },
-        amountMinor: { type: "integer", description: "Amount due in minor units (piasters)." },
+        amountMinor: { type: "integer", description: "Amount due in minor currency units." },
         daysOverdue: { type: "integer", description: "Number of days invoice is overdue." },
         dueDate: { type: "string", description: "Due date in YYYY-MM-DD format." },
         reference: { type: "string", description: "Optional invoice reference number." },

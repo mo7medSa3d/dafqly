@@ -915,7 +915,12 @@ export interface NotificationCandidate {
     | "overdue_alert"
     | "quota_alert"
     | "ai_briefing"
-    | "payment_confirmed";
+    | "payment_confirmed"
+    | "task_overdue"
+    | "task_assigned"
+    | "ai_approval_pending"
+    | "ai_approval_executed"
+    | "ai_copilot_alert";
   severity: NotificationSeverity;
   titleAr: string;
   titleEn: string;

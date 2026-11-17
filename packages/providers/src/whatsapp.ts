@@ -29,6 +29,7 @@ interface GraphSendOk { messages?: { id?: string }[] }
 export class WhatsAppCloudProvider implements TextCapableProvider {
   private static readonly MAX_CACHE_ENTRIES = 5_000;
   private byKey = new Map<string, SendResult>();
+  private inFlight = new Map<string, Promise<SendResult>>();
   private readonly fetchImpl: typeof fetch;
   constructor(private readonly config: WhatsAppConfig) {
     this.fetchImpl = config.fetchImpl ?? fetch;
@@ -70,14 +71,24 @@ export class WhatsAppCloudProvider implements TextCapableProvider {
     return { providerMessageId: id };
   }
 
+  private dedupe(key: string, run: () => Promise<SendResult>): Promise<SendResult> {
+    const existing = this.byKey.get(key);
+    if (existing) return Promise.resolve(existing);
+    const pending = this.inFlight.get(key);
+    if (pending) return pending;
+    const p = run()
+      .then((res) => { this.remember(key, res); return res; })
+      .finally(() => { this.inFlight.delete(key); });
+    this.inFlight.set(key, p);
+    return p;
+  }
+
   async sendTemplate(input: SendTemplateInput): Promise<SendResult> {
-    const existing = this.byKey.get(input.idempotencyKey);
-    if (existing) return existing;
     if (input.channel !== "whatsapp") {
       throw new ProviderError(0, "WhatsAppCloudProvider only sends on the whatsapp channel");
     }
     const parameters = input.parameters ?? Object.values(input.variables);
-    const result = await this.post({
+    return this.dedupe(input.idempotencyKey, () => this.post({
       messaging_product: "whatsapp",
       recipient_type: "individual",
       to: input.toE164.replace(/^\+/, ""),
@@ -89,24 +100,18 @@ export class WhatsAppCloudProvider implements TextCapableProvider {
           ? { components: [{ type: "body", parameters: parameters.map((text) => ({ type: "text", text })) }] }
           : {}),
       },
-    });
-    this.remember(input.idempotencyKey, result);
-    return result;
+    }));
   }
 
   /** Free-form text — valid only inside the 24h customer-service window (else Meta returns 131047). */
   async sendText(input: { toE164: string; body: string; idempotencyKey: string }): Promise<SendResult> {
-    const existing = this.byKey.get(input.idempotencyKey);
-    if (existing) return existing;
-    const result = await this.post({
+    return this.dedupe(input.idempotencyKey, () => this.post({
       messaging_product: "whatsapp",
       recipient_type: "individual",
       to: input.toE164.replace(/^\+/, ""),
       type: "text",
       text: { body: input.body, preview_url: false },
-    });
-    this.remember(input.idempotencyKey, result);
-    return result;
+    }));
   }
 }
 

@@ -127,6 +127,13 @@
    "when": 1794521000000,
    "tag": "0017_dispute_resolution_files_unique_hash",
    "breakpoints": true
+  },
+  {
+   "idx": 18,
+   "version": "7",
+   "when": 1794522000000,
+   "tag": "0018_missing_schema_indexes",
+   "breakpoints": true
   }
  ]
 }

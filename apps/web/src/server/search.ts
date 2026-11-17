@@ -1,4 +1,4 @@
-import { and, desc, ilike, isNull, or } from "drizzle-orm";
+import { and, asc, desc, ilike, isNull, or } from "drizzle-orm";
 import type { Db } from "@tahseel/db";
 import { likePattern } from "@tahseel/core";
 import { withTenant } from "@tahseel/db";
@@ -15,6 +15,7 @@ interface SearchInvoiceResult {
   debtorId: string;
   reference: string | null;
   amountMinor: string;
+  currency: string;
   status: string;
   dueOn: string;
   description: string | null;
@@ -40,6 +41,8 @@ export async function globalSearch(app: Db, tenantId: string, query: string): Pr
   const q = query.trim();
   if (!q) return { debtors: [], invoices: [], cheques: [] };
 
+  const pattern = likePattern(q);
+
   return withTenant(app, tenantId, async (tx) => {
     const [debtorRows, invoiceRows, chequeRows] = await Promise.all([
       tx
@@ -53,11 +56,12 @@ export async function globalSearch(app: Db, tenantId: string, query: string): Pr
           and(
             isNull(debtors.deletedAt),
             or(
-              ilike(debtors.displayName, likePattern(q)),
-              ilike(debtors.phoneE164, likePattern(q)),
+              ilike(debtors.displayName, pattern),
+              ilike(debtors.phoneE164, pattern),
             ),
           ),
         )
+        .orderBy(asc(debtors.displayName))
         .limit(6),
       tx
         .select({
@@ -65,6 +69,7 @@ export async function globalSearch(app: Db, tenantId: string, query: string): Pr
           debtorId: invoices.debtorId,
           reference: invoices.reference,
           amountMinor: invoices.amountMinor,
+          currency: invoices.currency,
           status: invoices.status,
           dueOn: invoices.dueOn,
           description: invoices.description,
@@ -72,10 +77,11 @@ export async function globalSearch(app: Db, tenantId: string, query: string): Pr
         .from(invoices)
         .where(
           or(
-            ilike(invoices.reference, likePattern(q)),
-            ilike(invoices.description, likePattern(q)),
+            ilike(invoices.reference, pattern),
+            ilike(invoices.description, pattern),
           ),
         )
+        .orderBy(desc(invoices.createdAt))
         .limit(6),
       tx
         .select({
@@ -90,10 +96,11 @@ export async function globalSearch(app: Db, tenantId: string, query: string): Pr
         .from(cheques)
         .where(
           or(
-            ilike(cheques.number, likePattern(q)),
-            ilike(cheques.bank, likePattern(q)),
+            ilike(cheques.number, pattern),
+            ilike(cheques.bank, pattern),
           ),
         )
+        .orderBy(desc(cheques.dueDate))
         .limit(4),
     ]);
 

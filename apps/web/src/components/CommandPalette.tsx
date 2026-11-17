@@ -5,7 +5,28 @@ import { inputVariants } from "@/components/ui/input";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Bank, CalendarCheck, CaretRight, CloudArrowUp, Lightning, MagnifyingGlass, Plus, Receipt, Scan, SlidersHorizontal, Sparkle, UsersThree, X } from "@/components/ui/solid-icons";
+import {
+  Bank,
+  Bell,
+  CalendarCheck,
+  CaretRight,
+  ClipboardText,
+  CloudArrowUp,
+  CreditCard,
+  Lightning,
+  MagnifyingGlass,
+  Plus,
+  Receipt,
+  Robot,
+  Scan,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkle,
+  SquaresFour,
+  UsersThree,
+  X,
+} from "@/components/ui/solid-icons";
+import { WhatsappLogo } from "@/components/ui/icons";
 import { trpc } from "@/lib/trpc-client";
 import { useCurrency } from "./CurrencyContext";
 import { openAiCopilot } from "./copilot-events";
@@ -21,6 +42,7 @@ interface SearchInvoiceResult {
   debtorId: string;
   reference: string | null;
   amountMinor: string;
+  currency: string;
   status: string;
   dueOn: string;
   description: string | null;
@@ -45,9 +67,10 @@ interface CommandPaletteProps {
 export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps) {
   const t = useTranslations("search");
   const isEn = locale === "en";
-  const { formatAmountOnly } = useCurrency();
+  const { format } = useCurrency();
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -55,13 +78,26 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
   const [invoices, setInvoices] = useState<SearchInvoiceResult[]>([]);
   const [cheques, setCheques] = useState<SearchChequeResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [hasError, setHasError] = useState(false);
 
   const quickActions = useMemo(
     () => [
       {
+        id: "cmd-ai-assistant",
+        labelAr: "فتح شات الذكاء الاصطناعي (AI Copilot)",
+        labelEn: "Open AI Chat & Ledger Assistant",
+        keywords: "ai copilot chat assistant شات مساعد ذكي",
+        Icon: Robot,
+        run: () => {
+          onClose();
+          openAiCopilot({ tab: "assistant" });
+        },
+      },
+      {
         id: "cmd-ai-briefing",
-        labelAr: "فتح الملخص التنفيذي والمساعد الذكي (AI Copilot)",
-        labelEn: "Open AI Executive Briefing & Copilot",
+        labelAr: "فتح الملخص التنفيذي والمساعد الذكي (AI Briefing)",
+        labelEn: "Open AI Executive Briefing",
+        keywords: "ai briefing executive summary ملخص تنفيذي سيولة",
         Icon: Sparkle,
         run: () => {
           onClose();
@@ -69,9 +105,21 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         },
       },
       {
+        id: "cmd-ai-reminder",
+        labelAr: "صياغة تذكير سداد ذكي (WhatsApp / AI)",
+        labelEn: "Draft Smart Payment Reminder",
+        keywords: "ai reminder whatsapp message تذكير واتساب رسالة",
+        Icon: WhatsappLogo,
+        run: () => {
+          onClose();
+          openAiCopilot({ tab: "composer", mode: "reminder" });
+        },
+      },
+      {
         id: "cmd-ai-installment",
         labelAr: "جدولة مديونية متأخرة على أقساط (AI Installment Planner)",
         labelEn: "Build Smart Installment Settlement Plan",
+        keywords: "ai installment plan settlement تقسيط جدولة",
         Icon: CalendarCheck,
         run: () => {
           onClose();
@@ -79,9 +127,32 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         },
       },
       {
+        id: "cmd-dashboard",
+        labelAr: "لوحة التحكم والنظرة العامة",
+        labelEn: "Go to Overview & Dashboard",
+        keywords: "dashboard overview home لوحة التحكم الرئيسية",
+        Icon: SquaresFour,
+        run: () => {
+          router.push(`/${locale}/dashboard`);
+          onClose();
+        },
+      },
+      {
+        id: "cmd-debtors",
+        labelAr: "العملاء والمدينون",
+        labelEn: "Go to Customers & Debtors",
+        keywords: "customers debtors clients عملاء مدينون",
+        Icon: UsersThree,
+        run: () => {
+          router.push(`/${locale}/debtors`);
+          onClose();
+        },
+      },
+      {
         id: "cmd-new-invoice",
-        labelAr: "إصدار فاتورة جديدة",
-        labelEn: "Issue New Invoice",
+        labelAr: "الفواتير وإصدار فاتورة جديدة",
+        labelEn: "Invoices & Issue New Invoice",
+        keywords: "invoices new issue فاتورة فواتير",
         Icon: Plus,
         run: () => {
           router.push(`/${locale}/invoices`);
@@ -89,9 +160,65 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         },
       },
       {
+        id: "cmd-cheques",
+        labelAr: "حافظة الشيكات",
+        labelEn: "Go to Cheques Portfolio",
+        keywords: "cheques checks bank شيكات بنك",
+        Icon: Bank,
+        run: () => {
+          router.push(`/${locale}/cheques`);
+          onClose();
+        },
+      },
+      {
+        id: "cmd-tasks",
+        labelAr: "المهام والتذاكر",
+        labelEn: "Go to Tasks & Tickets",
+        keywords: "tasks tickets promises مهام تذاكر متابعة",
+        Icon: ClipboardText,
+        run: () => {
+          router.push(`/${locale}/tasks`);
+          onClose();
+        },
+      },
+      {
+        id: "cmd-tasks-reminders",
+        labelAr: "التذكيرات والمواعيد المجدولة",
+        labelEn: "Go to Scheduled Reminders",
+        keywords: "reminders schedule followup tasks تذكيرات متابعة جدولة",
+        Icon: Bell,
+        run: () => {
+          router.push(`/${locale}/tasks?tab=reminders`);
+          onClose();
+        },
+      },
+      {
+        id: "cmd-tasks-approvals",
+        labelAr: "موافقات الذكاء الاصطناعي",
+        labelEn: "Go to AI Approvals",
+        keywords: "ai approvals review tasks موافقات ذكاء اعتماد",
+        Icon: ShieldCheck,
+        run: () => {
+          router.push(`/${locale}/tasks?tab=approvals`);
+          onClose();
+        },
+      },
+      {
+        id: "cmd-inbox",
+        labelAr: "صندوق الوارد الذكي ومراجعة الإيصالات",
+        labelEn: "AI Inbox & Receipt Verification",
+        keywords: "ai inbox receipts صندوق الوارد إيصالات",
+        Icon: Lightning,
+        run: () => {
+          router.push(`/${locale}/ai-inbox`);
+          onClose();
+        },
+      },
+      {
         id: "cmd-import",
         labelAr: "استيراد فواتير من Excel أو CSV",
         labelEn: "Import Invoices from Excel / CSV",
+        keywords: "import excel csv استيراد إكسل",
         Icon: CloudArrowUp,
         run: () => {
           router.push(`/${locale}/import`);
@@ -102,6 +229,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         id: "cmd-scan",
         labelAr: "المسح الضوئي الذكي لدفاتر الحسابات",
         labelEn: "Smart AI Ledger Photo Scan",
+        keywords: "scan ocr ledger photo مسح ضوئي دفتر",
         Icon: Scan,
         run: () => {
           router.push(`/${locale}/ledger-photo`);
@@ -109,12 +237,13 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         },
       },
       {
-        id: "cmd-inbox",
-        labelAr: "صندوق الوارد الذكي ومراجعة الإيصالات",
-        labelEn: "AI Inbox & Receipt Verification",
-        Icon: Lightning,
+        id: "cmd-billing",
+        labelAr: "الاشتراك والفوترة",
+        labelEn: "Go to Billing & Plan",
+        keywords: "billing subscription plan اشتراك باقة فوترة",
+        Icon: CreditCard,
         run: () => {
-          router.push(`/${locale}/ai-inbox`);
+          router.push(`/${locale}/billing`);
           onClose();
         },
       },
@@ -122,6 +251,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         id: "cmd-settings",
         labelAr: "إعدادات المنشأة والعملة والنسخ الاحتياطي",
         labelEn: "Workspace Settings & Preferences",
+        keywords: "settings currency backup إعدادات عملة نسخ",
         Icon: SlidersHorizontal,
         run: () => {
           router.push(`/${locale}/settings`);
@@ -132,13 +262,25 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
     [locale, onClose, router],
   );
 
+  // Filter commands instantly by the live query
+  const filteredCommands = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return quickActions;
+    return quickActions.filter(
+      (cmd) =>
+        cmd.labelEn.toLowerCase().includes(q) ||
+        cmd.labelAr.includes(q) ||
+        cmd.keywords.toLowerCase().includes(q),
+    );
+  }, [query, quickActions]);
+
   // Debounce search input by 200ms
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query), 200);
     return () => clearTimeout(timer);
   }, [query]);
 
-  // Focus input on open
+  // Focus input and reset state on open
   useEffect(() => {
     if (isOpen) {
       setQuery("");
@@ -147,7 +289,9 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
       setDebtors([]);
       setInvoices([]);
       setCheques([]);
-      setTimeout(() => inputRef.current?.focus(), 50);
+      setHasError(false);
+      const timer = setTimeout(() => inputRef.current?.focus(), 50);
+      return () => clearTimeout(timer);
     }
   }, [isOpen]);
 
@@ -158,11 +302,13 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
       setInvoices([]);
       setCheques([]);
       setIsLoading(false);
+      setHasError(false);
       return;
     }
 
     let active = true;
     setIsLoading(true);
+    setHasError(false);
 
     void trpc.search.global
       .query({ q: debouncedQuery.trim() })
@@ -170,7 +316,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         if (!active) return;
         setDebtors(res.debtors);
         setInvoices(res.invoices);
-        setCheques((res as { cheques?: SearchChequeResult[] }).cheques ?? []);
+        setCheques(res.cheques ?? []);
         setIsLoading(false);
       })
       .catch(() => {
@@ -178,6 +324,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         setDebtors([]);
         setInvoices([]);
         setCheques([]);
+        setHasError(true);
         setIsLoading(false);
       });
 
@@ -186,41 +333,55 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
     };
   }, [isOpen, debouncedQuery]);
 
-  const showQuickCommands = !debouncedQuery.trim();
-  const totalItems = showQuickCommands
-    ? quickActions.length
-    : debtors.length + invoices.length + cheques.length;
+  const hasQuery = Boolean(debouncedQuery.trim());
+  const totalItems =
+    filteredCommands.length + (hasQuery ? debtors.length + invoices.length + cheques.length : 0);
+
+  // Clamp selectedIndex if result count shrinks
+  useEffect(() => {
+    if (totalItems === 0) {
+      setSelectedIndex(0);
+    } else if (selectedIndex >= totalItems) {
+      setSelectedIndex(totalItems - 1);
+    }
+  }, [totalItems, selectedIndex]);
+
+  // Keep keyboard-selected item visible inside the scrollable container
+  useEffect(() => {
+    if (!isOpen || !listRef.current) return;
+    const el = listRef.current.querySelector<HTMLElement>(`[data-cmd-index="${selectedIndex}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [isOpen, selectedIndex]);
 
   const navigateToItem = useCallback(
     (index: number) => {
-      if (showQuickCommands) {
-        const cmd = quickActions[index];
-        if (cmd) cmd.run();
+      if (index < filteredCommands.length) {
+        filteredCommands[index]?.run();
         return;
       }
-      if (index < debtors.length) {
-        const d = debtors[index];
+      if (!hasQuery) return;
+      const offset = index - filteredCommands.length;
+      if (offset < debtors.length) {
+        const d = debtors[offset];
         if (d) {
           router.push(`/${locale}/debtors/${d.id}`);
           onClose();
         }
-      } else if (index < debtors.length + invoices.length) {
-        const invIndex = index - debtors.length;
-        const inv = invoices[invIndex];
+      } else if (offset < debtors.length + invoices.length) {
+        const inv = invoices[offset - debtors.length];
         if (inv) {
-          router.push(`/${locale}/invoices`);
+          router.push(`/${locale}/debtors/${inv.debtorId}`);
           onClose();
         }
       } else {
-        const chqIndex = index - debtors.length - invoices.length;
-        const chq = cheques[chqIndex];
+        const chq = cheques[offset - debtors.length - invoices.length];
         if (chq) {
           router.push(`/${locale}/cheques`);
           onClose();
         }
       }
     },
-    [showQuickCommands, quickActions, debtors, invoices, cheques, locale, onClose, router],
+    [filteredCommands, hasQuery, debtors, invoices, cheques, locale, onClose, router],
   );
 
   // Keyboard navigation
@@ -267,7 +428,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
       <div className="relative w-full max-w-xl overflow-hidden rounded-xl border border-border bg-surface transition-all">
         {/* Search Input Bar */}
         <div className="flex items-center gap-3 border-b border-border/80 px-4 py-3 sm:px-5">
-          <MagnifyingGlass size={20} strokeWidth={2.5} className="text-primary shrink-0" aria-hidden />
+          <MagnifyingGlass size={20} strokeWidth={2.5} className="shrink-0 text-primary" aria-hidden />
           <input
             ref={inputRef}
             type="text"
@@ -285,6 +446,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
               type="button"
               onClick={() => {
                 setQuery("");
+                setSelectedIndex(0);
                 inputRef.current?.focus();
               }}
               className={cn(buttonVariants({ variant: "ghost", size: "iconSm" }), "size-6 text-text-subtle hover:bg-callout hover:text-text")}
@@ -300,39 +462,29 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         </div>
 
         {/* Results Body */}
-        <div className="max-h-[380px] overflow-y-auto p-2">
-          {isLoading && (
-            <div className="py-8 text-center text-xs text-text-muted">
-              <span className="inline-block animate-pulse">...</span>
-            </div>
-          )}
-
-          {!isLoading && debouncedQuery && totalItems === 0 && (
-            <div className="py-10 text-center">
-              <p className="text-sm font-semibold text-text-muted">{t("noResults", { query: debouncedQuery })}</p>
-            </div>
-          )}
-
-          {/* Quick Actions & AI Commands when search input is empty */}
-          {showQuickCommands && (
-            <div>
+        <div ref={listRef} className="max-h-[380px] overflow-y-auto p-2">
+          {/* Quick Actions & AI Commands */}
+          {filteredCommands.length > 0 && (
+            <div className={hasQuery && (debtors.length > 0 || invoices.length > 0 || cheques.length > 0) ? "mb-2" : ""}>
               <div className="flex items-center justify-between px-3 py-1.5 text-xs font-bold text-text-subtle">
                 <span className="flex items-center gap-1.5">
                   <Sparkle size={14} className="text-primary" />
                   <span>{isEn ? "Quick Commands & AI Actions" : "الأوامر السريعة ومهام الذكاء الاصطناعي"}</span>
                 </span>
-                <span className="text-[11px] font-medium text-text-muted">{t("quickHint")}</span>
+                {!hasQuery && <span className="text-[11px] font-medium text-text-muted">{t("quickHint")}</span>}
               </div>
               <ul className="flex flex-col gap-1">
-                {quickActions.map((cmd, idx) => {
+                {filteredCommands.map((cmd, idx) => {
                   const isSelected = selectedIndex === idx;
                   const CmdIcon = cmd.Icon;
                   return (
                     <li
                       key={cmd.id}
+                      data-cmd-index={idx}
+                      onMouseEnter={() => setSelectedIndex(idx)}
                       onClick={() => cmd.run()}
-                      className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-xs sm:text-sm transition-colors ${
-                        isSelected ? "bg-primary text-primary-fg" : "hover:bg-callout text-text"
+                      className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-xs transition-colors sm:text-sm ${
+                        isSelected ? "bg-primary text-primary-foreground" : "text-text hover:bg-callout"
                       }`}
                     >
                       <div className="flex items-center gap-3">
@@ -356,8 +508,26 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
             </div>
           )}
 
+          {isLoading && (
+            <div className="py-6 text-center text-xs text-text-muted">
+              <span className="inline-block animate-pulse">...</span>
+            </div>
+          )}
+
+          {!isLoading && hasError && hasQuery && (
+            <div className="py-6 text-center text-xs font-medium text-destructive">
+              {isEn ? "Search failed. Please try again." : "تعذر البحث الآن. حاول مرة أخرى."}
+            </div>
+          )}
+
+          {!isLoading && !hasError && hasQuery && totalItems === 0 && (
+            <div className="py-10 text-center">
+              <p className="text-sm font-semibold text-text-muted">{t("noResults", { query: debouncedQuery })}</p>
+            </div>
+          )}
+
           {/* Debtors Group */}
-          {debtors.length > 0 && (
+          {hasQuery && debtors.length > 0 && (
             <div className="mb-2">
               <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-text-subtle">
                 <UsersThree size={14} />
@@ -365,22 +535,27 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
               </div>
               <ul className="flex flex-col gap-1">
                 {debtors.map((d: SearchDebtorResult, idx: number) => {
-                  const isSelected = selectedIndex === idx;
+                  const globalIdx = filteredCommands.length + idx;
+                  const isSelected = selectedIndex === globalIdx;
                   return (
                     <li
                       key={d.id}
+                      data-cmd-index={globalIdx}
+                      onMouseEnter={() => setSelectedIndex(globalIdx)}
                       onClick={() => {
                         router.push(`/${locale}/debtors/${d.id}`);
                         onClose();
                       }}
                       className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-sm transition-colors ${
-                        isSelected ? "bg-primary text-primary-foreground" : "hover:bg-callout text-text"
+                        isSelected ? "bg-primary text-primary-foreground" : "text-text hover:bg-callout"
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <span className={`flex size-7 items-center justify-center rounded text-xs font-bold ${
-                          isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-primary/10 text-primary"
-                        }`}>
+                        <span
+                          className={`flex size-7 items-center justify-center rounded text-xs font-bold ${
+                            isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-primary/10 text-primary"
+                          }`}
+                        >
                           {d.displayName.slice(0, 1)}
                         </span>
                         <div className="flex flex-col">
@@ -390,7 +565,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                           </span>
                         </div>
                       </div>
-                      <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-primary-foreground" : "text-text-subtle"}`} />
+                      <CaretRight size={16} className={`shrink-0 rtl:rotate-180 ${isSelected ? "text-primary-foreground" : "text-text-subtle"}`} />
                     </li>
                   );
                 })}
@@ -399,7 +574,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
           )}
 
           {/* Invoices Group */}
-          {invoices.length > 0 && (
+          {hasQuery && invoices.length > 0 && (
             <div className="mb-2">
               <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-text-subtle">
                 <Receipt size={14} />
@@ -407,29 +582,35 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
               </div>
               <ul className="flex flex-col gap-1">
                 {invoices.map((inv: SearchInvoiceResult, idx: number) => {
-                  const globalIdx = debtors.length + idx;
+                  const globalIdx = filteredCommands.length + debtors.length + idx;
                   const isSelected = selectedIndex === globalIdx;
                   return (
                     <li
                       key={inv.id}
+                      data-cmd-index={globalIdx}
+                      onMouseEnter={() => setSelectedIndex(globalIdx)}
                       onClick={() => {
-                        router.push(`/${locale}/invoices`);
+                        router.push(`/${locale}/debtors/${inv.debtorId}`);
                         onClose();
                       }}
                       className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-sm transition-colors ${
-                        isSelected ? "bg-primary text-primary-foreground" : "hover:bg-callout text-text"
+                        isSelected ? "bg-primary text-primary-foreground" : "text-text hover:bg-callout"
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <span className={`flex size-7 items-center justify-center rounded text-xs font-bold ${
-                          isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-accent/20 text-accent-fg"
-                        }`}>
+                        <span
+                          className={`flex size-7 items-center justify-center rounded text-xs font-bold ${
+                            isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-accent/20 text-accent-fg"
+                          }`}
+                        >
                           #
                         </span>
                         <div className="flex flex-col">
-                          <span className="font-bold" dir="ltr">{inv.reference ?? inv.id.slice(0, 8)}</span>
+                          <span className="font-bold" dir="ltr">
+                            {inv.reference ?? inv.id.slice(0, 8)}
+                          </span>
                           {inv.description && (
-                            <span className={`truncate text-xs max-w-xs ${isSelected ? "text-primary-foreground/80" : "text-text-muted"}`}>
+                            <span className={`max-w-xs truncate text-xs ${isSelected ? "text-primary-foreground/80" : "text-text-muted"}`}>
                               {inv.description}
                             </span>
                           )}
@@ -437,9 +618,9 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`text-xs font-bold ${isSelected ? "text-primary-foreground" : "text-primary"}`} dir="ltr">
-                          {formatAmountOnly(BigInt(inv.amountMinor))}
+                          {format(BigInt(inv.amountMinor), { currency: inv.currency })}
                         </span>
-                        <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-primary-foreground" : "text-text-subtle"}`} />
+                        <CaretRight size={16} className={`shrink-0 rtl:rotate-180 ${isSelected ? "text-primary-foreground" : "text-text-subtle"}`} />
                       </div>
                     </li>
                   );
@@ -449,7 +630,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
           )}
 
           {/* Cheques Group */}
-          {cheques.length > 0 && (
+          {hasQuery && cheques.length > 0 && (
             <div>
               <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-text-subtle">
                 <Bank size={14} />
@@ -457,37 +638,43 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
               </div>
               <ul className="flex flex-col gap-1">
                 {cheques.map((chq: SearchChequeResult, idx: number) => {
-                  const globalIdx = debtors.length + invoices.length + idx;
+                  const globalIdx = filteredCommands.length + debtors.length + invoices.length + idx;
                   const isSelected = selectedIndex === globalIdx;
                   return (
                     <li
                       key={chq.id}
+                      data-cmd-index={globalIdx}
+                      onMouseEnter={() => setSelectedIndex(globalIdx)}
                       onClick={() => {
                         router.push(`/${locale}/cheques`);
                         onClose();
                       }}
                       className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-sm transition-colors ${
-                        isSelected ? "bg-primary text-primary-foreground" : "hover:bg-callout text-text"
+                        isSelected ? "bg-primary text-primary-foreground" : "text-text hover:bg-callout"
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <span className={`flex size-7 items-center justify-center rounded text-xs font-bold ${
-                          isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-callout text-primary"
-                        }`}>
+                        <span
+                          className={`flex size-7 items-center justify-center rounded text-xs font-bold ${
+                            isSelected ? "bg-primary-foreground/15 text-primary-foreground" : "bg-callout text-primary"
+                          }`}
+                        >
                           <Bank size={14} />
                         </span>
                         <div className="flex flex-col">
-                          <span className="font-bold" dir="ltr">#{chq.number}</span>
-                          <span className={`truncate text-xs max-w-xs ${isSelected ? "text-primary-foreground/80" : "text-text-muted"}`}>
+                          <span className="font-bold" dir="ltr">
+                            #{chq.number}
+                          </span>
+                          <span className={`max-w-xs truncate text-xs ${isSelected ? "text-primary-foreground/80" : "text-text-muted"}`}>
                             {chq.bank} · {chq.dueDate}
                           </span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`text-xs font-bold ${isSelected ? "text-primary-foreground" : "text-primary"}`} dir="ltr">
-                          {formatAmountOnly(BigInt(chq.amountMinor))}
+                          {format(BigInt(chq.amountMinor))}
                         </span>
-                        <CaretRight size={16} className={`shrink-0 ${isSelected ? "text-primary-foreground" : "text-text-subtle"}`} />
+                        <CaretRight size={16} className={`shrink-0 rtl:rotate-180 ${isSelected ? "text-primary-foreground" : "text-text-subtle"}`} />
                       </div>
                     </li>
                   );
@@ -501,17 +688,17 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         <div className="flex items-center justify-between border-t border-border/60 bg-surface-muted/60 px-4 py-2 text-[11px] text-text-subtle">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
-              <kbd className="rounded bg-surface px-1.5 py-0.5 border border-border">↑</kbd>
-              <kbd className="rounded bg-surface px-1.5 py-0.5 border border-border">↓</kbd>
+              <kbd className="rounded border border-border bg-surface px-1.5 py-0.5">↑</kbd>
+              <kbd className="rounded border border-border bg-surface px-1.5 py-0.5">↓</kbd>
               <span>{t("navigate")}</span>
             </span>
             <span className="flex items-center gap-1">
-              <kbd className="rounded bg-surface px-1.5 py-0.5 border border-border">↵</kbd>
+              <kbd className="rounded border border-border bg-surface px-1.5 py-0.5">↵</kbd>
               <span>{t("select")}</span>
             </span>
           </div>
           <span className="flex items-center gap-1">
-            <kbd className="rounded bg-surface px-1.5 py-0.5 border border-border">ESC</kbd>
+            <kbd className="rounded border border-border bg-surface px-1.5 py-0.5">ESC</kbd>
             <span>{t("close")}</span>
           </span>
         </div>

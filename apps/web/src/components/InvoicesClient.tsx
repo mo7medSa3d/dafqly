@@ -2,7 +2,7 @@
 import { cn, todayIso } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { inputVariants } from "@/components/ui/input";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { canTransition, formatCurrencyMinor, getCurrencySymbol, type InvoiceStatus } from "@tahseel/core";
@@ -58,7 +58,10 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
   const [editForm, setEditForm] = useState<{ reference: string; description: string; amount: string; dueOn: string }>({
     reference: "", description: "", amount: "", dueOn: "",
   });
-  const [error, setError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const nextAutoReference = `INV-${issuedOn.slice(0, 4)}-${items.length + 1001}`;
 
@@ -76,6 +79,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
   const [loading, setLoading] = useState(true);
   const load = useCallback(async () => {
     try {
+      setLoadError(null);
       const page = await trpc.invoices.list.query({
         limit: 100,
         search: debouncedSearch || undefined,
@@ -85,15 +89,15 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
       });
       setItems(page.items as Invoice[]);
       setTotalCount(typeof page.totalCount === "number" ? page.totalCount : null);
-    } catch {
-      /* ignore */
+    } catch (err: unknown) {
+      setLoadError(err instanceof Error ? err.message : (isAr ? "تعذّر تحميل الفواتير" : "Failed to load invoices"));
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, status, overdueOnly, bucket]);
+  }, [debouncedSearch, status, overdueOnly, bucket, isAr]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    void trpc.debtors.list.query({ limit: 100 }).then((p) => {
+    void trpc.debtors.list.query({ limit: 200 }).then((p) => {
       const list = (p.items as DebtorLite[]);
       setDebtors(list);
       if (list[0]) setDebtorId((cur) => cur || list[0]!.id);
@@ -101,11 +105,13 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
   }, []);
 
   async function onCreate() {
-    setError(null);
+    if (busy || !debtorId || amount.trim() === "") return;
+    setBusy(true);
+    setCreateError(null);
     try {
       await trpc.invoices.create.mutate({
         debtorId,
-        amount,
+        amount: amount.trim(),
         issuedOn,
         dueOn: dueOn || undefined,
         reference: reference.trim() || undefined,
@@ -114,7 +120,11 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
       setAmount(""); setReference(""); setDescription("");
       await load();
       router.refresh();
-    } catch (err: unknown) { setError(err instanceof Error ? err.message : (isAr ? "فشل إنشاء الفاتورة" : "Failed to create invoice")); }
+    } catch (err: unknown) {
+      setCreateError(err instanceof Error ? err.message : (isAr ? "فشل إنشاء الفاتورة" : "Failed to create invoice"));
+    } finally {
+      setBusy(false);
+    }
   }
 
   function startEdit(inv: Invoice) {
@@ -128,7 +138,9 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
   }
 
   async function onSaveEdit(id: string) {
-    setError(null);
+    if (busy) return;
+    setBusy(true);
+    setActionError(null);
     try {
       await trpc.invoices.update.mutate({
         id,
@@ -139,33 +151,71 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
       });
       setEditingId(null);
       await load();
-    } catch (err: unknown) { setError(err instanceof Error ? err.message : (isAr ? "فشل تحديث الفاتورة" : "Failed to update invoice")); }
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : (isAr ? "فشل تحديث الفاتورة" : "Failed to update invoice"));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function onTransition(id: string, to: InvoiceStatus) {
-    setError(null);
+    if (busy) return;
+    setBusy(true);
+    setActionError(null);
     try {
       await trpc.invoices.transition.mutate({ id, to });
       await load();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : (isAr ? "فشل تغيير حالة الفاتورة" : "Failed to update invoice status"));
+      setActionError(err instanceof Error ? err.message : (isAr ? "فشل تغيير حالة الفاتورة" : "Failed to update invoice status"));
+    } finally {
+      setBusy(false);
     }
   }
 
   async function onBulk() {
-    if (selected.size === 0) return;
-    setError(null);
+    if (busy || selected.size === 0) return;
+    setBusy(true);
+    setActionError(null);
     try {
       await trpc.invoices.bulkTransition.mutate({ ids: [...selected], to: bulkTo as never });
       setSelected(new Set());
       await load();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : (isAr ? "فشل تنفيذ العملية المجمعة" : "Failed to apply bulk transition"));
+      setActionError(err instanceof Error ? err.message : (isAr ? "فشل تنفيذ العملية المجمعة" : "Failed to apply bulk transition"));
+    } finally {
+      setBusy(false);
     }
   }
 
-  const debtorName = (id: string) => debtors.find((d) => d.id === id)?.displayName ?? "—";
-  const debtorPhone = (id: string) => debtors.find((d) => d.id === id)?.phoneE164;
+  const debtorMap = useMemo(() => new Map(debtors.map((d) => [d.id, d])), [debtors]);
+  const debtorName = (id: string) => debtorMap.get(id)?.displayName ?? "—";
+  const debtorPhone = (id: string) => debtorMap.get(id)?.phoneE164;
+
+  const agingSummary = useMemo(() => {
+    const definitions = [
+      { key: "current", label: isAr ? "غير مستحقة" : "Current" },
+      { key: "0-7", label: isAr ? "1–7 أيام" : "1–7 days" },
+      { key: "8-30", label: isAr ? "8–30 يومًا" : "8–30 days" },
+      { key: "31-60", label: isAr ? "31–60 يومًا" : "31–60 days" },
+      { key: "60+", label: isAr ? "أكثر من 60 يومًا" : "60+ days" },
+    ];
+    const totals = new Map<string, bigint>(definitions.map((d) => [d.key, 0n]));
+    for (const inv of items) {
+      if (
+        inv.currency === tenantCurrency &&
+        inv.status !== "paid" &&
+        inv.status !== "cancelled" &&
+        inv.status !== "written_off" &&
+        inv.status !== "disputed" &&
+        totals.has(inv.agingBucket)
+      ) {
+        totals.set(inv.agingBucket, (totals.get(inv.agingBucket) ?? 0n) + BigInt(inv.outstandingMinor || "0"));
+      }
+    }
+    const rows = definitions.map((d) => ({ ...d, amount: totals.get(d.key) ?? 0n }));
+    const total = rows.reduce((sum, row) => sum + row.amount, 0n);
+    return { rows, total };
+  }, [items, tenantCurrency, isAr]);
 
   return (
     <section className="flex flex-col gap-6">
@@ -187,6 +237,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className={labelCls}><span>{t("debtor")}</span>
                   <select data-testid="inv-debtor" className={inputCls} value={debtorId} onChange={(e) => setDebtorId(e.target.value)}>
+                    {debtors.length === 0 && <option value="">—</option>}
                     {debtors.map((d) => <option key={d.id} value={d.id}>{d.displayName}</option>)}
                   </select></label>
                 <label className={labelCls}><span>{t("amount")}</span>
@@ -195,7 +246,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className={labelCls}><span>{t("description")}</span>
-                  <input data-testid="inv-description" className={inputCls} placeholder={isAr ? "اختياري: مثال دفعة توريد أو خدمات" : "Optional: e.g. Supply batch or services"} value={description} onChange={(e) => setDescription(e.target.value)} /></label>
+                  <input data-testid="inv-description" className={inputCls} placeholder={isAr ? "اختياري: مثال دفعة توريد أو خدمات" : "Optional: e.g. Supply batch or services"} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={500} /></label>
                 <label className={labelCls}>
                   <span>{t("reference")}</span>
                   <input
@@ -205,6 +256,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                     placeholder={`${nextAutoReference} (${isAr ? "تلقائي" : "Auto"})`}
                     value={reference}
                     onChange={(e) => setReference(e.target.value)}
+                    maxLength={80}
                   />
                 </label>
               </div>
@@ -233,9 +285,9 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                   </div>
                 </div>
               </div>
-              {error && <p role="alert" className="text-sm font-semibold text-status-overdue-fg">{error}</p>}
+              {createError && <p role="alert" className="text-sm font-semibold text-status-overdue-fg">{createError}</p>}
               <div>
-                <button data-testid="inv-create" disabled={!debtorId || amount.trim() === ""} className={btnPrimary}>
+                <button data-testid="inv-create" disabled={busy || !debtorId || amount.trim() === ""} className={btnPrimary}>
                   <Plus size={18} aria-hidden />
                   {t("add")}
                 </button>
@@ -251,26 +303,27 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
         </div>
       </div>
 
-      {error && (
-        <div role="alert" className="flex items-center justify-between rounded-xl border border-danger/30 bg-danger-bg px-4 py-3 text-sm font-semibold text-danger">
-          <span>{error}</span>
-          <button type="button" onClick={() => setError(null)} className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "underline hover:bg-danger/10")}>
-            {isAr ? "إغلاق" : "Dismiss"}
-          </button>
+      {(actionError || loadError) && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-danger/30 bg-danger-bg px-4 py-3 text-sm font-semibold text-danger">
+          <span>{actionError ?? loadError}</span>
+          <div className="flex items-center gap-2">
+            {loadError && (
+              <button type="button" onClick={() => void load()} className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "underline hover:bg-danger/10")}>
+                {isAr ? "إعادة المحاولة" : "Retry"}
+              </button>
+            )}
+            {actionError && (
+              <button type="button" onClick={() => setActionError(null)} className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "underline hover:bg-danger/10")}>
+                {isAr ? "إغلاق" : "Dismiss"}
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       {/* Invoice aging analysis: balances grouped by aging bucket, not a decorative status strip. */}
       {items.length > 0 && (() => {
-        const definitions = [
-          { key: "current", label: isAr ? "غير مستحقة" : "Current" },
-          { key: "0-7", label: isAr ? "1–7 أيام" : "1–7 days" },
-          { key: "8-30", label: isAr ? "8–30 يومًا" : "8–30 days" },
-          { key: "31-60", label: isAr ? "31–60 يومًا" : "31–60 days" },
-          { key: "60+", label: isAr ? "أكثر من 60 يومًا" : "60+ days" },
-        ];
-        const rows = definitions.map((bucket) => ({ ...bucket, amount: items.filter((invoice) => invoice.agingBucket === bucket.key && invoice.currency === tenantCurrency && invoice.status !== "paid" && invoice.status !== "cancelled" && invoice.status !== "written_off" && invoice.status !== "disputed").reduce((sum, invoice) => sum + BigInt(invoice.outstandingMinor || "0"), 0n) }));
-        const total = rows.reduce((sum, row) => sum + row.amount, 0n);
+        const { rows, total } = agingSummary;
         const tones = ["bg-status-paid-fg", "bg-primary", "bg-status-due-fg", "bg-status-overdue-fg", "bg-status-overdue-fg"];
         return <section data-testid="inv-aging-analysis" className="panel-shadow flex flex-col gap-4 rounded-xl border border-border bg-surface p-4 sm:p-5">
           <div className="flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-sm font-extrabold">{isAr ? "أعمار الأرصدة المفتوحة" : "Open receivables aging"}</h2><p className="mt-1 text-xs text-text-muted">{isAr ? "قيمة المتبقي حسب مدة التأخير ضمن النتائج الحالية" : "Outstanding balance by age in the current filtered results"}{truncated && (isAr ? ` — عرض ${items.length} من أصل ${totalCount} فاتورة` : ` — showing ${items.length} of ${totalCount} invoices`)}</p></div><strong className="tnum text-base" dir="ltr">{formatAmountOnly(total)} {currencySymbol}</strong></div>
@@ -319,7 +372,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
         <select data-testid="inv-bulk-to" aria-label={t("bulkTargetStatus")} className={cn(inputVariants)} value={bulkTo} onChange={(e) => setBulkTo(e.target.value)}>
           {STATUSES.map((s) => <option key={s} value={s}>{t(`statuses.${s}`)}</option>)}
         </select>
-        <button data-testid="inv-bulk-apply" onClick={() => void onBulk()} className={btnGhost}>{t("bulkApply")}</button>
+        <button type="button" data-testid="inv-bulk-apply" disabled={busy || selected.size === 0} onClick={() => void onBulk()} className={btnGhost}>{selected.size > 0 ? `${t("bulkApply")} (${selected.size})` : t("bulkApply")}</button>
         <span className="ms-auto inline-flex items-center gap-2 rounded bg-callout px-3.5 py-1.5 text-xs font-medium text-text-subtle">
           <span>{t("title")}:</span>
           <span data-testid="inv-count" className="tnum font-bold text-primary" dir="ltr">{items.length}</span>
@@ -328,9 +381,9 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
 
       {loading ? (
         <LoadingState isAr={isAr} />
-      ) : items.length === 0 ? (
+      ) : items.length === 0 && !loadError ? (
         <EmptyState illustration={<EmptyInvoicesIllustration size={190} />} testId="invoices-empty" title={t("empty")} body={isAr ? "أنشئ فاتورة أو استورد ملفاً لبدء متابعة الاستحقاقات والتحصيل." : "Create an invoice or import a file to start tracking due dates and collections."} />
-      ) : (
+      ) : items.length === 0 ? null : (
         <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
           <ul className="flex flex-col divide-y divide-border">
             {items.map((i, idx) => (
@@ -396,7 +449,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                     <input className={inputCls} dir="ltr" inputMode="decimal" placeholder={t("amount")} value={editForm.amount} onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))} />
                     <div className="flex items-center gap-2">
                       <input type="date" className={inputCls} dir="ltr" value={editForm.dueOn} onChange={(e) => setEditForm((f) => ({ ...f, dueOn: e.target.value }))} />
-                      <button type="button" onClick={() => void onSaveEdit(i.id)} className={btnSmall}>
+                      <button type="button" disabled={busy || editForm.amount.trim() === ""} onClick={() => void onSaveEdit(i.id)} className={btnSmall}>
                         <Check size={14} strokeWidth={2.5} aria-hidden /> {tc("save")}
                       </button>
                       <button type="button" onClick={() => setEditingId(null)} className={btnSmall}>
@@ -424,7 +477,9 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                       .map((to) => (
                         <button
                           key={to}
+                          type="button"
                           data-testid={`inv-transition-${to}`}
+                          disabled={busy}
                           onClick={() => void onTransition(i.id, to)}
                           className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
                         >

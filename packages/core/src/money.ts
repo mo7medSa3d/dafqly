@@ -84,7 +84,7 @@ export function parseMoney(input: string, currency: SupportedCurrency | string =
     normalized = normalized.replace(/\./g, "").replace(",", ".");
   } else if (commaDecimal.test(normalized)) {
     normalized = normalized.replace(",", ".");
-  } else {
+  } else if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(normalized)) {
     normalized = normalized.replace(/,/g, "");
   }
 

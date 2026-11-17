@@ -180,6 +180,7 @@ describe("resolveRelativeDate (deterministic, tenant-local today given)", () => 
   it("بعد العيد is ambiguous -> human; explicit dates pass through", () => {
     expect(resolveRelativeDate("بعد العيد", "2026-11-09", "Africa/Cairo")).toEqual({ date: null, ambiguous: true });
     expect(resolveRelativeDate("هدفع 2026-11-20", "2026-11-09", "Africa/Cairo").date).toBe("2026-11-20");
+    expect(resolveRelativeDate("31/02/2026", "2026-11-09", "Africa/Cairo")).toEqual({ date: null, ambiguous: false });
     expect(resolveRelativeDate("كلام عادي", "2026-11-09", "Africa/Cairo")).toEqual({ date: null, ambiguous: false });
   });
 });

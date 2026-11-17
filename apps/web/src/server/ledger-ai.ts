@@ -1,4 +1,4 @@
-import { asc, eq, isNull, and } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import {
   AppError, MAX_LEDGER_PAGES, normalizeCurrencyCode, normalizeEgPhone, normalizeLedgerRowDigits, parseMoney,
@@ -48,7 +48,7 @@ interface LedgerStoredRow {
 function validateRowData(data: LedgerRowData): { field: string; reason: string }[] {
   const errors: { field: string; reason: string }[] = [];
   if (!data.name.trim()) errors.push({ field: "name", reason: "name is empty" });
-  if (!data.phoneE164) errors.push({ field: "phone", reason: "a valid Egyptian phone is required before commit" });
+  if (!data.phoneE164) errors.push({ field: "phone", reason: "a valid phone number is required before commit" });
   try {
     if (BigInt(data.amountMinor) <= 0n) errors.push({ field: "amount", reason: "amount must be positive" });
   } catch {
@@ -112,8 +112,8 @@ export interface LedgerJobView {
   }[];
 }
 
-async function loadJob(tx: Db, jobId: string, forUpdate = false) {
-  const query = tx.select().from(importJobs).where(eq(importJobs.id, jobId));
+async function loadJob(tx: Db, tenantId: string, jobId: string, forUpdate = false) {
+  const query = tx.select().from(importJobs).where(and(eq(importJobs.id, jobId), eq(importJobs.tenantId, tenantId)));
   const [job] = await (forUpdate ? query.for("update") : query);
   if (!job || job.kind !== "ledger_photo") throw new AppError("NOT_FOUND", "Ledger import job not found", 404);
   return job;
@@ -128,7 +128,7 @@ export async function runLedgerExtraction(
   app: Db, tenantId: string, actor: string, ai: LedgerAiDeps, jobId: string,
 ): Promise<LedgerJobView> {
   const extractionContext = await withTenant(app, tenantId, async (tx) => {
-    const job = await loadJob(tx, jobId, true);
+    const job = await loadJob(tx, tenantId, jobId, true);
     if (job.status !== "pending_review") throw new AppError("ALREADY_COMMITTED", "Only a pending-review job can be extracted", 409);
     const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
     return {
@@ -139,7 +139,7 @@ export async function runLedgerExtraction(
   const { fileIds, currency } = extractionContext;
 
   const debtorList = await withTenant(app, tenantId, async (tx) =>
-    tx.select({ id: debtors.id, displayName: debtors.displayName }).from(debtors).where(isNull(debtors.deletedAt)));
+    tx.select({ id: debtors.id, displayName: debtors.displayName }).from(debtors).where(and(eq(debtors.tenantId, tenantId), isNull(debtors.deletedAt))));
 
   interface PageResult { pageIndex: number; fileId: string; rows: LedgerStoredRow[]; usage: { input: number; output: number; model: string; promptVersion: string } | null }
   const pages: PageResult[] = [];
@@ -175,14 +175,16 @@ export async function runLedgerExtraction(
   }
 
   await withTenant(app, tenantId, async (tx) => {
-    const lockedJob = await loadJob(tx, jobId, true);
+    const lockedJob = await loadJob(tx, tenantId, jobId, true);
     if (lockedJob.status !== "pending_review") throw new AppError("ALREADY_COMMITTED", "Only a pending-review job can be extracted", 409);
-    await tx.delete(importRows).where(eq(importRows.jobId, jobId));
+    await tx.delete(importRows).where(and(eq(importRows.jobId, jobId), eq(importRows.tenantId, tenantId)));
     let n = 0;
+    const rowValues: (typeof importRows.$inferInsert)[] = [];
+    const usageValues: (typeof usageLedger.$inferInsert)[] = [];
     for (const page of pages) {
       for (const stored of page.rows) {
         n++;
-        await tx.insert(importRows).values({
+        rowValues.push({
           tenantId, jobId, rowNumber: n, parsed: stored as never,
           rowStatus: "pending_review",
           errors: stored.data ? validateRowData(stored.data) as never : [{ field: "page", reason: "page could not be read" }] as never,
@@ -190,14 +192,16 @@ export async function runLedgerExtraction(
         });
       }
       if (page.usage) {
-        await tx.insert(usageLedger).values({
+        usageValues.push({
           tenantId, kind: "llm_vision", units: page.usage.input + page.usage.output, costEstimateMinor: 0n,
         });
       }
     }
+    if (rowValues.length > 0) await tx.insert(importRows).values(rowValues);
+    if (usageValues.length > 0) await tx.insert(usageLedger).values(usageValues);
     const stats = { pagesTotal: fileIds.length, pagesDone: pages.length, rowsFound: n };
     const sourceGrid = { ...((lockedJob.sourceGrid ?? {}) as Record<string, unknown>), currency };
-    await tx.update(importJobs).set({ sourceGrid: sourceGrid as never, stats, updatedAt: new Date() }).where(eq(importJobs.id, jobId));
+    await tx.update(importJobs).set({ sourceGrid: sourceGrid as never, stats, updatedAt: new Date() }).where(and(eq(importJobs.id, jobId), eq(importJobs.tenantId, tenantId)));
     await audit(tx, tenantId, actor, "import.ledger_extracted", jobId, {
       stats, model: pages[0]?.usage?.model ?? null, promptVersion: pages[0]?.usage?.promptVersion ?? null,
     });
@@ -207,8 +211,8 @@ export async function runLedgerExtraction(
 
 export async function getLedgerJob(app: Db, tenantId: string, jobId: string): Promise<LedgerJobView> {
   return withTenant(app, tenantId, async (tx) => {
-    const job = await loadJob(tx, jobId, true);
-    const rows = await tx.select().from(importRows).where(eq(importRows.jobId, jobId)).orderBy(asc(importRows.rowNumber));
+    const job = await loadJob(tx, tenantId, jobId, true);
+    const rows = await tx.select().from(importRows).where(and(eq(importRows.jobId, jobId), eq(importRows.tenantId, tenantId))).orderBy(asc(importRows.rowNumber));
     return {
       id: job.id, status: job.status, fileName: job.fileName, stats: job.stats,
       rows: rows.map((r) => {
@@ -245,7 +249,7 @@ export const updateLedgerRowInput = z.object({
   rowId: z.string().uuid(),
   name: z.string().trim().min(1).max(160).optional(),
   phone: z.string().trim().max(32).nullable().optional(),
-  amount: z.string().trim().min(1).optional(), // EGP decimal string
+  amount: z.string().trim().min(1).optional(), // decimal string in tenant currency
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   note: z.string().trim().max(500).nullable().optional(),
   /** Merchant confirming a suggestion (or choosing another debtor) in review. */
@@ -258,9 +262,9 @@ export async function updateLedgerRow(
   app: Db, tenantId: string, actor: string, input: UpdateLedgerRowInput,
 ): Promise<void> {
   await withTenant(app, tenantId, async (tx) => {
-    const [row] = await tx.select().from(importRows).where(eq(importRows.id, input.rowId));
+    const [row] = await tx.select().from(importRows).where(and(eq(importRows.id, input.rowId), eq(importRows.tenantId, tenantId)));
     if (!row) throw new AppError("NOT_FOUND", "Import row not found", 404);
-    const [job] = await tx.select().from(importJobs).where(eq(importJobs.id, row.jobId));
+    const [job] = await tx.select().from(importJobs).where(and(eq(importJobs.id, row.jobId), eq(importJobs.tenantId, tenantId)));
     if (!job || job.status !== "pending_review") throw new AppError("ALREADY_COMMITTED", "This job can no longer be edited", 409);
     const stored = (row.parsed ?? null) as LedgerStoredRow | null;
     if (!stored?.data) throw new AppError("INVALID_ROW", "Row has no extracted data to edit", 400);
@@ -285,7 +289,7 @@ export async function updateLedgerRow(
     const errors = validateRowData(data);
     const next: LedgerStoredRow = { ...stored, data, status: errors.length === 0 ? "valid" : "invalid" };
     await tx.update(importRows).set({ parsed: next as never, errors: errors as never, updatedAt: new Date() })
-      .where(eq(importRows.id, input.rowId));
+      .where(and(eq(importRows.id, input.rowId), eq(importRows.tenantId, tenantId)));
     await tx.insert(auditLog).values({
       tenantId, actorUserId: actor, action: "import.ledger_row_updated", entity: "import_row", entityId: input.rowId,
       after: { jobId: row.jobId } as never,
@@ -303,7 +307,7 @@ export async function commitLedgerJob(
   app: Db, tenantId: string, actor: string, jobId: string, today: string,
 ): Promise<{ jobId: string; createdDebtors: number; createdInvoices: number; skippedInvalid: number }> {
   const result = await withTenant(app, tenantId, async (tx) => {
-    const job = await loadJob(tx, jobId, true);
+    const job = await loadJob(tx, tenantId, jobId, true);
     if (job.status !== "pending_review") throw new AppError("ALREADY_COMMITTED", "This ledger import was already committed", 409);
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     const terms = tenant?.settings.defaultTermsDays ?? 14;
@@ -313,11 +317,22 @@ export async function commitLedgerJob(
     if (extractionCurrency !== currency) {
       throw new AppError("CURRENCY_CHANGED_DURING_IMPORT", "Tenant currency changed after this ledger was extracted. Re-run extraction or review every amount before committing.", 409);
     }
-    const rows = await tx.select().from(importRows).where(eq(importRows.jobId, jobId)).orderBy(asc(importRows.rowNumber));
+    const rows = await tx.select().from(importRows).where(and(eq(importRows.jobId, jobId), eq(importRows.tenantId, tenantId))).orderBy(asc(importRows.rowNumber));
     let createdDebtors = 0;
     let createdInvoices = 0;
     let skippedInvalid = 0;
     const debtorByPhone = new Map<string, string>();
+    const phones = [...new Set(
+      rows
+        .map((r) => (r.parsed as LedgerStoredRow | null)?.data?.phoneE164)
+        .filter((p): p is string => Boolean(p)),
+    )];
+    if (phones.length > 0) {
+      const existingDebtors = await tx.select({ id: debtors.id, phoneE164: debtors.phoneE164 })
+        .from(debtors)
+        .where(and(eq(debtors.tenantId, tenantId), inArray(debtors.phoneE164, phones), isNull(debtors.deletedAt)));
+      for (const d of existingDebtors) debtorByPhone.set(d.phoneE164, d.id);
+    }
     for (const row of rows) {
       const stored = (row.parsed ?? null) as LedgerStoredRow | null;
       if (!stored?.data || stored.status !== "valid" || validateRowData(stored.data).length > 0) {
@@ -327,11 +342,6 @@ export async function commitLedgerJob(
       const data = stored.data;
       let debtorId = data.debtorId ?? undefined;
       if (!debtorId && data.phoneE164) debtorId = debtorByPhone.get(data.phoneE164);
-      if (!debtorId && data.phoneE164) {
-        const [existing] = await tx.select().from(debtors)
-          .where(and(eq(debtors.phoneE164, data.phoneE164), isNull(debtors.deletedAt)));
-        if (existing) debtorId = existing.id;
-      }
       if (!debtorId) {
         if (!data.phoneE164) { skippedInvalid++; continue; }
         const [created] = await tx.insert(debtors).values({
@@ -356,10 +366,10 @@ export async function commitLedgerJob(
       }).returning();
       createdInvoices++;
       await tx.update(importRows).set({ rowStatus: "accepted", debtorId, invoiceId: invoice!.id, updatedAt: new Date() })
-        .where(eq(importRows.id, row.id));
+        .where(and(eq(importRows.id, row.id), eq(importRows.tenantId, tenantId)));
     }
     await tx.update(importJobs).set({ status: "committed", committedAt: new Date(), updatedAt: new Date() })
-      .where(eq(importJobs.id, jobId));
+      .where(and(eq(importJobs.id, jobId), eq(importJobs.tenantId, tenantId)));
     await audit(tx, tenantId, actor, "import.ledger_committed", jobId, { createdDebtors, createdInvoices, skippedInvalid });
     return { jobId, createdDebtors, createdInvoices, skippedInvalid };
   });
@@ -369,13 +379,13 @@ export async function commitLedgerJob(
 
 export async function deleteLedgerJob(app: Db, tenantId: string, actor: string, jobId: string) {
   return withTenant(app, tenantId, async (tx) => {
-    const [job] = await tx.select().from(importJobs).where(eq(importJobs.id, jobId));
+    const [job] = await tx.select().from(importJobs).where(and(eq(importJobs.id, jobId), eq(importJobs.tenantId, tenantId)));
     if (!job) throw new AppError("NOT_FOUND", "Ledger job not found", 404);
     if (job.status === "committed") {
       throw new AppError("CANNOT_DELETE_COMMITTED", "Committed imports cannot be deleted", 409);
     }
-    await tx.delete(importRows).where(eq(importRows.jobId, jobId));
-    await tx.delete(importJobs).where(eq(importJobs.id, jobId));
+    await tx.delete(importRows).where(and(eq(importRows.jobId, jobId), eq(importRows.tenantId, tenantId)));
+    await tx.delete(importJobs).where(and(eq(importJobs.id, jobId), eq(importJobs.tenantId, tenantId)));
     await audit(tx, tenantId, actor, "import.ledger_deleted", jobId, { fileName: job.fileName });
     return { ok: true, jobId };
   });

@@ -32,6 +32,7 @@ d("Prompt 04 §9: global AI budget under concurrency", () => {
   const owner = () => ownerDb();
 
   beforeAll(async () => {
+    await owner().update(aiGlobalBudget).set({ spentUsdMicros: 0n, reservedUsdMicros: 0n }).where(eq(aiGlobalBudget.singletonId, 1));
     await ownerDb().insert(userTable).values([user]);
     tenantId = (await createTenantForUser(appDb(), user.id, {
       businessNameAr: "شركة الميزانية", timezone: "Africa/Cairo", quietStart: "21:00", quietEnd: "09:00",
@@ -42,6 +43,7 @@ d("Prompt 04 §9: global AI budget under concurrency", () => {
     const o = ownerDb();
     await o.delete(tenants).where(eq(tenants.id, tenantId));
     await o.delete(userTable).where(eq(userTable.id, user.id));
+    await o.update(aiGlobalBudget).set({ spentUsdMicros: 0n, reservedUsdMicros: 0n }).where(eq(aiGlobalBudget.singletonId, 1));
   });
 
   it("40 concurrent reservations fit exactly floor(cap / reserve) — the rest fail, none over-reserve", async () => {

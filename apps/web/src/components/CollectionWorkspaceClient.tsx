@@ -13,6 +13,8 @@ import { ReminderScheduleIllustration } from "./illustrations";
 
 type Task = Awaited<ReturnType<typeof trpc.collections.tasks.query>>[number];
 type PromiseRow = Awaited<ReturnType<typeof trpc.collections.promises.query>>[number];
+type ReminderRow = Awaited<ReturnType<typeof trpc.reminders.list.query>>[number];
+type ReminderFilter = "all" | "scheduled" | "sent" | "skipped" | "failed" | "cancelled";
 type Approval = Awaited<ReturnType<typeof trpc.aiActions.list.query>>[number];
 type Member = Awaited<ReturnType<typeof trpc.collections.team.query>>[number];
 type Debtor = Awaited<ReturnType<typeof trpc.debtors.list.query>>["items"][number];
@@ -20,17 +22,35 @@ type SmartReminderResult = Awaited<ReturnType<typeof trpc.aiWorkspace.dispatchSm
 type OptimizeResult = Awaited<ReturnType<typeof trpc.aiWorkspace.optimizeReminders.mutate>>;
 type Tab = "tasks" | "reminders" | "promises" | "approvals";
 type TaskFilter = "active" | "overdue" | "done" | "all";
+const VALID_TABS: readonly Tab[] = ["tasks", "reminders", "promises", "approvals"];
+function resolveTab(value?: string): Tab {
+  return VALID_TABS.includes(value as Tab) ? (value as Tab) : "tasks";
+}
 
-export function CollectionWorkspaceClient({ locale, role }: { locale: string; role: "owner" | "staff" }) {
+export function CollectionWorkspaceClient({
+  locale,
+  role,
+  initialTab,
+}: {
+  locale: string;
+  role: "owner" | "staff";
+  initialTab?: string;
+}) {
   const isAr = locale === "ar";
   const { format, currency } = useCurrency();
   const fmt = (minor: string | bigint, itemCurrency?: string | null) => format(BigInt(minor), itemCurrency ? { currency: itemCurrency } : undefined);
   const t = useTranslations("tasks");
-  const [tab, setTab] = useState<Tab>("tasks");
+  const [tab, setTab] = useState<Tab>(() => resolveTab(initialTab));
+
+  useEffect(() => {
+    setTab(resolveTab(initialTab));
+  }, [initialTab]);
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("active");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [promises, setPromises] = useState<PromiseRow[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [remindersList, setRemindersList] = useState<ReminderRow[]>([]);
+  const [reminderFilter, setReminderFilter] = useState<ReminderFilter>("all");
   const [team, setTeam] = useState<Member[]>([]);
   const [debtors, setDebtors] = useState<Debtor[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,21 +83,26 @@ export function CollectionWorkspaceClient({ locale, role }: { locale: string; ro
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [taskRows, promiseRows, approvalRows, members, debtorsPage] = await Promise.all([
+      const [taskRows, promiseRows, approvalRows, members, debtorsPage, reminderRows] = await Promise.all([
         trpc.collections.tasks.query(),
         trpc.collections.promises.query(),
         trpc.aiActions.list.query(),
         trpc.collections.team.query(),
         trpc.debtors.list.query({ limit: 200 }),
+        trpc.reminders.list.query().catch(() => [] as ReminderRow[]),
       ]);
       setTasks(taskRows);
       setPromises(promiseRows);
       setApprovals(approvalRows);
       setTeam(members);
       setDebtors(debtorsPage.items);
-      if (!debtorId && debtorsPage.items[0]) setDebtorId(debtorsPage.items[0].id);
-      if (!selectedPromiseDebtor && debtorsPage.items[0]) setSelectedPromiseDebtor(debtorsPage.items[0].id);
-      if (!reminderDebtorId && debtorsPage.items[0]) setReminderDebtorId(debtorsPage.items[0].id);
+      setRemindersList(reminderRows);
+      if (debtorsPage.items[0]) {
+        const firstId = debtorsPage.items[0].id;
+        setDebtorId((prev) => prev || firstId);
+        setSelectedPromiseDebtor((prev) => prev || firstId);
+        setReminderDebtorId((prev) => prev || firstId);
+      }
     } catch {
       setError(
         isAr
@@ -87,7 +112,7 @@ export function CollectionWorkspaceClient({ locale, role }: { locale: string; ro
     } finally {
       setLoading(false);
     }
-  }, [debtorId, selectedPromiseDebtor, reminderDebtorId, isAr]);
+  }, [isAr]);
 
   useEffect(() => {
     void refresh();
@@ -132,6 +157,11 @@ export function CollectionWorkspaceClient({ locale, role }: { locale: string; ro
 
   async function createTask() {
     if (!debtorId || !title.trim()) return;
+    const parsedDueAt = dueAt ? new Date(dueAt) : null;
+    if (!parsedDueAt || Number.isNaN(parsedDueAt.getTime())) {
+      setError(isAr ? "يرجى تحديد موعد متابعة صحيح." : "Please choose a valid follow-up date and time.");
+      return;
+    }
     await mutateAction(
       () =>
         trpc.collections.createTask.mutate({
@@ -140,7 +170,7 @@ export function CollectionWorkspaceClient({ locale, role }: { locale: string; ro
           description: description.trim() || undefined,
           priority,
           assignedToUserId: assignee || null,
-          dueAt: new Date(dueAt).toISOString(),
+          dueAt: parsedDueAt.toISOString(),
         }),
       isAr ? "تم إنشاء التذكرة وإضافتها لقائمة مهام دفقلي." : "Task created and added to the Dafqly work queue.",
     );
@@ -231,6 +261,44 @@ export function CollectionWorkspaceClient({ locale, role }: { locale: string; ro
       return false;
     }
   })();
+
+  async function runPlanRemindersNow() {
+    setBusy(true); setError(null); setSuccess(null);
+    try {
+      const res = await trpc.reminders.planNow.mutate();
+      setSuccess(isAr ? `تمت جدولة ${res.planned} تذكير وإلغاء ${res.cancelled}.` : `Planned ${res.planned} reminder(s), cancelled ${res.cancelled}.`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : (isAr ? "تعذر جدولة التذكيرات." : "Could not plan reminders."));
+    } finally { setBusy(false); }
+  }
+
+  async function runDispatchRemindersNow() {
+    setBusy(true); setError(null); setSuccess(null);
+    try {
+      const res = await trpc.reminders.dispatchNow.mutate();
+      setSuccess(isAr ? `تم إرسال ${res.sent} تذكير، وإعادة جدولة ${res.rescheduled}.` : `Dispatched ${res.sent} reminder(s), rescheduled ${res.rescheduled}.`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : (isAr ? "تعذر إرسال التذكيرات." : "Could not dispatch reminders."));
+    } finally { setBusy(false); }
+  }
+
+  async function onCancelReminder(id: string) {
+    setBusy(true); setError(null); setSuccess(null);
+    try {
+      await trpc.reminders.cancel.mutate({ id });
+      setSuccess(isAr ? "تم إلغاء التذكير." : "Reminder cancelled.");
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : (isAr ? "تعذر إلغاء التذكير." : "Could not cancel reminder."));
+    } finally { setBusy(false); }
+  }
+
+  const filteredReminders = useMemo(
+    () => (reminderFilter === "all" ? remindersList : remindersList.filter((r) => r.status === reminderFilter)),
+    [remindersList, reminderFilter],
+  );
 
   const tabs: { id: Tab; label: string; count?: number; Icon: typeof ClipboardText }[] = [
     { id: "tasks", label: isAr ? "المهام والتذاكر" : "Tasks & tickets", count: activeTasks.length, Icon: ClipboardText },
@@ -729,6 +797,97 @@ export function CollectionWorkspaceClient({ locale, role }: { locale: string; ro
               />
             )}
           </Panel>
+
+          <div className="xl:col-span-2">
+            <Panel
+              title={isAr ? "سجل وجدول التذكرات" : "Reminders Queue & History"}
+              actions={
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" disabled={busy} onClick={() => void runPlanRemindersNow()} className={btnGhost}>
+                    <CalendarCheck size={15} />
+                    {isAr ? "جدولة الفواتير المستحقة" : "Plan due invoices"}
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => void runDispatchRemindersNow()} className={btnPrimary}>
+                    <Lightning size={15} />
+                    {isAr ? "إرسال المستحق الآن" : "Dispatch due now"}
+                  </button>
+                </div>
+              }
+            >
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {(["all", "scheduled", "sent", "skipped", "failed", "cancelled"] as const).map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => setReminderFilter(st)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${reminderFilter === st ? "bg-primary text-primary-foreground" : "bg-muted text-text-muted hover:text-text"}`}
+                  >
+                    {st === "all" ? (isAr ? "الكل" : "All")
+                      : st === "scheduled" ? (isAr ? "مجدول" : "Scheduled")
+                      : st === "sent" ? (isAr ? "مُرسل" : "Sent")
+                      : st === "skipped" ? (isAr ? "متخطى" : "Skipped")
+                      : st === "failed" ? (isAr ? "فشل" : "Failed")
+                      : (isAr ? "ملغى" : "Cancelled")}
+                  </button>
+                ))}
+              </div>
+              {filteredReminders.length === 0 ? (
+                <EmptyState
+                  title={isAr ? "لا توجد تذكرات في هذه الفئة" : "No reminders in this view"}
+                  body={isAr ? "اضغط «جدولة الفواتير المستحقة» لإنشاء تذكرات الفواتير المفتوحة." : "Click «Plan due invoices» to generate reminders for open invoices."}
+                />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[680px] text-start text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-xs text-text-muted">
+                        <th className="py-2 text-start font-bold">{isAr ? "العميل" : "Customer"}</th>
+                        <th className="py-2 text-start font-bold">{isAr ? "الفاتورة / المبلغ" : "Invoice / Amount"}</th>
+                        <th className="py-2 text-start font-bold">{isAr ? "الموعد" : "Due"}</th>
+                        <th className="py-2 text-start font-bold">{isAr ? "الحالة" : "Status"}</th>
+                        <th className="py-2 text-end font-bold">{isAr ? "إجراء" : "Action"}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {filteredReminders.map((r) => (
+                        <tr key={r.id}>
+                          <td className="py-2.5 font-bold">
+                            <Link href={`/${locale}/debtors/${r.debtorId}`} className="text-primary hover:underline">
+                              {r.debtorName}
+                            </Link>
+                          </td>
+                          <td className="py-2.5 text-xs text-text-muted">
+                            <span className="font-mono">{r.invoiceRef ?? "—"}</span> · {format(r.amountMinor, { currency: r.currency })}
+                          </td>
+                          <td className="py-2.5 font-mono text-xs" dir="ltr">
+                            {r.dueAt.slice(0, 16).replace("T", " ")}
+                          </td>
+                          <td className="py-2.5 text-xs">
+                            <span className="rounded-md bg-muted px-2 py-0.5 font-bold">{r.status}</span>
+                            {(r.skipReason || r.lastError) && (
+                              <span className="ms-1.5 text-text-muted">({r.skipReason ?? r.lastError})</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 text-end">
+                            {r.status === "scheduled" && (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void onCancelReminder(r.id)}
+                                className="rounded-md border border-border px-2.5 py-1 text-xs font-bold text-danger hover:bg-danger-bg"
+                              >
+                                {isAr ? "إلغاء" : "Cancel"}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+          </div>
         </div>
       )}
 
@@ -798,6 +957,7 @@ export function CollectionWorkspaceClient({ locale, role }: { locale: string; ro
                               <>
                                 <button
                                   disabled={busy || role !== "owner"}
+                                  title={role !== "owner" ? (isAr ? "تغيير حالة التعهد يتطلب موافقة المالك" : "Owner approval required to change promise status") : undefined}
                                   onClick={() =>
                                     void mutateAction(
                                       () => trpc.collections.decidePromise.mutate({ id: p.id, status: "accepted" }),
@@ -810,6 +970,7 @@ export function CollectionWorkspaceClient({ locale, role }: { locale: string; ro
                                 </button>
                                 <button
                                   disabled={busy || role !== "owner"}
+                                  title={role !== "owner" ? (isAr ? "تغيير حالة التعهد يتطلب موافقة المالك" : "Owner approval required to change promise status") : undefined}
                                   onClick={() =>
                                     void mutateAction(
                                       () => trpc.collections.decidePromise.mutate({ id: p.id, status: "rejected" }),
@@ -874,7 +1035,7 @@ export function CollectionWorkspaceClient({ locale, role }: { locale: string; ro
                   ))}
                 </select>
               </Field>
-              <Field label={isAr ? "المبلغ بالجنيه" : "Amount (EGP)"}>
+              <Field label={isAr ? `المبلغ (${currency})` : `Amount (${currency})`}>
                 <input
                   inputMode="decimal"
                   className={inputCls}

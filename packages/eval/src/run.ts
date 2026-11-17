@@ -5,7 +5,7 @@ import {
   type LedgerRow, type ReplyIntent,
 } from "@tahseel/core";
 import { sha256Of } from "@tahseel/core/files-crypto";
-import { FakeLlmProvider } from "@tahseel/providers";
+import { FakeLlmProvider, UnifiedAiProvider, hasUsableLlmConfig, resolveAiConfig, type OcrLlmProvider } from "@tahseel/providers";
 import { baselineClassify, scoreReplies, type LabeledReply } from "./baseline";
 
 /**
@@ -22,7 +22,16 @@ import { baselineClassify, scoreReplies, type LabeledReply } from "./baseline";
  * run is a RUNBOOK human step (fixtures/private + ANTHROPIC_API_KEY).
  */
 const fixturesRoot = resolve(new URL("../fixtures", import.meta.url).pathname);
-const llm = new FakeLlmProvider();
+const aiEnv = { ...process.env, AI_PROVIDER: process.env.AI_PROVIDER ?? "gemini" };
+let llm: OcrLlmProvider;
+if (process.env.EVAL_LIVE === "1") {
+  if (!hasUsableLlmConfig(aiEnv)) {
+    throw new Error("EVAL_LIVE=1 requires usable AI_PROVIDER + AI_API_KEY (or local Ollama/LM Studio AI_BASE_URL).");
+  }
+  llm = new UnifiedAiProvider(resolveAiConfig(aiEnv));
+} else {
+  llm = new FakeLlmProvider();
+}
 let failed = false;
 const gate = (label: string, ok: boolean) => {
   console.log(`  [${ok ? "PASS" : "FAIL"}] ${label}`);
@@ -37,9 +46,9 @@ for (const kind of ["replies", "ledger", "receipts", "import"] as const) {
     console.log(`fixtures/${kind}/${split}: ${files.length} file(s)`);
   }
 }
-const hasReal = existsSync(resolve(fixturesRoot, "../fixtures-private"));
+const hasReal = existsSync(resolve(fixturesRoot, "private"));
 console.log(hasReal
-  ? "Real data present under fixtures-private (not part of this synthetic run)."
+  ? "Real data present under fixtures/private (not part of this synthetic run)."
   : "REAL EVAL DATA: none found. Datasets below are SYNTHETIC (generated + labelled in-repo). Real datasets are a human input (packages/eval/README.md).");
 
 // ---------------------------------------------------------- harness smoke

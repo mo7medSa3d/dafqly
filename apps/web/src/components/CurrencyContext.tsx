@@ -3,11 +3,12 @@
 import { createContext, useContext, useMemo } from "react";
 import {
   formatCurrencyMinor,
-  formatEgp,
   formatMoney,
   getCurrencySymbol,
   type SupportedCurrency,
 } from "@tahseel/core";
+
+const DEFAULT_CURRENCY: SupportedCurrency = "USD";
 
 export interface CurrencyContextValue {
   currency: string;
@@ -17,20 +18,21 @@ export interface CurrencyContextValue {
 }
 
 const defaultContext: CurrencyContextValue = {
-  currency: "EGP",
-  symbol: "ج.م",
-  format: (minor, opts) => formatMoney(minor, "EGP", { locale: "ar", ...opts }),
+  currency: DEFAULT_CURRENCY,
+  symbol: getCurrencySymbol(DEFAULT_CURRENCY, "en"),
+  format: (minor, opts) =>
+    formatMoney(minor, (opts?.currency ?? DEFAULT_CURRENCY) as SupportedCurrency, { locale: "en", ...opts }),
   formatAmountOnly: (minor, opts) => {
     const b = typeof minor === "bigint" ? minor : BigInt(String(minor || "0"));
-    return formatEgp(b, opts);
+    return formatCurrencyMinor(b, (opts?.currency ?? DEFAULT_CURRENCY) as SupportedCurrency, opts);
   },
 };
 
 const CurrencyContext = createContext<CurrencyContextValue>(defaultContext);
 
 export function CurrencyProvider({
-  currency = "EGP",
-  locale = "ar",
+  currency = DEFAULT_CURRENCY,
+  locale = "en",
   digits = "latin",
   children,
 }: {
@@ -40,7 +42,7 @@ export function CurrencyProvider({
   digits?: "latin" | "eastern";
   children: React.ReactNode;
 }) {
-  const normCurrency = (currency || "EGP").toUpperCase() as SupportedCurrency;
+  const normCurrency = (currency || DEFAULT_CURRENCY).toUpperCase() as SupportedCurrency;
   const symbol = getCurrencySymbol(normCurrency, locale);
 
   const value = useMemo<CurrencyContextValue>(() => ({

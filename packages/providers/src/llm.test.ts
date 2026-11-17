@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { AnthropicLlmProvider, FakeLlmProvider, LlmNotConfiguredError, SYNTHETIC_MARKER } from "./llm";
+import { FakeLlmProvider, LlmNotConfiguredError, SYNTHETIC_MARKER } from "./llm";
+import { UnifiedAiProvider } from "./unified-ai";
 import { validateUpload, computeSha256, FakeStorageProvider, MAX_UPLOAD_BYTES } from "./storage";
 
 /**
@@ -13,14 +14,14 @@ function toolUseResponse(input: unknown, usage = { input_tokens: 111, output_tok
   } as Response;
 }
 
-describe("AnthropicLlmProvider (mocked fetch, ADR-022 shapes)", () => {
+describe("UnifiedAiProvider (Anthropic mode) (mocked fetch, ADR-022 shapes)", () => {
   it("throws LlmNotConfiguredError without a key", () => {
-    expect(() => new AnthropicLlmProvider({ apiKey: "", modelFast: "f", modelVision: "v" })).toThrow(LlmNotConfiguredError);
+    expect(() => new UnifiedAiProvider({ provider: "anthropic", apiKey: "", model: "v" })).toThrow(LlmNotConfiguredError);
   });
 
   it("sends the documented request: URL, headers, forced tool use; parses tool_use + usage", async () => {
     const fetchFn = vi.fn(async () => toolUseResponse({ intent: "promise_to_pay", confidence: 0.91, promised_date: "2026-11-12", amount_minor: null }));
-    const llm = new AnthropicLlmProvider({ apiKey: "sk-test", modelFast: "claude-haiku-5-5", modelVision: "claude-sonnet-5-5", fetchFn, now: (() => { let t = 1000; return () => (t += 5); })() });
+    const llm = new UnifiedAiProvider({ provider: "anthropic", apiKey: "sk-test", model: "claude-haiku-5-5", fetchFn, now: (() => { let t = 1000; return () => (t += 5); })() });
     const out = await llm.classifyReply("هدفع الخميس", { todayIso: "2026-11-09", timezone: "Africa/Cairo", dueOn: "2026-11-10" });
     expect(out.data).toMatchObject({ intent: "promise_to_pay", confidence: 0.91, promised_date: "2026-11-12" });
     expect(out).toMatchObject({ model: "claude-haiku-5-5", promptVersion: "reply-v1", inputTokens: 111, outputTokens: 22 });
@@ -28,7 +29,7 @@ describe("AnthropicLlmProvider (mocked fetch, ADR-022 shapes)", () => {
     expect(url).toBe("https://api.anthropic.com/v1/messages");
     const headers = init.headers as Record<string, string>;
     expect(headers["x-api-key"]).toBe("sk-test");
-    expect(headers["anthropic-version"]).toBe("2026-10-21");
+    expect(headers["anthropic-version"]).toBe("2023-06-01");
     const body = JSON.parse(init.body as string) as Record<string, unknown>;
     expect(body.tool_choice).toEqual({ type: "tool", name: "classify_reply" });
     expect((body.tools as { name: string }[])[0]!.name).toBe("classify_reply");
@@ -43,7 +44,7 @@ describe("AnthropicLlmProvider (mocked fetch, ADR-022 shapes)", () => {
       ok: true, status: 200,
       json: async () => ({ content: [{ type: "tool_use", name: "extract_receipt", input: { is_receipt: true, amount_minor: 50000, confidence: 0.9, tamper_signals: [] } }], usage: { input_tokens: 10, output_tokens: 5 } }),
     }) as Response);
-    const llm = new AnthropicLlmProvider({ apiKey: "sk-test", modelFast: "f", modelVision: "claude-sonnet-5-5", fetchFn });
+    const llm = new UnifiedAiProvider({ provider: "anthropic", apiKey: "sk-test", model: "claude-sonnet-5-5", fetchFn });
     const out = await llm.extractReceipt(new Uint8Array([1, 2, 3]), "image/png");
     expect(out.data?.amount_minor).toBe(50000);
     const body = JSON.parse(((fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1]).body as string) as { messages: { content: { type: string; source?: { type: string; media_type: string; data: string } }[] }[] };
@@ -53,13 +54,13 @@ describe("AnthropicLlmProvider (mocked fetch, ADR-022 shapes)", () => {
   });
 
   it("non-200 -> error; invalid tool input -> data null (routes to human)", async () => {
-    const failing = new AnthropicLlmProvider({
-      apiKey: "sk-test", modelFast: "f", modelVision: "v",
+    const failing = new UnifiedAiProvider({ provider: "anthropic",
+      apiKey: "sk-test", model: "v",
       fetchFn: async () => ({ ok: false, status: 500, json: async () => ({}) }) as Response,
     });
     await expect(failing.classifyReply("x", { todayIso: "2026-11-09", timezone: "Africa/Cairo" })).rejects.toThrow(/500/);
-    const invalid = new AnthropicLlmProvider({
-      apiKey: "sk-test", modelFast: "f", modelVision: "v",
+    const invalid = new UnifiedAiProvider({ provider: "anthropic",
+      apiKey: "sk-test", model: "v",
       fetchFn: async () => toolUseResponse({ intent: "do_anything", confidence: 3 }),
     });
     const out = await invalid.classifyReply("x", { todayIso: "2026-11-09", timezone: "Africa/Cairo" });
@@ -208,7 +209,7 @@ describe("Anthropic native Agent tool loop", () => {
         usage: { input_tokens: 18, output_tokens: 8 },
       }), { status: 200 });
     };
-    const provider = new AnthropicLlmProvider({ apiKey: "sk-test", modelFast: "claude-fast", fetchFn });
+    const provider = new UnifiedAiProvider({ provider: "anthropic", apiKey: "sk-test", model: "claude-fast", fetchFn });
     const out = await provider.runAgent!({
       systemInstruction: "Use tools for facts.",
       messages: [{ role: "user", content: "Summarize collections" }],
@@ -230,8 +231,8 @@ describe("Anthropic native Agent tool loop", () => {
 describe("Anthropic model routing and tool budgets", () => {
   it("uses the fast model for copy generation rather than the agent model", async () => {
     const requestBodies: Record<string, unknown>[] = [];
-    const provider = new AnthropicLlmProvider({
-      apiKey: "sk-test", modelAgent: "claude-sonnet-5-5", modelFast: "claude-haiku-5-5",
+    const provider = new UnifiedAiProvider({ provider: "anthropic",
+      apiKey: "sk-test", model: "claude-haiku-5-5",
       fetchFn: async (_url, init) => {
         requestBodies.push(JSON.parse(init.body as string) as Record<string, unknown>);
         return new Response(JSON.stringify({ content: [{ type: "text", text: "Draft." }], usage: { input_tokens: 4, output_tokens: 2 } }), { status: 200 });
@@ -243,8 +244,8 @@ describe("Anthropic model routing and tool budgets", () => {
 
   it("records every requested tool, including calls rejected by the per-turn tool budget", async () => {
     let requestCount = 0;
-    const provider = new AnthropicLlmProvider({
-      apiKey: "sk-test", modelAgent: "claude-sonnet-5-5",
+    const provider = new UnifiedAiProvider({ provider: "anthropic",
+      apiKey: "sk-test", model: "claude-sonnet-5-5",
       fetchFn: async () => {
         requestCount += 1;
         const content = requestCount === 1
@@ -283,7 +284,7 @@ describe("Anthropic native text streaming", () => {
       { type: "message_delta", usage: { output_tokens: 3 } },
     ];
     const body = events.map((value) => `event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`).join("");
-    const provider = new AnthropicLlmProvider({ apiKey: "sk-test", modelFast: "claude-haiku-5-5", fetchFn: async () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }) });
+    const provider = new UnifiedAiProvider({ provider: "anthropic", apiKey: "sk-test", model: "claude-haiku-5-5", fetchFn: async () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }) });
     const deltas: string[] = [];
     const result = await provider.streamText("Prompt", "System", (delta) => deltas.push(delta));
     expect(deltas).toEqual(["تحليل ", "واضح"]);

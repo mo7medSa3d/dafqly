@@ -211,7 +211,7 @@ d("F1 debtors, invoices, payments (service layer)", () => {
     const kpisBefore = await getKpis(app(), tenantId, "2026-11-09");
     const debtor = await createDebtor(app(), tenantId, user.id, { displayName: "متفق عليه", phone: "01077779999" });
     const open = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "100.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
-    const partial = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "200.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
+    await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "200.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
     await recordPayment(app(), tenantId, user.id, { debtorId: debtor.id, amount: "50.00", method: "cash", receivedOn: "2026-11-05" });
     const disputed = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "300.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
     await transitionInvoice(app(), tenantId, user.id, disputed.id, "disputed");
@@ -249,7 +249,6 @@ d("F1 debtors, invoices, payments (service layer)", () => {
     expect(outstandingForLink(linkInvs, disputed.id)).toBe(0n);
     expect(outstandingForLink(linkInvs, paid.id)).toBe(25000n);
     expect(outstandingForLink(linkInvs, open.id)).toBe(0n);
-    void partial;
   });
 
   it("payments for another tenant's debtor are invisible (RLS through the service)", async () => {

@@ -1,12 +1,12 @@
 "use client";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { useCurrency } from "./CurrencyContext";
 import { ArrowCounterClockwise, CheckCircle, DownloadSimple, Eye, FileCsv, FileText, Trash, UploadSimple, WarningCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
-import { Panel, StatusPill, btnGhost, btnPrimary, inputCls } from "./ui";
+import { LoadingState, Panel, StatusPill, btnGhost, btnPrimary, inputCls } from "./ui";
 import { ImportIllustration } from "./illustrations";
 
 const FIELDS = ["name", "phone", "amount", "dueDate", "issuedDate", "reference", "description", "notes"] as const;
@@ -35,18 +35,25 @@ export function ImportClient() {
   const [jobs, setJobs] = useState<JobLite[]>([]);
   const [mapping, setMapping] = useState<Partial<Record<Field, number>>>({});
   const [columns, setColumns] = useState(0);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ text: string; isError: boolean } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const initialLoadedRef = useRef(false);
 
   const loadJobs = useCallback(async () => {
     try {
+      setLoadError(null);
       const list = await trpc.imports.list.query();
       setJobs(list as JobLite[]);
       return list as JobLite[];
-    } catch {
+    } catch (err: unknown) {
+      setLoadError(err instanceof Error && err.message ? err.message : t("failed"));
       return [];
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const loadJob = useCallback(async (id: string) => {
     try {
@@ -57,24 +64,34 @@ export function ImportClient() {
         const maxCol = Math.max(-1, ...Object.values(j.mapping as Record<string, number>));
         setColumns(Math.max(maxCol + 1, 4));
       }
-    } catch {
-      /* ignore */
+    } catch (err: unknown) {
+      setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
+    if (initialLoadedRef.current) return;
+    initialLoadedRef.current = true;
     void loadJobs().then((list) => {
-      // Auto-load latest pending_review job if no job is actively loaded
       const pending = list.find((j) => j.status === "pending_review");
-      if (pending && !jobId) {
+      if (pending) {
         setJobId(pending.id);
         void loadJob(pending.id);
       }
     });
-  }, [loadJobs, loadJob, jobId]);
+  }, [loadJobs, loadJob]);
 
   async function onFile(file: File) {
-    setBusy(true); setMsg(null);
+    setMsg(null);
+    if (file.size === 0) {
+      setMsg({ text: isAr ? "الملف المرفوع فارغ." : "The uploaded file is empty.", isError: true });
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setMsg({ text: isAr ? "حجم الملف يتجاوز الحد الأقصى (8 ميجابايت)." : "Import file exceeds 8 MB.", isError: true });
+      return;
+    }
+    setBusy(true);
     try {
       const contentBase64 = await fileToBase64(file);
       const preview = await trpc.imports.preview.mutate({ fileName: file.name, contentBase64 });
@@ -82,7 +99,7 @@ export function ImportClient() {
       await loadJob(preview.jobId);
       await loadJobs();
     } catch (err: unknown) {
-      setMsg((err instanceof Error ? err.message : null) || t("failed"));
+      setMsg({ text: (err instanceof Error && err.message ? err.message : null) || t("failed"), isError: true });
     } finally {
       setBusy(false);
     }
@@ -90,13 +107,13 @@ export function ImportClient() {
 
   async function onRemap() {
     if (!jobId || job?.status !== "pending_review") return;
-    setBusy(true);
+    setBusy(true); setMsg(null);
     try {
       const clean = Object.fromEntries(Object.entries(mapping).filter(([, v]) => v !== undefined && v >= 0));
       await trpc.imports.remap.mutate({ jobId, mapping: clean as never });
       await loadJob(jobId);
     } catch (err: unknown) {
-      setMsg((err instanceof Error ? err.message : null) || t("failed"));
+      setMsg({ text: (err instanceof Error && err.message ? err.message : null) || t("failed"), isError: true });
     } finally {
       setBusy(false);
     }
@@ -107,11 +124,11 @@ export function ImportClient() {
     setBusy(true); setMsg(null);
     try {
       await trpc.imports.commit.mutate({ jobId });
-      setMsg(t("committed"));
+      setMsg({ text: t("committed"), isError: false });
       await loadJob(jobId);
       await loadJobs();
     } catch (err: unknown) {
-      setMsg((err instanceof Error ? err.message : null) || t("failed"));
+      setMsg({ text: (err instanceof Error && err.message ? err.message : null) || t("failed"), isError: true });
     } finally {
       setBusy(false);
     }
@@ -121,14 +138,14 @@ export function ImportClient() {
     setBusy(true); setMsg(null);
     try {
       await trpc.imports.delete.mutate({ jobId: id });
-      setMsg(t("deleted"));
+      setMsg({ text: t("deleted"), isError: false });
       if (jobId === id) {
         setJobId(null);
         setJob(null);
       }
       await loadJobs();
-    } catch {
-      setMsg(t("failed"));
+    } catch (err: unknown) {
+      setMsg({ text: (err instanceof Error && err.message ? err.message : null) || t("failed"), isError: true });
     } finally {
       setBusy(false);
     }
@@ -140,8 +157,8 @@ export function ImportClient() {
     // test names/phones, labelled as samples in the notes column — so the
     // file can never be mistaken for real customer data if forwarded.
     const csvContent = useArabic
-      ? "\uFEFFاسم العميل,رقم الهاتف,المبلغ المستحق,تاريخ الاستحقاق,رقم الفاتورة,ملاحظات\nعميل تجريبي ١,+201000000001,1500,2026-12-01,INV-1001,بيانات تجريبية — ليست عميلاً حقيقياً\nعميل تجريبي ٢,+201000000002,4200.50,2026-12-15,INV-1002,بيانات تجريبية — ليست عميلاً حقيقياً\n"
-      : "Customer Name,Phone Number,Amount,Due Date,Invoice No,Notes\nSample Customer 1,+201000000001,1500,2026-12-01,INV-1001,Sample data — not a real customer\nSample Customer 2,+201000000002,4200.50,2026-12-15,INV-1002,Sample data — not a real customer\n";
+      ? "\uFEFFاسم العميل,رقم الهاتف,المبلغ المستحق,تاريخ الاستحقاق,رقم الفاتورة,ملاحظات\nعميل تجريبي ١,+15550100001,1500,2026-12-01,INV-1001,بيانات تجريبية — ليست عميلاً حقيقياً\nعميل تجريبي ٢,+15550100002,4200.50,2026-12-15,INV-1002,بيانات تجريبية — ليست عميلاً حقيقياً\n"
+      : "Customer Name,Phone Number,Amount,Due Date,Invoice No,Notes\nSample Customer 1,+15550100001,1500,2026-12-01,INV-1001,Sample data — not a real customer\nSample Customer 2,+15550100002,4200.50,2026-12-15,INV-1002,Sample data — not a real customer\n";
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -157,13 +174,15 @@ export function ImportClient() {
     setBusy(true); setMsg(null);
     try {
       await trpc.imports.undo.mutate({ jobId: id });
-      setMsg(t("undone"));
+      setMsg({ text: t("undone"), isError: false });
       if (jobId === id) await loadJob(id);
       await loadJobs();
-    } catch { setMsg(t("failed")); } finally { setBusy(false); }
+    } catch (err: unknown) {
+      setMsg({ text: (err instanceof Error && err.message ? err.message : null) || t("failed"), isError: true });
+    } finally { setBusy(false); }
   }
 
-  const isErrorMsg = msg ? (msg.includes("تعذّر") || msg.toLowerCase().includes("failed")) : false;
+  const isErrorMsg = msg?.isError ?? false;
 
   return (
     <section className="flex flex-col gap-6">
@@ -178,8 +197,8 @@ export function ImportClient() {
             </span>
             <p className="text-xs text-text-muted">
               {isAr
-                ? "يدعم ملفات إكسل وجداول البيانات الشائعة حتى 10 ميجابايت"
-                : "Supports Excel files and common spreadsheets up to 10 MB"}
+                ? "يدعم ملفات إكسل (.xlsx) وجداول CSV حتى 8 ميجابايت"
+                : "Supports Excel (.xlsx) and CSV spreadsheets up to 8 MB"}
             </p>
           </div>
 
@@ -197,6 +216,7 @@ export function ImportClient() {
             className="sr-only"
             onChange={(e) => {
               const f = e.target.files?.[0];
+              e.target.value = "";
               if (f) void onFile(f);
             }}
           />
@@ -267,9 +287,17 @@ export function ImportClient() {
         </div>
       </div>
 
+      {loadError && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-danger/30 bg-danger-bg px-4 py-3 text-sm font-semibold text-danger">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => void loadJobs()} className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "underline")}>
+            {isAr ? "إعادة المحاولة" : "Retry"}
+          </button>
+        </div>
+      )}
       {msg && (
         <div
-          role="status"
+          role={isErrorMsg ? "alert" : "status"}
           data-testid="import-msg"
           className={`flex items-center gap-2.5 rounded-xl border px-4 py-3 text-sm font-bold ${
             isErrorMsg
@@ -282,7 +310,7 @@ export function ImportClient() {
           ) : (
             <CheckCircle size={18} aria-hidden />
           )}
-          <span>{msg}</span>
+          <span>{msg.text}</span>
         </div>
       )}
 
@@ -412,7 +440,9 @@ export function ImportClient() {
 
       <div className="flex flex-col gap-3">
         <h2 className="text-lg font-extrabold">{t("jobs")}</h2>
-        {jobs.length === 0 ? (
+        {loading ? (
+          <LoadingState isAr={isAr} />
+        ) : jobs.length === 0 && !loadError ? (
           <div className="panel-shadow flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-surface p-8 text-center">
             <FileText size={32} className="text-text-subtle" />
             <p className="font-bold text-text">{isAr ? "لا توجد عمليات استيراد سابقة" : "No previous import jobs"}</p>
@@ -422,7 +452,7 @@ export function ImportClient() {
                 : "When you upload an Excel or CSV file, processing history and rollback options will appear here."}
             </p>
           </div>
-        ) : (
+        ) : jobs.length === 0 ? null : (
           <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
             <ul className="flex flex-col divide-y divide-border">
               {jobs.map((j) => {

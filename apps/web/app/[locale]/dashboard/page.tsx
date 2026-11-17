@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
-import { formatCurrencyMinor, formatPct, formatDso, getCurrencySymbol } from "@tahseel/core";
+import { formatCurrencyMinor, formatMoney, formatPct, formatDso, getCurrencySymbol } from "@tahseel/core";
 import { auth } from "@/server/auth";
 import { runtimeModeFlags } from "@/server/env";
 import { appDb, ownerDb } from "@/server/db";
@@ -43,8 +43,14 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
 
   const isEmpty = summary.openInvoices === 0 && summary.debtors === 0;
   const currency = tenant.settings?.currency ?? "EGP";
+  const digits = tenant.settings?.easternDigits ? "eastern" : "latin";
   const currencySymbol = getCurrencySymbol(currency, locale);
-  const fmt = (minor: string) => formatCurrencyMinor(BigInt(minor), currency);
+  const fmt = (minor: string) => formatCurrencyMinor(BigInt(minor), currency, { digits });
+  const otherCurrencies = kpisFull.byCurrency.filter(
+    (b) =>
+      b.currency !== currency &&
+      (b.outstandingMinor > 0 || b.overdueMinor > 0 || b.collectedInMonthMinor > 0 || b.refundedInMonthMinor > 0),
+  );
 
   const aging = [
     { key: "current", label: tr("current"), amountMinor: kpisFull.agingBuckets.current },
@@ -164,6 +170,38 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
         </div>
       </section>
 
+      {otherCurrencies.length > 0 && (
+        <section aria-label={isAr ? "ملخص العملات الأخرى" : "Other currencies summary"} data-testid="kpi-other-currencies" className="rounded-xl border border-border bg-card p-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+              {isAr ? "أرصدة بعملات أخرى (منفصلة عن العملة الافتراضية)" : "Other currencies (kept separate from default currency)"}
+            </h2>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {otherCurrencies.map((b) => (
+              <div key={b.currency} className="flex flex-col gap-1 rounded-lg bg-muted/50 px-3.5 py-2.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono font-extrabold text-foreground">{b.currency}</span>
+                  <span className="tnum font-extrabold text-foreground" dir="ltr">
+                    {formatMoney(b.outstandingMinor, b.currency, { locale, digits })}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <span>
+                    {isAr ? "متأخر:" : "Overdue:"}{" "}
+                    <span className="tnum font-semibold" dir="ltr">{formatMoney(b.overdueMinor, b.currency, { locale, digits })}</span>
+                  </span>
+                  <span>
+                    {isAr ? "تحصيل الشهر:" : "Month:"}{" "}
+                    <span className="tnum font-semibold" dir="ltr">{formatMoney(b.collectedInMonthMinor, b.currency, { locale, digits })}</span>
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {isEmpty && (
         <section className="rounded-xl border border-dashed border-border bg-card p-6 sm:p-8">
           <div className="flex flex-col items-center gap-4 sm:flex-row">
@@ -198,6 +236,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
                 weeks={forecast.weeks}
                 expectedLabel={tr("expected")}
                 conservativeLabel={tr("conservative")}
+                beyondHorizon={forecast.beyondHorizon}
               />
             )}
           </Panel>
@@ -233,7 +272,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
         {/* Aging Doughnut */}
         <div className="col-span-full md:col-span-6 xl:col-span-4">
           <Panel title={tr("agingTitle")}>
-            {BigInt(summary.totalOutstandingMinor) > 0n ? (
+            {kpisFull.totalOutstandingMinor > 0 ? (
               <AgingDonut buckets={aging} />
             ) : (
               <div className="flex min-h-[180px] flex-col items-center justify-center gap-2 text-center">

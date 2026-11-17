@@ -28,7 +28,7 @@ import {
   tenants, user, account, memberships, debtors, invoices, payments,
   paymentAllocations, cheques, promisesToPay, disputes, reminders,
   messages, messageIntents, collectionTasks, statementLinks, auditLog,
-  notifications, aiActionApprovals,
+  notifications, aiActionApprovals, paymentLinks, optOuts,
   type TenantSettings,
 } from "./schema";
 
@@ -77,7 +77,26 @@ try {
     const existingUsers = await db.select().from(user).where(eq(user.email, STRESS_EMAIL));
     for (const u of existingUsers) {
       const ms = await db.select().from(memberships).where(eq(memberships.userId, u.id));
-      for (const m of ms) await db.delete(tenants).where(eq(tenants.id, m.tenantId));
+      for (const m of ms) {
+        await db.delete(notifications).where(eq(notifications.tenantId, m.tenantId));
+        await db.delete(aiActionApprovals).where(eq(aiActionApprovals.tenantId, m.tenantId));
+        await db.delete(reminders).where(eq(reminders.tenantId, m.tenantId));
+        await db.delete(messages).where(eq(messages.tenantId, m.tenantId));
+        await db.delete(collectionTasks).where(eq(collectionTasks.tenantId, m.tenantId));
+        await db.delete(disputes).where(eq(disputes.tenantId, m.tenantId));
+        await db.delete(promisesToPay).where(eq(promisesToPay.tenantId, m.tenantId));
+        await db.delete(cheques).where(eq(cheques.tenantId, m.tenantId));
+        await db.delete(paymentAllocations).where(eq(paymentAllocations.tenantId, m.tenantId));
+        await db.delete(payments).where(eq(payments.tenantId, m.tenantId));
+        await db.delete(invoices).where(eq(invoices.tenantId, m.tenantId));
+        await db.delete(paymentLinks).where(eq(paymentLinks.tenantId, m.tenantId));
+        await db.delete(optOuts).where(eq(optOuts.tenantId, m.tenantId));
+        await db.delete(debtors).where(eq(debtors.tenantId, m.tenantId));
+        await db.delete(statementLinks).where(eq(statementLinks.tenantId, m.tenantId));
+        await db.delete(auditLog).where(eq(auditLog.tenantId, m.tenantId));
+        await db.delete(memberships).where(eq(memberships.tenantId, m.tenantId));
+        await db.delete(tenants).where(eq(tenants.id, m.tenantId));
+      }
       await db.delete(user).where(eq(user.id, u.id));
     }
     console.log("seed-stress: previous stress tenant wiped (RESET_STRESS_SEED=1)");
@@ -111,10 +130,8 @@ try {
     // Credit balances (consistent by construction — see payments below):
     // #30 EGP 25_000 overpayment, #31 USD 10_000 overpayment.
     const d: string[] = [];
-    const debtorPhone: string[] = [];
     for (let i = 0; i < 32; i++) {
       const phone = `+2010${(10000000 + i * 7919).toString().padStart(8, "0")}`;
-      debtorPhone.push(phone);
       const idv = uuidv7();
       d.push(idv);
       await db.insert(debtors).values({
@@ -142,7 +159,6 @@ try {
       ...Array<InvStatus>(6).fill("cancelled"),
     ];
     const invIds: string[] = [];
-    const invRef: string[] = [];
     const invStatus: InvStatus[] = [];
     const invDebtor: number[] = [];
     const invCurrency: string[] = [];
@@ -159,7 +175,7 @@ try {
       const paid = status === "paid" ? amount : status === "partially_paid" ? amount / 2n : 0n;
       const ref = `STR-2026-${String(i + 1).padStart(3, "0")}`;
       const idv = uuidv7();
-      invIds.push(idv); invRef.push(ref); invStatus.push(status);
+      invIds.push(idv); invStatus.push(status);
       invDebtor.push(debtorIdx); invCurrency.push(currency);
       await db.insert(invoices).values({
         id: idv, tenantId, debtorId: d[debtorIdx]!, reference: ref,
@@ -174,11 +190,9 @@ try {
     // One confirmed payment + allocation per paid / partially_paid invoice.
     // Overpayments (unallocated confirmed payments) create the two credit
     // balances above: debtor #30 +25_000 EGP, debtor #31 +10_000 USD.
-    const payIds: string[] = [];
     let payN = 0;
     const addPayment = async (debtorIdx: number, invoiceIdx: number, amount: bigint, status: "claimed" | "confirmed" | "rejected", method: "cash" | "instapay" | "bank" | "wallet" | "cheque" | "gateway" | "other", received: number, allocate: boolean, reversalOf?: string) => {
       const idv = uuidv7();
-      payIds.push(idv);
       payN++;
       await db.insert(payments).values({
         id: idv, tenantId, debtorId: d[debtorIdx]!, invoiceId: inv(invoiceIdx),
@@ -404,10 +418,13 @@ try {
       { type: "create_collection_task", status: "rejected", title: "تصعيد قانوني مبكر", rationale: "رُفض: التصعيد القانوني سابق لأوانه لهذا العميل.", debtor: 3, invoice: 3 },
     ];
     for (const a of approvalDefs) {
+      const payload = a.type === "create_collection_task"
+        ? { debtorId: d[a.debtor]!, invoiceId: a.invoice !== undefined ? inv(a.invoice) : undefined, title: a.title, priority: "high", dueAt: ts(3, 12).toISOString() }
+        : { debtorId: d[a.debtor]!, invoiceId: inv(a.invoice ?? 0), channel: "whatsapp", dueAt: ts(3, 12).toISOString() };
       await db.insert(aiActionApprovals).values({
         id: uuidv7(), tenantId, requestedBy: userId, actionType: a.type, status: a.status,
         title: a.title, rationale: a.rationale,
-        payload: { debtorId: d[a.debtor]!, invoiceId: a.invoice !== undefined ? inv(a.invoice) : null } as never,
+        payload: payload as never,
         approvedBy: a.status === "approved" ? userId : null,
         approvedAt: a.status === "approved" ? ts(-1) : null,
       });

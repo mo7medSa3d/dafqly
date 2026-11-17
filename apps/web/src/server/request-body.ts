@@ -10,7 +10,7 @@ export async function readRequestBodyLimited(req: Request, maxBytes: number): Pr
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
     throw new Error("maxBytes must be a positive safe integer");
   }
-  const contentLength = req.headers.get("content-length");
+  const contentLength = req.headers.get("content-length")?.trim();
   if (contentLength && /^\d+$/.test(contentLength) && Number(contentLength) > maxBytes) {
     throw new RequestBodyTooLargeError();
   }
@@ -26,7 +26,7 @@ export async function readRequestBodyLimited(req: Request, maxBytes: number): Pr
       if (!value) continue;
       total += value.byteLength;
       if (total > maxBytes) {
-        await reader.cancel();
+        await reader.cancel().catch(() => {});
         throw new RequestBodyTooLargeError();
       }
       chunks.push(value);

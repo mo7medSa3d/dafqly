@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
 import { normalizeDigits } from "./digits";
 import { parseEgp } from "./money";
-import { normalizeEgPhone } from "./phone";
+import { normalizePhone } from "./phone";
 
 /**
  * Excel/CSV import parsing (BUILD_PLAN F2). Pure transforms over in-memory
@@ -150,8 +150,9 @@ function inferFieldFromData(grid: Grid, colIdx: number, startRow: number): "phon
     if (raw === null || raw === undefined || raw === "") continue;
     nonEmpty++;
     const s = normalizeDigits(String(raw)).trim();
-    // Egyptian mobile phone
-    if (/^(01[0125]\d{8}|\+201[0125]\d{8}|00201[0125]\d{8})$/.test(s.replace(/[\s\-()]/g, ""))) {
+    // E.164 international or local mobile phone
+    const compactPhone = s.replace(/[\s\-()]/g, "");
+    if (/^(?:\+|00)[1-9]\d{6,14}$/.test(compactPhone) || /^01[0125]\d{8}$/.test(compactPhone)) {
       phoneCount++;
       continue;
     }
@@ -160,8 +161,8 @@ function inferFieldFromData(grid: Grid, colIdx: number, startRow: number): "phon
       amountCount++;
       continue;
     }
-    const cleanNum = s.replace(/EGP|egp|L\.?E\.?|جنيه|جنيها|ج\.م\.?|جم/gi, "").replace(/[, \s]/g, "");
-    if (/^\d+(\.\d{1,2})?$/.test(cleanNum) && !/^(01[0125])/.test(cleanNum)) {
+    const cleanNum = s.replace(/EGP|egp|L\.?E\.?|جنيهات|جنيها|جنيه|ج\.م\.?|جم/gi, "").replace(/[, \s]/g, "");
+    if (/^\d+(\.\d{1,2})?$/.test(cleanNum) && !/^(01[0125]|00)/.test(cleanNum)) {
       amountCount++;
       continue;
     }
@@ -326,11 +327,11 @@ function parseRow(row: CellValue[], mapping: ColumnMapping, rowNumber: number): 
     errors.push({ field: "phone", reason: "phone is required" });
   } else {
     try {
-      const p = normalizeEgPhone(phoneRaw);
+      const p = normalizePhone(phoneRaw);
       phoneE164 = p.e164;
       whatsappCapable = p.whatsappCapable;
     } catch {
-      errors.push({ field: "phone", reason: `invalid Egyptian phone: ${phoneRaw}` });
+      errors.push({ field: "phone", reason: `invalid phone: ${phoneRaw}` });
     }
   }
 
@@ -348,7 +349,7 @@ function parseRow(row: CellValue[], mapping: ColumnMapping, rowNumber: number): 
   } else {
     try {
       const cleanedAmount = cellText(amountRaw)
-        .replace(/EGP|egp|L\.?E\.?|جنيه|جنيها|ج\.م\.?|جم/gi, "")
+        .replace(/EGP|egp|L\.?E\.?|جنيهات|جنيها|جنيه|ج\.م\.?|جم/gi, "")
         .trim();
       amountMinor = parseEgp(cleanedAmount);
       if (amountMinor <= 0n) errors.push({ field: "amount", reason: "amount must be positive" });
@@ -423,7 +424,7 @@ function normalizeExcelJsCell(raw: unknown): CellValue {
     if ("richText" in obj && Array.isArray(obj.richText)) {
       return obj.richText.map((part) => String((part as { text?: unknown }).text ?? "")).join("");
     }
-    if ("text" in obj) return String(obj.text ?? "");
+    if ("text" in obj) return normalizeExcelJsCell(obj.text);
   }
   return String(raw);
 }
@@ -508,32 +509,39 @@ export function detectCsvDelimiter(text: string): string {
 
   for (const delim of candidates) {
     let consistentCols = -1;
+    let maxCols = 1;
     let isConsistent = true;
     let headerMatches = 0;
     let totalFields = 0;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
-      let colCount = 1;
+      const cells: string[] = [];
+      let cur = "";
       let inQ = false;
       for (let j = 0; j < line.length; j++) {
         const c = line[j];
-        if (c === '"') inQ = !inQ;
-        else if (!inQ && c === delim) colCount++;
+        if (c === '"') {
+          if (inQ && line[j + 1] === '"') { cur += '"'; j++; } else inQ = !inQ;
+        } else if (!inQ && c === delim) {
+          cells.push(cur.trim());
+          cur = "";
+        } else cur += c;
       }
+      cells.push(cur.trim());
+      const colCount = cells.length;
+      if (colCount > maxCols) maxCols = colCount;
       totalFields += colCount;
-      if (i === 0) {
-        consistentCols = colCount;
-        const cells = line.split(delim).map((c) => c.replace(/^"|"$/g, "").trim());
-        for (const cell of cells) {
-          if (matchField(cell)) headerMatches++;
-        }
-      } else {
-        if (colCount !== consistentCols) isConsistent = false;
+      if (consistentCols === -1 && colCount > 1) consistentCols = colCount;
+      else if (consistentCols > 1 && colCount !== consistentCols) isConsistent = false;
+      if (colCount > 1) {
+        let rowMatches = 0;
+        for (const cell of cells) if (matchField(cell)) rowMatches++;
+        if (rowMatches > headerMatches) headerMatches = rowMatches;
       }
     }
 
-    if (consistentCols <= 1) continue;
+    if (maxCols <= 1) continue;
 
     let score = totalFields;
     if (isConsistent) score += 500;

@@ -106,8 +106,8 @@ export function SettingsClient({ locale }: { locale: string }) {
   const [businessNameAr, setBusinessNameAr] = useState("");
   const [businessNameEn, setBusinessNameEn] = useState("");
   const [taxId, setTaxId] = useState("");
-  const [timezone, setTimezone] = useState("Africa/Cairo");
-  const [currency, setCurrency] = useState<"EGP" | "SAR" | "USD" | "AED" | "EUR" | "KWD" | "JPY">("EGP");
+  const [timezone, setTimezone] = useState("UTC");
+  const [currency, setCurrency] = useState<"EGP" | "SAR" | "USD" | "AED" | "EUR" | "KWD" | "JPY">("USD");
   const [defaultTermsDays, setDefaultTermsDays] = useState(14);
   const [tone, setTone] = useState<"polite" | "firm">("polite");
   const [quietStart, setQuietStart] = useState("21:00");
@@ -116,7 +116,7 @@ export function SettingsClient({ locale }: { locale: string }) {
   const [autoCloseEnabled, setAutoCloseEnabled] = useState(false);
   const [includePayLinkInReminders, setIncludePayLinkInReminders] = useState(true);
   const [statementLinksEnabled, setStatementLinksEnabled] = useState(true);
-  const [exportLanguage, setExportLanguage] = useState<"ar" | "en">("ar");
+  const [exportLanguage, setExportLanguage] = useState<"ar" | "en">(isAr ? "ar" : "en");
   const [easternDigits, setEasternDigits] = useState(false);
 
   const load = useCallback(async () => {
@@ -127,7 +127,7 @@ export function SettingsClient({ locale }: { locale: string }) {
       setTimezone(res.timezone);
       setBusinessNameEn(res.settings.businessNameEn ?? "");
       setTaxId(res.settings.taxId ?? "");
-      setCurrency(res.settings.currency ?? "EGP");
+      setCurrency(res.settings.currency ?? "USD");
       setDefaultTermsDays(res.settings.defaultTermsDays ?? 14);
       setTone(res.settings.tone ?? "polite");
       setQuietStart(res.settings.quietStart ?? "21:00");
@@ -136,7 +136,7 @@ export function SettingsClient({ locale }: { locale: string }) {
       setAutoCloseEnabled(res.settings.autoCloseEnabled ?? false);
       setIncludePayLinkInReminders(res.settings.includePayLinkInReminders ?? true);
       setStatementLinksEnabled(res.settings.statementLinksEnabled ?? true);
-      setExportLanguage(res.settings.exportLanguage ?? "ar");
+      setExportLanguage(res.settings.exportLanguage ?? (isAr ? "ar" : "en"));
       setEasternDigits(res.settings.easternDigits ?? false);
     } catch {
       setError(isAr ? "تعذّر تحميل إعدادات الحساب." : "Failed to load account settings.");
@@ -149,6 +149,10 @@ export function SettingsClient({ locale }: { locale: string }) {
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
+    if (!businessNameAr.trim()) {
+      setError(isAr ? "اسم المنشأة بالعربية مطلوب." : "Business name (Arabic) is required.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setSaved(false);
@@ -181,6 +185,16 @@ export function SettingsClient({ locale }: { locale: string }) {
   }
 
   if (!data) {
+    if (error) {
+      return (
+        <div role="alert" className="flex min-h-[240px] flex-col items-center justify-center gap-4 rounded-xl border border-danger/30 bg-danger-bg p-6 text-center">
+          <p className="text-sm font-bold text-danger">{error}</p>
+          <button type="button" onClick={() => { setError(null); void load(); }} className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}>
+            {isAr ? "إعادة المحاولة" : "Retry"}
+          </button>
+        </div>
+      );
+    }
     return (
       <div className="flex min-h-[350px] items-center justify-center">
         <span className="text-sm font-semibold text-text-muted">{isAr ? "جارٍ تحميل الإعدادات..." : "Loading settings..."}</span>
@@ -282,6 +296,9 @@ export function SettingsClient({ locale }: { locale: string }) {
                       value={timezone}
                       onChange={(e) => setTimezone(e.target.value)}
                     >
+                      {!TIMEZONES.some((tz) => tz.id === timezone) && (
+                        <option value={timezone}>{timezone}</option>
+                      )}
                       {TIMEZONES.map((tz) => (
                         <option key={tz.id} value={tz.id}>
                           {isAr ? tz.labelAr : tz.labelEn}
@@ -326,6 +343,9 @@ export function SettingsClient({ locale }: { locale: string }) {
                       value={defaultTermsDays}
                       onChange={(e) => setDefaultTermsDays(Number(e.target.value))}
                     >
+                      {![7, 14, 30, 60].includes(defaultTermsDays) && (
+                        <option value={defaultTermsDays}>{isAr ? `${defaultTermsDays} يوماً` : `${defaultTermsDays} days`}</option>
+                      )}
                       <option value={7}>{isAr ? "٧ أيام" : "7 days"}</option>
                       <option value={14}>{isAr ? "١٤ يوماً (أسبوعان)" : "14 days (2 weeks)"}</option>
                       <option value={30}>{isAr ? "٣٠ يوماً (شهر)" : "30 days (1 month)"}</option>
@@ -426,7 +446,7 @@ export function SettingsClient({ locale }: { locale: string }) {
                         {isAr ? "إغلاق الفاتورة تلقائياً عند اعتماد الإيصال" : "Auto-close invoices on payment claim"}
                       </span>
                       <span className="text-[11px] text-text-muted">
-                        {isAr ? "اعتماد التحويل البنكي أو إيصال إنستاباي فور التحقق منه." : "Close matching invoice once a receipt is verified."}
+                        {isAr ? "اعتماد التحويل البنكي أو إيصال الدفع فور التحقق منه." : "Close matching invoice once a receipt is verified."}
                       </span>
                     </div>
                   </label>

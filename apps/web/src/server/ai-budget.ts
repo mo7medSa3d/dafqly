@@ -27,20 +27,11 @@ function safeConfigs(): LlmProviderConfig[] {
 
 /**
  * Operator-supplied rates (USD per 1M tokens) for providers whose models are
- * not in the built-in table — per provider via AI_PROVIDERS_JSON `pricing`,
- * or globally via AI_PRICE_INPUT_USD_PER_M / AI_PRICE_OUTPUT_USD_PER_M.
+ * not in the built-in table.
  * Explicit rates win over the built-in table, so a re-priced/proxied model is
  * metered at what the operator actually pays.
  */
-function rateOverrideFor(model: string): AiRateOverride | undefined {
-  const hit = safeConfigs().find((c) => c.pricing && [c.model, c.modelFast, c.modelVision].includes(model));
-  if (hit?.pricing) return { input: hit.pricing.inputUsdPerM, output: hit.pricing.outputUsdPerM };
-  const e = env();
-  if (e.AI_PRICE_INPUT_USD_PER_M !== undefined && e.AI_PRICE_OUTPUT_USD_PER_M !== undefined) {
-    return { input: e.AI_PRICE_INPUT_USD_PER_M, output: e.AI_PRICE_OUTPUT_USD_PER_M };
-  }
-  return undefined;
-}
+
 
 export function estimateAiCostUsdMicros(model: string, inputTokens: number, outputTokens: number, override?: AiRateOverride): bigint {
   const normalized = model.toLowerCase();
@@ -60,16 +51,24 @@ export function estimateAiCostUsdMicros(model: string, inputTokens: number, outp
   // understated; the per-request reserve still bounds admission.
   let inputRate = 10;
   let outputRate = 40;
-  if (normalized.includes("gemini-3.8-flash") || normalized.includes("gemini-3.6-flash")) {
-    inputRate = 0.75; outputRate = 3.75;
-  } else if (normalized.includes("gemini-3.5-flash-lite")) {
+  if (normalized.includes("gemini-2.5-flash") || normalized.includes("gemini-3.5-flash-lite")) {
     inputRate = 0.30; outputRate = 2.50;
+  } else if (normalized.includes("gemini-3.8-flash") || normalized.includes("gemini-3.6-flash")) {
+    inputRate = 0.75; outputRate = 3.75;
   } else if (normalized.includes("gemini-3.5-flash")) {
     inputRate = 1.50; outputRate = 9;
+  } else if (normalized.includes("gpt-4o-mini")) {
+    inputRate = 0.15; outputRate = 0.60;
+  } else if (normalized.includes("claude-sonnet-4-5")) {
+    inputRate = 3; outputRate = 15;
   } else if (normalized.includes("haiku-5-5")) {
     inputRate = 0.10; outputRate = 0.50;
   } else if (normalized.includes("sonnet-5-5")) {
     inputRate = 2; outputRate = 10;
+  } else if (normalized.includes("deepseek")) {
+    inputRate = 0.27; outputRate = 1.10;
+  } else if (normalized.includes("llama-3.3-70b")) {
+    inputRate = 0.59; outputRate = 0.79;
   }
   if (override) { inputRate = override.input; outputRate = override.output; }
   // USD per million tokens * tokens = micro-USD (one USD = one million micros).
@@ -121,7 +120,7 @@ export async function settleGlobalAiBudget(
     const [usage] = await tx.select().from(aiGlobalUsage).where(eq(aiGlobalUsage.requestKey, requestKey)).for("update");
     if (!usage || usage.status !== "reserved") return;
     const meteredModel = model ?? usage.model;
-    const actual = estimateAiCostUsdMicros(meteredModel, inputTokens, outputTokens, rateOverrideFor(meteredModel));
+    const actual = estimateAiCostUsdMicros(meteredModel, inputTokens, outputTokens);
     const targetPeriod = budgetPeriod ?? monthStart(usage.createdAt);
     const [budget] = await tx.select().from(aiGlobalBudget).where(eq(aiGlobalBudget.singletonId, 1)).for("update");
     if (budget?.periodStart === targetPeriod) {

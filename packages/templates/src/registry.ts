@@ -18,7 +18,6 @@ const vars = {
   businessAmountDue: z.object({ business: z.string().min(1), amount: z.string().min(1), due_date: z.string().min(1) }),
   businessAmount: z.object({ business: z.string().min(1), amount: z.string().min(1) }),
   amountRemaining: z.object({ amount: z.string().min(1), remaining: z.string().min(1) }),
-  amountOnly: z.object({ amount: z.string().min(1) }),
 };
 
 export interface TemplateDef {

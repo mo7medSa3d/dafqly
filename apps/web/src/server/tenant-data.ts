@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { AppError } from "@tahseel/core";
 import {
   aiConversations, aiMessages, auditLog, chequeAlerts, cheques, debtors, disputes, files, importJobs, importRows,
-  invoices, memberships, messageIntents, messages, notifications, optOuts, paymentAllocations,
+  invoiceSequences, invoices, memberships, messageIntents, messages, notifications, optOuts, paymentAllocations,
   paymentLinks, payments, reminders, statementLinks, subscriptionInvoices,
   tenantDeletions, tenants, usageLedger, promisesToPay, collectionTasks, aiActionApprovals, withTenant, type Db,
 } from "@tahseel/db";
@@ -49,6 +49,7 @@ const TENANT_DATA_TABLES: TenantTableSpec[] = [
   { name: "import_rows", read: (tx, id) => tx.select().from(importRows).where(eq(importRows.tenantId, id)), remove: async (tx, id) => { await tx.delete(importRows).where(eq(importRows.tenantId, id)); } },
   { name: "invoices", read: (tx, id) => tx.select().from(invoices).where(eq(invoices.tenantId, id)), remove: async (tx, id) => { await tx.delete(invoices).where(eq(invoices.tenantId, id)); } },
   { name: "import_jobs", read: (tx, id) => tx.select().from(importJobs).where(eq(importJobs.tenantId, id)), remove: async (tx, id) => { await tx.delete(importJobs).where(eq(importJobs.tenantId, id)); } },
+  { name: "invoice_sequences", read: (tx, id) => tx.select().from(invoiceSequences).where(eq(invoiceSequences.tenantId, id)), remove: async (tx, id) => { await tx.delete(invoiceSequences).where(eq(invoiceSequences.tenantId, id)); } },
   { name: "files", read: (tx, id) => tx.select().from(files).where(eq(files.tenantId, id)), remove: async (tx, id) => { await tx.delete(files).where(eq(files.tenantId, id)); } },
   { name: "debtors", read: (tx, id) => tx.select().from(debtors).where(eq(debtors.tenantId, id)), remove: async (tx, id) => { await tx.delete(debtors).where(eq(debtors.tenantId, id)); } },
   { name: "usage_ledger", read: (tx, id) => tx.select().from(usageLedger).where(eq(usageLedger.tenantId, id)), remove: async (tx, id) => { await tx.delete(usageLedger).where(eq(usageLedger.tenantId, id)); } },
@@ -107,7 +108,8 @@ export async function deleteTenantData(
   return owner.transaction(async (tx) => {
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     if (!tenant) throw new AppError("NOT_FOUND", "Tenant not found", 404);
-    const accepted = confirmation === "DELETE" || confirmation === tenant.businessNameAr || confirmation === tenant.name;
+    const trimmed = confirmation.trim();
+    const accepted = trimmed === "DELETE" || trimmed === tenant.businessNameAr || trimmed === tenant.name;
     if (!accepted) {
       throw new AppError("CONFIRMATION_MISMATCH", "Type the business name or DELETE to confirm", 400);
     }

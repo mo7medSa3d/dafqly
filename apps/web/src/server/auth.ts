@@ -47,11 +47,13 @@ function buildAuth() {
     // served behind another origin. Empty = same-origin only.
     trustedOrigins: [
       env().APP_URL,
-      ...env().TRUSTED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean),
-    ].filter((o, i, all) => all.indexOf(o) === i),
+      process.env.BETTER_AUTH_URL?.trim() ?? "",
+      ...env().TRUSTED_ORIGINS.split(",").map((o) => o.trim()),
+    ].filter((o, i, all) => Boolean(o) && all.indexOf(o) === i),
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,
+      maxPasswordLength: 128,
       // H5: when verification is enabled, sign-in is refused until the
       // email is verified (and sign-up sends the verification email).
       requireEmailVerification: emailVerificationEnabled(),

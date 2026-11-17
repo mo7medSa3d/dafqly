@@ -19,13 +19,17 @@ export function OnboardingWizard() {
   const [step, setStep] = useState(0);
   const [businessNameAr, setBusinessNameAr] = useState("");
   const [businessNameEn, setBusinessNameEn] = useState("");
-  const [timezone, setTimezone] = useState("Africa/Cairo");
+  const [timezone, setTimezone] = useState("UTC");
   const [quietStart, setQuietStart] = useState("21:00");
   const [quietEnd, setQuietEnd] = useState("09:00");
   const [fridayMorningSkip, setFridayMorningSkip] = useState(false);
   const [defaultTermsDays, setDefaultTermsDays] = useState(14);
 
   useEffect(() => {
+    try {
+      const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (detectedTz) setTimezone(detectedTz);
+    } catch { /* fallback to UTC */ }
     try {
       const cardRaw = window.localStorage.getItem("dafqly:workspace-card");
       if (cardRaw) {
@@ -57,8 +61,8 @@ export function OnboardingWizard() {
     setError(null);
     try {
       await trpc.tenant.create.mutate({
-        businessNameAr,
-        businessNameEn: businessNameEn || undefined,
+        businessNameAr: businessNameAr.trim(),
+        businessNameEn: businessNameEn.trim() || undefined,
         timezone, quietStart, quietEnd, fridayMorningSkip, defaultTermsDays, tone,
         consent: true,
       });
@@ -105,11 +109,19 @@ export function OnboardingWizard() {
         {step === 0 && (
           <div className="flex flex-col gap-4">
             <label className={labelCls}><span>{t("businessNameAr")}</span>
-              <input data-testid="ob-name-ar" className={inputCls} value={businessNameAr} onChange={(e) => setBusinessNameAr(e.target.value)} required /></label>
+              <input data-testid="ob-name-ar" className={inputCls} maxLength={120} value={businessNameAr} onChange={(e) => setBusinessNameAr(e.target.value)} required /></label>
             <label className={labelCls}><span>{t("businessNameEn")}</span>
-              <input data-testid="ob-name-en" className={inputCls} dir="ltr" value={businessNameEn} onChange={(e) => setBusinessNameEn(e.target.value)} /></label>
+              <input data-testid="ob-name-en" className={inputCls} dir="ltr" maxLength={120} value={businessNameEn} onChange={(e) => setBusinessNameEn(e.target.value)} /></label>
             <label className={labelCls}><span>{t("timezone")}</span>
               <select data-testid="ob-timezone" className={inputCls} value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+                {![
+                  "Africa/Cairo", "Africa/Casablanca", "Africa/Johannesburg",
+                  "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Istanbul",
+                  "Asia/Riyadh", "Asia/Dubai", "Asia/Kuwait", "Asia/Amman",
+                  "Asia/Karachi", "Asia/Kolkata", "Asia/Singapore", "Asia/Tokyo",
+                  "Australia/Sydney", "America/New_York", "America/Chicago",
+                  "America/Los_Angeles", "UTC",
+                ].includes(timezone) && <option value={timezone}>{timezone}</option>}
                 <option value="Africa/Cairo">القاهرة — Africa/Cairo</option>
                 <option value="Africa/Casablanca">الدار البيضاء — Africa/Casablanca</option>
                 <option value="Africa/Johannesburg">جوهانسبرغ — Africa/Johannesburg</option>
@@ -149,12 +161,29 @@ export function OnboardingWizard() {
               <input data-testid="ob-friday" type="checkbox" className="size-[18px] accent-primary" checked={fridayMorningSkip} onChange={(e) => setFridayMorningSkip(e.target.checked)} />
               <span className="font-semibold">{t("fridaySkip")}</span></label>
             <label className={labelCls}><span>{t("defaultTermsDays")}</span>
-              <input data-testid="ob-terms" className={inputCls} type="number" dir="ltr" min={0} max={120} value={defaultTermsDays} onChange={(e) => setDefaultTermsDays(Number(e.target.value))} /></label>
+              <input
+                data-testid="ob-terms"
+                className={inputCls}
+                type="number"
+                dir="ltr"
+                min={0}
+                max={120}
+                value={defaultTermsDays}
+                onChange={(e) => setDefaultTermsDays(Math.max(0, Math.min(120, Math.trunc(Number(e.target.value) || 0))))}
+              />
+            </label>
             <div className="flex gap-2">
               <button className={backBtn} onClick={() => setStep(0)} aria-label={tc("back")}>
                 <ArrowLeft size={18} aria-hidden className="rtl:-scale-x-100" />
               </button>
-              <button data-testid="ob-next" className={`${btnPrimary} flex-1`} onClick={() => setStep(2)}>{t("stepTone")}</button>
+              <button
+                data-testid="ob-next"
+                className={`${btnPrimary} flex-1`}
+                disabled={!/^\d{2}:\d{2}$/.test(quietStart) || !/^\d{2}:\d{2}$/.test(quietEnd)}
+                onClick={() => setStep(2)}
+              >
+                {t("stepTone")}
+              </button>
             </div>
           </div>
         )}
@@ -178,7 +207,7 @@ export function OnboardingWizard() {
               <span className="text-sm">{t("consent")}</span></label>
             {error && <p role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-sm font-semibold text-danger">{error}</p>}
             <div className="flex gap-2">
-              <button className={backBtn} onClick={() => setStep(1)} aria-label={tc("back")}>
+              <button className={backBtn} disabled={busy} onClick={() => setStep(1)} aria-label={tc("back")}>
                 <ArrowLeft size={18} aria-hidden className="rtl:-scale-x-100" />
               </button>
               <button data-testid="ob-create" disabled={busy} onClick={onCreate} className={`${btnPrimary} flex-1`}>{t("createCta")}</button>

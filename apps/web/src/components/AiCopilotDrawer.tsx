@@ -139,6 +139,64 @@ interface CopilotAnswer {
 }
 
 
+function stripMarkdownMarkers(text: string): string {
+  return text
+    .replace(/^#{1,4}\s+/gm, "")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/\*/g, "");
+}
+
+function renderInlineBold(text: string) {
+  const parts = text.split(/(\*\*[^*\n]+\*\*)/g);
+  return parts.map((part, idx) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return (
+        <strong key={idx} className="font-bold text-foreground">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    const clean = part.replace(/\*/g, "");
+    return clean ? <span key={idx}>{clean}</span> : null;
+  });
+}
+
+function CopilotMessageBody({ content }: { content: string }) {
+  const lines = content.replace(/\r/g, "").split("\n");
+  return (
+    <div className="flex flex-col gap-1.5 text-xs leading-relaxed">
+      {lines.map((raw, idx) => {
+        const line = raw.trim();
+        if (!line) return <div key={idx} className="h-0.5" />;
+
+        const isHeading = /^#{1,4}\s+/.test(line);
+        const stripped = line.replace(/^#{1,4}\s+/, "");
+        const bulletMatch = stripped.match(/^(?:[•\-*]|\d+[.)]|[٠-٩]+[.)])\s+(.*)$/);
+        if (bulletMatch) {
+          const marker = stripped.match(/^(\d+[.)]|[٠-٩]+[.)])/)?.[1] ?? "•";
+          return (
+            <div key={idx} className="flex items-start gap-2">
+              <span className="shrink-0 font-bold text-primary" aria-hidden>{marker}</span>
+              <span className="min-w-0 flex-1">{renderInlineBold(bulletMatch[1] ?? "")}</span>
+            </div>
+          );
+        }
+
+        const cleanLabel = stripped.replace(/\*/g, "");
+        if (isHeading || (cleanLabel.endsWith(":") && cleanLabel.length <= 60)) {
+          return (
+            <p key={idx} className="pt-0.5 font-bold text-foreground">
+              {renderInlineBold(stripped)}
+            </p>
+          );
+        }
+
+        return <p key={idx}>{renderInlineBold(stripped)}</p>;
+      })}
+    </div>
+  );
+}
+
 function tierBadgeClass(tier: DebtorScoreItem["tier"]) {
   switch (tier) {
     case "critical":
@@ -565,10 +623,10 @@ export function AiCopilotDrawer({
     daily_summary: { ar: "أعطني الملخص التنفيذي لليوم", en: "Show me today's executive briefing" },
     priority_customers: { ar: "من هم أهم العملاء المتأخرين للمتابعة اليوم؟", en: "Who are the top priority overdue customers today?" },
     forecast_and_risk: { ar: "حلّل السيولة المتوقعة ومخاطر تركز المحفظة", en: "Analyze cashflow forecast & portfolio concentration risk" },
+    inbox_triage: { ar: "راجع الشيكات المستحقة والاعتراضات وردود الواتساب", en: "Review due/bounced cheques, open disputes, and WhatsApp replies" },
     settlement_options: { ar: "اقترح خطة جدولة وأقساط لأعلى مديونية", en: "Propose an installment settlement plan for top overdue balance" },
     optimize_reminders: { ar: "ما هو أفضل وقت لإرسال تذكيرات السداد اليوم؟", en: "What is the optimal window to dispatch overdue reminders today?" },
     action_plan: { ar: "ما هي خطة العمل التشغيلية المقترحة اليوم؟", en: "What is today's recommended collection action plan?" },
-    inbox_triage: { ar: "ما هي الإيصالات والاعتراضات التي تنتظر المراجعة؟", en: "Which receipt claims and disputes need triage?" },
   };
 
   const runCopilotIntent = async (
@@ -1475,7 +1533,7 @@ export function AiCopilotDrawer({
                       }`}
                     >
                       {message.content ? (
-                        message.content
+                        isUser ? message.content : <CopilotMessageBody content={message.content} />
                       ) : isStreamingThis ? (
                         <span className="ai-dots py-1" aria-label={isEn ? "Generating" : "جارٍ الكتابة"}><i /><i /><i /></span>
                       ) : null}
@@ -1483,7 +1541,7 @@ export function AiCopilotDrawer({
                     {!isUser && message.content && !isStreamingThis && (
                       <button
                         type="button"
-                        onClick={() => void handleCopyMessage(message.id, message.content)}
+                        onClick={() => void handleCopyMessage(message.id, stripMarkdownMarkers(message.content))}
                         className="inline-flex items-center gap-1 px-1 text-[10px] font-semibold text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
                       >
                         {copiedMsgId === message.id ? <Check size={10} /> : <Copy size={10} />}
@@ -1590,18 +1648,26 @@ export function AiCopilotDrawer({
                   )}
 
                   {copilotAnswer.quickLinks.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {copilotAnswer.quickLinks.map((lnk) => (
-                        <Link
-                          key={lnk.href}
-                          href={`/${locale}${lnk.href}`}
-                          onClick={onClose}
-                          className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[10px] font-bold text-foreground hover:bg-accent"
-                        >
-                          <span>{isEn ? lnk.labelEn : lnk.labelAr}</span>
-                          <ArrowSquareOut size={10} aria-hidden />
-                        </Link>
-                      ))}
+                    <div className="flex flex-wrap items-center gap-1.5" data-testid="copilot-action-buttons">
+                      {copilotAnswer.quickLinks.map((lnk) => {
+                        const cleanPath = lnk.href.startsWith(`/${locale}/`)
+                          ? lnk.href
+                          : `/${locale}${lnk.href.startsWith("/") ? lnk.href : `/${lnk.href}`}`;
+                        return (
+                          <button
+                            key={lnk.href}
+                            type="button"
+                            onClick={() => {
+                              setIsMinimized(true);
+                              router.push(cleanPath);
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-primary/25 bg-primary/5 px-2.5 py-1.5 text-[11px] font-bold text-primary transition-colors hover:bg-primary/15"
+                          >
+                            <span>{isEn ? lnk.labelEn : lnk.labelAr}</span>
+                            <ArrowSquareOut size={11} aria-hidden />
+                          </button>
+                        );
+                      })}
                       <button
                         type="button"
                         disabled={optimizingSchedule}
@@ -1626,6 +1692,7 @@ export function AiCopilotDrawer({
                   [
                     { id: "daily_summary", en: "Daily Briefing", ar: "ملخص اليوم" },
                     { id: "priority_customers", en: "Priority Customers", ar: "أهم العملاء" },
+                    { id: "inbox_triage", en: "Cheques & Inbox", ar: "الشيكات والردود" },
                     { id: "optimize_reminders", en: "Optimal Reminders", ar: "توقيت التذكيرات" },
                     { id: "forecast_and_risk", en: "Liquidity & Risk", ar: "السيولة والمخاطر" },
                     { id: "settlement_options", en: "Settlement Plan", ar: "مقترح جدولة" },

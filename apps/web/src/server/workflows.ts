@@ -1,9 +1,10 @@
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { AppError, isInQuietHours, safeTimezone } from "@tahseel/core";
+import { AppError, isInQuietHours, localDateOf, safeTimezone } from "@tahseel/core";
+import { upsertNotificationInTx } from "./notifications";
 import {
   aiActionApprovals, collectionTasks, debtors, disputes, invoices, memberships,
-  optOuts, promisesToPay, reminders, tenants, user, withTenant, type Db,
+  notifications, optOuts, promisesToPay, reminders, tenants, user, withTenant, type Db,
 } from "@tahseel/db";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -65,7 +66,7 @@ export async function listCollectionTasks(app: Db, tenantId: string, filters: { 
 export async function createCollectionTask(app: Db, tenantId: string, actor: string, raw: z.infer<typeof createTaskInput>) {
   const input = createTaskInput.parse(raw);
   return withTenant(app, tenantId, async (tx) => {
-    const [debtor] = await tx.select({ id: debtors.id }).from(debtors)
+    const [debtor] = await tx.select({ id: debtors.id, displayName: debtors.displayName }).from(debtors)
       .where(and(eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
     if (!debtor) throw new AppError("NOT_FOUND", "Customer not found", 404);
     if (input.invoiceId) {
@@ -79,6 +80,20 @@ export async function createCollectionTask(app: Db, tenantId: string, actor: str
       title: input.title, description: input.description ?? null, priority: input.priority,
       assignedToUserId: input.assignedToUserId ?? null, dueAt: new Date(input.dueAt), createdBy: actor,
     }).returning();
+    if (input.assignedToUserId) {
+      await upsertNotificationInTx(tx, tenantId, {
+        kind: "task_assigned",
+        severity: input.priority === "urgent" ? "urgent" : "info",
+        titleAr: `مهمة تحصيل جديدة: ${input.title}`,
+        titleEn: `New collection task assigned: ${input.title}`,
+        bodyAr: `العميل: ${debtor.displayName}`,
+        bodyEn: `Customer: ${debtor.displayName}`,
+        actionUrl: "/tasks",
+        entityType: "collection_task",
+        entityId: row!.id,
+        dedupeKey: `task-assigned:${row!.id}:${input.assignedToUserId}`,
+      });
+    }
     return row!;
   });
 }
@@ -89,7 +104,8 @@ export async function updateCollectionTask(
   const input = updateTaskInput.parse(raw);
   return withTenant(app, tenantId, async (tx) => {
     const [existing] = await tx.select().from(collectionTasks)
-      .where(and(eq(collectionTasks.id, input.id), eq(collectionTasks.tenantId, tenantId)));
+      .where(and(eq(collectionTasks.id, input.id), eq(collectionTasks.tenantId, tenantId)))
+      .for("update");
     if (!existing) throw new AppError("NOT_FOUND", "Task not found", 404);
     if (role !== "owner" && existing.assignedToUserId !== actor) {
       throw new AppError("FORBIDDEN", "Staff can only update tasks assigned to them", 403);
@@ -116,6 +132,22 @@ export async function updateCollectionTask(
     if (input.assignedToUserId !== undefined) set.assignedToUserId = input.assignedToUserId;
     if (input.dueAt) set.dueAt = new Date(input.dueAt);
     const [updated] = await tx.update(collectionTasks).set(set as never).where(eq(collectionTasks.id, input.id)).returning();
+    if (input.assignedToUserId && input.assignedToUserId !== existing.assignedToUserId) {
+      const [debtor] = await tx.select({ displayName: debtors.displayName }).from(debtors)
+        .where(eq(debtors.id, updated!.debtorId));
+      await upsertNotificationInTx(tx, tenantId, {
+        kind: "task_assigned",
+        severity: updated!.priority === "urgent" ? "urgent" : "info",
+        titleAr: `إسناد مهمة تحصيل: ${updated!.title}`,
+        titleEn: `Collection task assigned: ${updated!.title}`,
+        bodyAr: `العميل: ${debtor?.displayName ?? "—"}`,
+        bodyEn: `Customer: ${debtor?.displayName ?? "—"}`,
+        actionUrl: "/tasks",
+        entityType: "collection_task",
+        entityId: updated!.id,
+        dedupeKey: `task-assigned:${updated!.id}:${input.assignedToUserId}`,
+      });
+    }
     return updated!;
   });
 }
@@ -266,6 +298,18 @@ export async function createPendingAiApproval(app: Db, tenantId: string, actor: 
       tenantId, requestedBy: actor, actionType: input.actionType, title,
       rationale: input.rationale, payload: input as unknown as Record<string, unknown>,
     }).returning();
+    await upsertNotificationInTx(tx, tenantId, {
+      kind: "ai_approval_pending",
+      severity: "info",
+      titleAr: `مقترح ذكي بانتظار موافقتك: ${debtor.displayName}`,
+      titleEn: `AI proposal awaiting approval: ${debtor.displayName}`,
+      bodyAr: input.rationale.slice(0, 200),
+      bodyEn: input.rationale.slice(0, 200),
+      actionUrl: "/tasks",
+      entityType: "ai_action_approval",
+      entityId: row!.id,
+      dedupeKey: `ai-approval:${row!.id}`,
+    });
     return { id: row!.id, title: row!.title, status: row!.status };
   });
 }
@@ -298,6 +342,11 @@ export async function decideAiActionApproval(
       const [updated] = await tx.update(aiActionApprovals).set({ status: "rejected", approvedBy: actor, approvedAt: now, updatedAt: now })
         .where(and(eq(aiActionApprovals.id, approvalId), eq(aiActionApprovals.status, "pending"))).returning();
       if (!updated) throw new AppError("CONCURRENT_UPDATE", "Approval changed; refresh and retry", 409);
+      await tx.update(notifications).set({
+        dismissedAt: now,
+        readAt: sql`coalesce(${notifications.readAt}, ${now.toISOString()}::timestamptz)`,
+        updatedAt: now,
+      }).where(and(eq(notifications.tenantId, tenantId), eq(notifications.dedupeKey, `ai-approval:${approval.id}`), isNull(notifications.dismissedAt)));
       return { status: "rejected" as const, result: null };
     }
 
@@ -346,8 +395,7 @@ export async function decideAiActionApproval(
       })) {
         throw new AppError("QUIET_HOURS", "Reminder cannot be scheduled during quiet hours or Friday morning skip window", 400);
       }
-      const localTodayParts = new Intl.DateTimeFormat("en-CA", { timeZone: tenant?.timezone ?? "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
-      const localToday = `${localTodayParts.find((part) => part.type === "year")?.value}-${localTodayParts.find((part) => part.type === "month")?.value}-${localTodayParts.find((part) => part.type === "day")?.value}`;
+      const localToday = localDateOf(now, safeTimezone(tenant?.timezone));
       const templateKey = invoice.dueOn < localToday ? "invoice_overdue" : invoice.dueOn === localToday ? "invoice_due_today" : "invoice_upcoming";
       const idempotencyKey = `ai-approval:${approval.id}`;
       const [reminder] = await tx.insert(reminders).values({
@@ -362,17 +410,42 @@ export async function decideAiActionApproval(
       status: "executed", approvedBy: actor, approvedAt: now, executedAt: now, result: result as never, updatedAt: now,
     }).where(and(eq(aiActionApprovals.id, approvalId), eq(aiActionApprovals.status, "pending"))).returning();
     if (!updated) throw new AppError("CONCURRENT_UPDATE", "Approval changed; refresh and retry", 409);
+    await tx.update(notifications).set({
+      dismissedAt: now,
+      readAt: sql`coalesce(${notifications.readAt}, ${now.toISOString()}::timestamptz)`,
+      updatedAt: now,
+    }).where(and(eq(notifications.tenantId, tenantId), eq(notifications.dedupeKey, `ai-approval:${approval.id}`), isNull(notifications.dismissedAt)));
+    await upsertNotificationInTx(tx, tenantId, {
+      kind: "ai_approval_executed",
+      severity: "success",
+      titleAr: `تم تنفيذ المقترح الذكي: ${approval.title}`,
+      titleEn: `AI proposal executed: ${approval.title}`,
+      bodyAr: approval.actionType === "create_collection_task"
+        ? "تم إنشاء مهمة تحصيل جديدة من المقترح المعتمد."
+        : "تمت جدولة تذكير واتساب من المقترح المعتمد.",
+      bodyEn: approval.actionType === "create_collection_task"
+        ? "A new collection task was created from the approved proposal."
+        : "A WhatsApp reminder was scheduled from the approved proposal.",
+      actionUrl: "/tasks",
+      entityType: "ai_action_approval",
+      entityId: approval.id,
+      dedupeKey: `ai-approval-executed:${approval.id}`,
+    });
     return { status: "executed" as const, result };
   });
 }
 
 export async function getCollectionWorkspaceSummary(app: Db, tenantId: string, todayIso: string) {
   return withTenant(app, tenantId, async (tx) => {
-    const [tasks] = await tx.select({
-      open: sql<number>`count(*) filter (where ${collectionTasks.status} in ('open','in_progress'))::int`,
-      overdue: sql<number>`count(*) filter (where ${collectionTasks.status} in ('open','in_progress') and ${collectionTasks.dueAt} < now())::int`,
-    }).from(collectionTasks).where(eq(collectionTasks.tenantId, tenantId));
-    const [tenantRow] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
+    const [[tasks], [tenantRow], [approvals]] = await Promise.all([
+      tx.select({
+        open: sql<number>`count(*) filter (where ${collectionTasks.status} in ('open','in_progress'))::int`,
+        overdue: sql<number>`count(*) filter (where ${collectionTasks.status} in ('open','in_progress') and ${collectionTasks.dueAt} < now())::int`,
+      }).from(collectionTasks).where(eq(collectionTasks.tenantId, tenantId)),
+      tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId)),
+      tx.select({ pending: sql<number>`count(*)::int` }).from(aiActionApprovals)
+        .where(and(eq(aiActionApprovals.tenantId, tenantId), eq(aiActionApprovals.status, "pending"))),
+    ]);
     const tenantCurrency = tenantRow?.settings?.currency ?? "EGP";
     const [promises] = await tx.select({
       pending: sql<number>`count(*) filter (where ${promisesToPay.status} = 'pending')::int`,
@@ -382,8 +455,6 @@ export async function getCollectionWorkspaceSummary(app: Db, tenantId: string, t
     }).from(promisesToPay)
       .leftJoin(invoices, eq(invoices.id, promisesToPay.invoiceId))
       .where(eq(promisesToPay.tenantId, tenantId));
-    const [approvals] = await tx.select({ pending: sql<number>`count(*)::int` }).from(aiActionApprovals)
-      .where(and(eq(aiActionApprovals.tenantId, tenantId), eq(aiActionApprovals.status, "pending")));
     return { openTasks: tasks?.open ?? 0, overdueTasks: tasks?.overdue ?? 0,
       pendingPromises: promises?.pending ?? 0, acceptedPromises: promises?.accepted ?? 0,
       acceptedPromiseAmountMinor: promises?.acceptedAmount ?? "0", overduePromises: promises?.overdue ?? 0,

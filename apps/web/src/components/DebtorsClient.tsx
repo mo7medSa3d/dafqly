@@ -37,7 +37,7 @@ interface Debtor {
 }
 
 type FilterType = "all" | "ai_priority" | "has_balance" | "settled" | "opted_out" | "risk";
-type SortType = "default" | "ai_priority" | "balance_desc" | "newest" | "name_asc";
+type SortType = "default" | "ai_priority" | "balance_desc" | "name_asc";
 
 export function DebtorsClient({ businessName }: { businessName?: string }) {
   const router = useRouter();
@@ -62,7 +62,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
-  const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+  const [feedbackMsg, setFeedbackMsg] = useState<{ text: string; isError?: boolean } | null>(null);
 
   const loadIntel = useCallback(async () => {
     try {
@@ -98,17 +98,19 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
   // F-17: first-load flag only — the list must not flash its empty state
   // before the first round-trip; later refetches keep the stale list.
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(async (q: string) => {
     try {
+      setLoadError(null);
       const page = await trpc.debtors.list.query({ search: q || undefined, limit: 200 });
       setItems((page.items as unknown) as Debtor[]);
       setTotalCount(typeof page.totalCount === "number" ? page.totalCount : null);
-    } catch {
-      /* ignore */
+    } catch (err: unknown) {
+      setLoadError(err instanceof Error ? err.message : (isAr ? "تعذّر تحميل قائمة العملاء" : "Failed to load customers"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAr]);
 
   // Debounce search input to avoid flood of network calls on typing
   useEffect(() => {
@@ -119,6 +121,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
   }, [search, load]);
 
   async function onCreate() {
+    if (busy || name.trim().length < 1 || phone.trim().length < 3) return;
     setBusy(true);
     setError(null);
     try {
@@ -128,7 +131,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
       setNotes("");
       await Promise.all([load(search), loadIntel()]);
       router.refresh();
-      setFeedbackMsg(isAr ? "تمت إضافة العميل بنجاح." : "Customer added successfully.");
+      setFeedbackMsg({ text: isAr ? "تمت إضافة العميل بنجاح." : "Customer added successfully." });
       setTimeout(() => setFeedbackMsg(null), 3000);
     } catch {
       setError(t("saveFailed"));
@@ -144,39 +147,53 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
       setItems((prev) =>
         prev.map((d) => (d.id === debtorId ? { ...d, optedOut: !enabled } : d))
       );
-      setFeedbackMsg(
-        enabled
+      setFeedbackMsg({
+        text: enabled
           ? (isAr ? "تم تفعيل التذكيرات التلقائية بنجاح." : "Auto reminders enabled successfully.")
-          : (isAr ? "تم إيقاف التذكيرات التلقائية مؤقتاً." : "Auto reminders paused.")
-      );
+          : (isAr ? "تم إيقاف التذكيرات التلقائية مؤقتاً." : "Auto reminders paused."),
+      });
       setTimeout(() => setFeedbackMsg(null), 3500);
     } catch {
-      setFeedbackMsg(isAr ? "تعذّر تغيير حالة التذكيرات" : "Failed to toggle reminders");
+      setFeedbackMsg({ text: isAr ? "تعذّر تغيير حالة التذكيرات" : "Failed to toggle reminders", isError: true });
       setTimeout(() => setFeedbackMsg(null), 3000);
     } finally {
       setTogglingId(null);
     }
   }
 
-  // Aggregate Metrics
-  const totalOutstandingMinor = useMemo(() => {
-    return items.reduce((sum, d) => sum + BigInt(d.totalOutstandingMinor || "0"), 0n);
-  }, [items]);
-
-  const debtCount = useMemo(() => {
-    return items.filter((d) => BigInt(d.totalOutstandingMinor || "0") > 0n).length;
-  }, [items]);
-
-  const settledCount = useMemo(() => {
-    return items.filter((d) => BigInt(d.totalOutstandingMinor || "0") === 0n).length;
-  }, [items]);
-
-  const optedOutCount = useMemo(() => {
-    return items.filter((d) => d.optedOut).length;
-  }, [items]);
-
-  const riskCount = useMemo(() => {
-    return items.filter((d) => d.riskFlag).length;
+  // Aggregate Metrics (single pass over items)
+  const { totalOutstandingMinor, debtCount, settledCount, optedOutCount, riskCount, rankedExposure } = useMemo(() => {
+    let total = 0n;
+    let debtors = 0;
+    let settled = 0;
+    let optedOut = 0;
+    let risk = 0;
+    const withBalance: Debtor[] = [];
+    for (const d of items) {
+      const bal = BigInt(d.totalOutstandingMinor || "0");
+      total += bal;
+      if (bal > 0n) {
+        debtors += 1;
+        withBalance.push(d);
+      } else {
+        settled += 1;
+      }
+      if (d.optedOut) optedOut += 1;
+      if (d.riskFlag) risk += 1;
+    }
+    withBalance.sort((a, b) => {
+      const aa = BigInt(a.totalOutstandingMinor || "0");
+      const bb = BigInt(b.totalOutstandingMinor || "0");
+      return aa === bb ? a.displayName.localeCompare(b.displayName) : aa > bb ? -1 : 1;
+    });
+    return {
+      totalOutstandingMinor: total,
+      debtCount: debtors,
+      settledCount: settled,
+      optedOutCount: optedOut,
+      riskCount: risk,
+      rankedExposure: withBalance.slice(0, 5),
+    };
   }, [items]);
 
   const aiPriorityCount = useMemo(() => {
@@ -230,8 +247,9 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
 
   function openWhatsApp(d: Debtor) {
     const text = encodeURIComponent(getWhatsAppMessage(d));
-    const cleanPhone = d.phoneE164.replace(/^\+/, "").replace(/\s+/g, "");
-    window.open(`https://wa.me/${cleanPhone}?text=${text}`, "_blank", "noopener,noreferrer");
+    const cleanPhone = d.phoneE164.replace(/[^\d]/g, "");
+    const url = cleanPhone ? `https://wa.me/${cleanPhone}?text=${text}` : `https://wa.me/?text=${text}`;
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   return (
@@ -306,18 +324,11 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
       </div>
 
       {/* Ranked customer exposure: a directly actionable view, based on ledger balances. */}
-      {items.some((item) => BigInt(item.totalOutstandingMinor || "0") > 0n) && (() => {
-        const ranked = [...items]
-          .filter((item) => BigInt(item.totalOutstandingMinor || "0") > 0n)
-          .sort((a, b) => {
-            const aa = BigInt(a.totalOutstandingMinor || "0");
-            const bb = BigInt(b.totalOutstandingMinor || "0");
-            return aa === bb ? a.displayName.localeCompare(b.displayName) : aa > bb ? -1 : 1;
-          }).slice(0, 5);
-        const max = BigInt(ranked[0]?.totalOutstandingMinor || "1");
+      {rankedExposure.length > 0 && (() => {
+        const max = BigInt(rankedExposure[0]?.totalOutstandingMinor || "1");
         return <section data-testid="debtors-top-exposure" className="panel-shadow flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 sm:p-5">
           <div className="flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-sm font-extrabold text-text">{isAr ? "أكبر أرصدة تحتاج متابعة" : "Largest customer exposures"}</h2><p className="mt-1 text-xs text-text-muted">{isAr ? "أعلى خمسة أرصدة مفتوحة في النتائج الحالية، مرتبة حسب القيمة" : "Top five open balances in the current result set, ranked by value"}</p></div><span className="text-xs font-semibold text-text-muted">{isAr ? "الرصيد المفتوح" : "Open balance"}</span></div>
-          <div className="flex flex-col gap-3">{ranked.map((item, index) => {
+          <div className="flex flex-col gap-3">{rankedExposure.map((item, index) => {
             const balance = BigInt(item.totalOutstandingMinor || "0");
             const width = max > 0n ? Math.max(3, Number((balance * 10000n) / max) / 100) : 0;
             const otherCurrencies = (item.outstandingByCurrency ?? []).filter((b) => b.currency !== currency);
@@ -337,10 +348,15 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
 
       {feedbackMsg && (
         <div
-          role="status"
-          className="flex items-center justify-between rounded-xl border border-status-paid-fg/30 bg-status-paid-bg px-4 py-3 text-sm font-bold text-status-paid-fg dark:text-status-paid-fg"
+          role={feedbackMsg.isError ? "alert" : "status"}
+          className={cn(
+            "flex items-center justify-between rounded-xl border px-4 py-3 text-sm font-bold",
+            feedbackMsg.isError
+              ? "border-danger/30 bg-danger-bg text-danger"
+              : "border-status-paid-fg/30 bg-status-paid-bg text-status-paid-fg dark:text-status-paid-fg",
+          )}
         >
-          <span>{feedbackMsg}</span>
+          <span>{feedbackMsg.text}</span>
           <button
             type="button"
             onClick={() => setFeedbackMsg(null)}
@@ -476,9 +492,17 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
           </div>
 
           {/* Debtors List */}
+          {loadError && (
+            <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-danger/30 bg-danger-bg px-4 py-3 text-sm font-semibold text-danger">
+              <span>{loadError}</span>
+              <button type="button" onClick={() => void load(search)} className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "underline")}>
+                {isAr ? "إعادة المحاولة" : "Retry"}
+              </button>
+            </div>
+          )}
           {loading ? (
             <LoadingState isAr={isAr} />
-          ) : filteredItems.length === 0 ? (
+          ) : filteredItems.length === 0 && !loadError ? (
             <EmptyState
               testId="debtors-empty"
               title={
@@ -487,7 +511,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                   : t("empty")
               }
             />
-          ) : (
+          ) : filteredItems.length === 0 ? null : (
             <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
               <ul className="flex flex-col divide-y divide-border">
                 {filteredItems.map((d) => {
@@ -618,6 +642,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                                 tab: "composer",
                                 debtorId: d.id,
                                 tone: intelById[d.id]?.recommendation.suggestedTone,
+                                mode: "reminder",
                               })
                             }
                             className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}
@@ -698,9 +723,10 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                 <input
                   data-testid="debtor-name"
                   className={inputCls}
-                  placeholder={isAr ? "مثال: شركة النيل للتجارة" : "e.g. Nile Trading Co."}
+                  placeholder={isAr ? "مثال: شركة الأفق للتجارة" : "e.g. Horizon Trading Co."}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
+                  maxLength={160}
                   required
                 />
               </label>
@@ -710,9 +736,10 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                   data-testid="debtor-phone"
                   className={inputCls}
                   dir="ltr"
-                  placeholder="+2010..."
+                  placeholder="+1234567890"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
+                  maxLength={32}
                   required
                 />
               </label>
@@ -724,6 +751,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                   placeholder={isAr ? "ملاحظات اختيارية عن العميل" : "Optional notes"}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
+                  maxLength={2000}
                 />
               </label>
               {error && <p role="alert" className="text-sm font-semibold text-status-overdue-fg">{error}</p>}

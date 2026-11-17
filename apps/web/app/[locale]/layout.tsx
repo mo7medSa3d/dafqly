@@ -46,25 +46,15 @@ export const metadata: Metadata = {
   openGraph: {
     title: BRAND.name,
     description: `${BRAND.tagline} — ${BRAND.supportingLine}`,
-    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: BRAND.name }],
   },
   twitter: {
-    card: "summary_large_image",
+    card: "summary",
     title: BRAND.name,
     description: `${BRAND.tagline} — ${BRAND.supportingLine}`,
-    images: ["/og-image.png"],
   },
   appleWebApp: {
     capable: true,
     title: BRAND.name,
-    startupImage: [
-      { url: "/splash/splash-750x1624.png", media: "(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3)" },
-      { url: "/splash/splash-828x1792.png", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2)" },
-      { url: "/splash/splash-1080x2340.png", media: "(device-width: 360px) and (device-height: 780px) and (-webkit-device-pixel-ratio: 3)" },
-      { url: "/splash/splash-1170x2532.png", media: "(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)" },
-      { url: "/splash/splash-1242x2688.png", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3)" },
-      { url: "/splash/splash-1290x2796.png", media: "(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)" },
-    ],
   },
 };
 

@@ -1,12 +1,12 @@
 "use client";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { MotionProvider, PageTransition } from "./motion";
 import { useTranslations } from "next-intl";
-import { Bank, CalendarCheck, ClipboardText, CaretDoubleRight, CaretUp, CloudArrowUp, CreditCard, Lightning, List, MagnifyingGlass, Receipt, Robot, Scan, SlidersHorizontal, Sparkle, SquaresFour, UsersThree, X } from "@/components/ui/solid-icons";
+import { Bank, Bell, CalendarCheck, ClipboardText, CaretDoubleRight, CaretUp, CloudArrowUp, CreditCard, Lightning, List, MagnifyingGlass, Receipt, Robot, Scan, SlidersHorizontal, Sparkle, SquaresFour, UsersThree, X } from "@/components/ui/solid-icons";
 import { WhatsappLogo } from "@/components/ui/icons";
 import { BrandLockup, BrandMark } from "./BrandMark";
 import { ThemeToggle } from "./ThemeToggle";
@@ -35,6 +35,7 @@ const ITEMS = [
   { href: "invoices", key: "invoices", testid: "nav-invoices", Icon: Receipt, group: "core" },
   { href: "cheques", key: "cheques", testid: "nav-cheques", Icon: Bank, group: "core" },
   { href: "tasks", key: "tasks", testid: "nav-tasks", Icon: ClipboardText, group: "core" },
+  { href: "tasks?tab=reminders", key: "reminders", labelAr: "التذكيرات", labelEn: "Reminders", testid: "nav-reminders", Icon: Bell, group: "core" },
   { href: "ai-inbox", key: "aiInbox", testid: "nav-ai-inbox", Icon: Sparkle, group: "ai", badgeAr: "AI", badgeEn: "AI" },
   { href: "import", key: "import", testid: "nav-import", Icon: CloudArrowUp, group: "ai" },
   { href: "ledger-photo", key: "ledgerPhoto", testid: "nav-ledger-photo", Icon: Scan, group: "ai", badgeAr: "OCR", badgeEn: "OCR" },
@@ -67,10 +68,13 @@ export function AppShell({
 }) {
   const t = useTranslations("nav");
   const pathname = usePathname();
+  const aiMenuRef = useRef<HTMLDivElement>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchMounted, setSearchMounted] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
+  const [copilotMounted, setCopilotMounted] = useState(false);
   const [aiMenuOpen, setAiMenuOpen] = useState(false);
   const [quickAsk, setQuickAsk] = useState("");
   const [copilotConfig, setCopilotConfig] = useState<{
@@ -81,6 +85,14 @@ export function AppShell({
     prompt?: string;
   }>({ tab: "assistant" });
   const isEn = locale === "en";
+
+  useEffect(() => {
+    if (searchOpen) setSearchMounted(true);
+  }, [searchOpen]);
+
+  useEffect(() => {
+    if (copilotOpen) setCopilotMounted(true);
+  }, [copilotOpen]);
 
   // Every page mounts its own AppShell, so the sidebar state must live outside
   // React: read it before first paint (no flash) and write it only when the
@@ -107,19 +119,11 @@ export function AppShell({
     topActions: Array<{ debtorId: string; displayName: string }>;
   } | null>(null);
 
-  useEffect(() => {
-    try {
-      const raw = window.sessionStorage.getItem("dafqly:intel-cache");
-      if (raw) {
-        const parsed = JSON.parse(raw) as { ts: number; data: { healthStatus: "strong" | "attention" | "urgent"; topActions: Array<{ debtorId: string; displayName: string }> } };
-        if (Date.now() - parsed.ts < 60_000) { setIntel(parsed.data); return; }
-      }
-    } catch (err) { console.warn("[AppShell] cached intelligence unreadable, refetching", err); }
-    let mounted = true;
+  const fetchIntel = useCallback((isMounted: () => boolean) => {
     trpc.intelligence.overview
       .query({ syncNotifications: false })
       .then((data) => {
-        if (mounted && data) {
+        if (isMounted() && data) {
           const next = {
             healthStatus: data.healthStatus,
             topActions: data.topActions.map((a) => ({ debtorId: a.debtorId, displayName: a.displayName })),
@@ -129,23 +133,42 @@ export function AppShell({
         }
       })
       .catch((err) => { console.warn("[AppShell] intelligence overview failed", err); });
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    try {
+      const raw = window.sessionStorage.getItem("dafqly:intel-cache");
+      if (raw) {
+        const parsed = JSON.parse(raw) as { ts: number; data: { healthStatus: "strong" | "attention" | "urgent"; topActions: Array<{ debtorId: string; displayName: string }> } };
+        if (Date.now() - parsed.ts < 60_000) { setIntel(parsed.data); return; }
+      }
+    } catch (err) { console.warn("[AppShell] cached intelligence unreadable, refetching", err); }
+    fetchIntel(() => mounted);
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [fetchIntel]);
 
   const healthStatus = intel?.healthStatus ?? "strong";
   const priorityCount = intel?.topActions?.length ?? 0;
 
   useEffect(() => {
+    let mounted = true;
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
+        setAiMenuOpen(false);
         setSearchOpen((prev) => !prev);
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
         e.preventDefault();
-        setAiMenuOpen((prev) => !prev);
+        setSearchOpen(false);
+        if (copilotOpen) {
+          setCopilotOpen(false);
+        } else {
+          setAiMenuOpen((prev) => !prev);
+        }
       }
       if (e.key === "Escape") {
         setAiMenuOpen(false);
@@ -153,6 +176,7 @@ export function AppShell({
     };
     const handleOpenCopilot = (e: Event) => {
       const detail = (e as CustomEvent<OpenCopilotDetail>).detail ?? {};
+      setAiMenuOpen(false);
       setCopilotConfig({
         tab: detail.tab ?? "assistant",
         debtorId: detail.debtorId,
@@ -164,18 +188,54 @@ export function AppShell({
     };
     const handleDataMutated = () => {
       try { window.sessionStorage.removeItem("dafqly:intel-cache"); } catch { /* ignore */ }
+      fetchIntel(() => mounted);
     };
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("dafqly:open-ai-copilot", handleOpenCopilot);
     window.addEventListener("dafqly:data-mutated", handleDataMutated);
     return () => {
+      mounted = false;
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("dafqly:open-ai-copilot", handleOpenCopilot);
       window.removeEventListener("dafqly:data-mutated", handleDataMutated);
     };
-  }, []);
+  }, [copilotOpen, fetchIntel]);
 
-  const isActive = (href: string) => pathname === `/${locale}/${href}` || pathname.startsWith(`/${locale}/${href}/`);
+  // Close AI quick menu on outside click
+  useEffect(() => {
+    if (!aiMenuOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (aiMenuRef.current && !aiMenuRef.current.contains(e.target as Node)) {
+        setAiMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [aiMenuOpen]);
+
+  const [activeTabParam, setActiveTabParam] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      setActiveTabParam(new URLSearchParams(window.location.search).get("tab"));
+    } catch {
+      setActiveTabParam(null);
+    }
+  }, [pathname]);
+
+  const itemLabel = (item: (typeof ITEMS)[number]) =>
+    "labelEn" in item ? (isEn ? item.labelEn : item.labelAr) : t(item.key);
+
+  const isActive = (href: string) => {
+    const [base, query] = href.split("?");
+    const baseMatch = pathname === `/${locale}/${base}` || pathname.startsWith(`/${locale}/${base}/`);
+    if (!baseMatch) return false;
+    if (query) {
+      const targetTab = new URLSearchParams(query).get("tab");
+      return activeTabParam === targetTab;
+    }
+    if (base === "tasks" && activeTabParam === "reminders") return false;
+    return true;
+  };
   const activeItem = ITEMS.find((i) => isActive(i.href)) ?? ITEMS[0];
 
   return (
@@ -254,7 +314,7 @@ export function AppShell({
                       {isEn ? group.labelEn : group.labelAr}
                     </div>
                     {groupItems.map((item) => {
-                      const { href, key, testid, Icon } = item;
+                      const { href, testid, Icon } = item;
                       const active = isActive(href);
                       const badge = "badgeAr" in item ? (isEn ? item.badgeEn : item.badgeAr) : null;
                       return (
@@ -264,7 +324,7 @@ export function AppShell({
                           href={`/${locale}/${href}`}
                           onClick={() => setMobileOpen(false)}
                           aria-current={active ? "page" : undefined}
-                          title={t(key)}
+                          title={itemLabel(item)}
                           className={cn(
                             "group relative flex h-10 items-center gap-3 rounded-md px-2.5 text-sm transition-colors",
                             collapsed ? "lg:justify-center lg:px-0" : "",
@@ -280,7 +340,7 @@ export function AppShell({
                             aria-hidden
                           />
                           <span className={`flex-1 truncate ${collapsed ? "lg:hidden" : "inline"}`}>
-                            {t(key)}
+                            {itemLabel(item)}
                           </span>
                           {badge && (
                             <span
@@ -354,7 +414,7 @@ export function AppShell({
                     <span className="text-border">/</span>
                     <span className="flex items-center gap-1.5 font-semibold text-foreground">
                       <activeItem.Icon size={15} className="text-muted-foreground" aria-hidden />
-                      {t(activeItem.key)}
+                      {itemLabel(activeItem)}
                     </span>
                   </div>
                 </div>
@@ -408,7 +468,7 @@ export function AppShell({
           </div>
 
           {/* Sleek Chat-First Floating AI Launcher & Menu */}
-          <div className="fixed bottom-4 end-4 z-40 flex flex-col items-end gap-2.5 sm:bottom-5 sm:end-5">
+          <div ref={aiMenuRef} className="fixed bottom-4 end-4 z-40 flex flex-col items-end gap-2.5 sm:bottom-5 sm:end-5">
             {aiMenuOpen && !copilotOpen && (
               <div
                 data-testid="ai-assistant-menu"
@@ -590,17 +650,19 @@ export function AppShell({
             </button>
           </div>
 
-          <CommandPalette isOpen={searchOpen} onClose={() => setSearchOpen(false)} locale={locale} />
-          <AiCopilotDrawer
-            isOpen={copilotOpen}
-            onClose={() => setCopilotOpen(false)}
-            locale={locale}
-            initialTab={copilotConfig.tab}
-            initialDebtorId={copilotConfig.debtorId}
-            initialTone={copilotConfig.tone}
-            initialMode={copilotConfig.mode}
-            initialPrompt={copilotConfig.prompt}
-          />
+          {searchMounted && <CommandPalette isOpen={searchOpen} onClose={() => setSearchOpen(false)} locale={locale} />}
+          {copilotMounted && (
+            <AiCopilotDrawer
+              isOpen={copilotOpen}
+              onClose={() => setCopilotOpen(false)}
+              locale={locale}
+              initialTab={copilotConfig.tab}
+              initialDebtorId={copilotConfig.debtorId}
+              initialTone={copilotConfig.tone}
+              initialMode={copilotConfig.mode}
+              initialPrompt={copilotConfig.prompt}
+            />
+          )}
         </div>
       </CurrencyProvider>
     </MotionProvider>

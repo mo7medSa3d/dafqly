@@ -1,13 +1,16 @@
 import { and, asc, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import {
+  addDaysIso,
   buildOperationalNotificationCandidates,
   normalizeCurrencyCode,
   type NotificationCandidate,
 } from "@tahseel/core";
 import { withTenant, type Db } from "@tahseel/db";
 import {
+  aiActionApprovals,
   cheques,
+  collectionTasks,
   debtors,
   disputes,
   invoices,
@@ -51,6 +54,23 @@ function toNotificationView(r: typeof notifications.$inferSelect): NotificationV
   };
 }
 
+function toNotificationRow(tenantId: string, c: NotificationCandidate) {
+  return {
+    id: uuidv7(),
+    tenantId,
+    kind: c.kind,
+    severity: c.severity,
+    titleAr: c.titleAr,
+    titleEn: c.titleEn,
+    bodyAr: c.bodyAr,
+    bodyEn: c.bodyEn,
+    actionUrl: c.actionUrl,
+    entityType: c.entityType ?? null,
+    entityId: c.entityId ?? null,
+    dedupeKey: c.dedupeKey,
+  };
+}
+
 /**
  * Insert a notification idempotently inside an existing `withTenant` transaction.
  * Duplicate `dedupeKey` for the tenant is a silent no-op (respecting already
@@ -63,20 +83,7 @@ export async function upsertNotificationInTx(
 ): Promise<void> {
   await tx
     .insert(notifications)
-    .values({
-      id: uuidv7(),
-      tenantId,
-      kind: candidate.kind,
-      severity: candidate.severity,
-      titleAr: candidate.titleAr,
-      titleEn: candidate.titleEn,
-      bodyAr: candidate.bodyAr,
-      bodyEn: candidate.bodyEn,
-      actionUrl: candidate.actionUrl,
-      entityType: candidate.entityType ?? null,
-      entityId: candidate.entityId ?? null,
-      dedupeKey: candidate.dedupeKey,
-    })
+    .values(toNotificationRow(tenantId, candidate))
     .onConflictDoNothing({ target: [notifications.tenantId, notifications.dedupeKey] });
 }
 
@@ -90,10 +97,35 @@ export async function emitNotification(
   });
 }
 
-function addDaysIso(iso: string, days: number): string {
-  const dt = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
-  dt.setUTCDate(dt.getUTCDate() + days);
-  return dt.toISOString().slice(0, 10);
+function aggregateOverdueByDebtor(
+  rows: { debtorId: string; displayName: string; currency: string; dueOn: unknown; remainingMinor: string }[],
+  todayIso: string,
+) {
+  const overdueByDebtor = new Map<string, { debtorId: string; displayName: string; currency: string; overdueMinor: bigint; maxDaysOverdue: number }>();
+  const todayMs = Date.parse(`${todayIso.slice(0, 10)}T00:00:00Z`);
+  for (const r of rows) {
+    const rem = BigInt(r.remainingMinor || "0");
+    if (rem <= 0n) continue;
+    const dueMs = Date.parse(`${String(r.dueOn).slice(0, 10)}T00:00:00Z`);
+    const days = Number.isFinite(dueMs) ? Math.max(0, Math.floor((todayMs - dueMs) / 86_400_000)) : 0;
+    const key = `${r.debtorId}|${r.currency}`;
+    const cur = overdueByDebtor.get(key);
+    if (cur) {
+      cur.overdueMinor += rem;
+      if (days > cur.maxDaysOverdue) cur.maxDaysOverdue = days;
+    } else {
+      overdueByDebtor.set(key, {
+        debtorId: r.debtorId,
+        displayName: r.displayName,
+        currency: r.currency,
+        overdueMinor: rem,
+        maxDaysOverdue: days,
+      });
+    }
+  }
+  return [...overdueByDebtor.values()].sort((a, b) =>
+    b.overdueMinor > a.overdueMinor ? 1 : b.overdueMinor < a.overdueMinor ? -1 : 0,
+  );
 }
 
 /**
@@ -122,11 +154,10 @@ export async function syncWorkspaceNotifications(
       tenantId,
       error: err instanceof Error ? err.message : String(err),
     });
-    quotaRatio = null;
   }
 
   return withTenant(app, tenantId, async (tx) => {
-    const [claimRows, disputeRows, intentRows, chequeRows, overdueRows, tenantRow] = await Promise.all([
+    const [claimRows, disputeRows, intentRows, chequeRows, overdueRows, overdueTaskRows, pendingApprovalRows, tenantRow] = await Promise.all([
       tx
         .select({
           id: payments.id,
@@ -201,6 +232,34 @@ export async function syncWorkspaceNotifications(
         )
         .orderBy(asc(invoices.dueOn), asc(invoices.id))
         .limit(31),
+      tx
+        .select({
+          id: collectionTasks.id,
+          title: collectionTasks.title,
+          priority: collectionTasks.priority,
+          debtorName: debtors.displayName,
+        })
+        .from(collectionTasks)
+        .innerJoin(debtors, eq(debtors.id, collectionTasks.debtorId))
+        .where(
+          and(
+            isNull(debtors.deletedAt),
+            inArray(collectionTasks.status, ["open", "in_progress"]),
+            sql`${collectionTasks.dueAt} < now()`,
+          ),
+        )
+        .orderBy(asc(collectionTasks.dueAt), asc(collectionTasks.id))
+        .limit(11),
+      tx
+        .select({
+          id: aiActionApprovals.id,
+          title: aiActionApprovals.title,
+          rationale: aiActionApprovals.rationale,
+        })
+        .from(aiActionApprovals)
+        .where(eq(aiActionApprovals.status, "pending"))
+        .orderBy(asc(aiActionApprovals.createdAt), asc(aiActionApprovals.id))
+        .limit(11),
       // F-06: tenant display currency for the notification amounts.
       tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId)).limit(1),
     ]);
@@ -218,30 +277,10 @@ export async function syncWorkspaceNotifications(
     const intentRowsCapped = take(intentRows, 10, "intents");
     const chequeRowsCapped = take(chequeRows, 10, "cheques");
     const overdueRowsCapped = take(overdueRows, 30, "overdue");
+    const overdueTaskRowsCapped = take(overdueTaskRows, 10, "overdue_tasks");
+    const pendingApprovalRowsCapped = take(pendingApprovalRows, 10, "ai_approvals");
 
     const tenantCurrency = normalizeCurrencyCode(tenantRow?.[0]?.settings?.currency);
-    const overdueByDebtor = new Map<string, { debtorId: string; displayName: string; currency: string; overdueMinor: bigint; maxDaysOverdue: number }>();
-    const todayMs = Date.parse(`${todayIso}T00:00:00Z`);
-    for (const r of overdueRowsCapped) {
-      const rem = BigInt(r.remainingMinor || "0");
-      if (rem <= 0n) continue;
-      const dueMs = Date.parse(`${r.dueOn}T00:00:00Z`);
-      const days = Math.max(0, Math.floor((todayMs - dueMs) / 86_400_000));
-      const key = `${r.debtorId}|${r.currency}`;
-      const cur = overdueByDebtor.get(key);
-      if (cur) {
-        cur.overdueMinor += rem;
-        if (days > cur.maxDaysOverdue) cur.maxDaysOverdue = days;
-      } else {
-        overdueByDebtor.set(key, {
-          debtorId: r.debtorId,
-          displayName: r.displayName,
-          currency: r.currency,
-          overdueMinor: rem,
-          maxDaysOverdue: days,
-        });
-      }
-    }
 
     const candidates = buildOperationalNotificationCandidates({
       todayIso,
@@ -249,35 +288,49 @@ export async function syncWorkspaceNotifications(
       openDisputes: disputeRowsCapped,
       humanIntents: intentRowsCapped.map((i) => ({ id: i.id, intent: i.intent, bodySnippet: i.bodySnippet ?? "" })),
       upcomingCheques: chequeRowsCapped.map((c) => ({ ...c, currency: c.currency ?? tenantCurrency })),
-      severeOverdueDebtors: [...overdueByDebtor.values()].sort((a, b) =>
-        b.overdueMinor > a.overdueMinor ? 1 : b.overdueMinor < a.overdueMinor ? -1 : 0,
-      ),
+      severeOverdueDebtors: aggregateOverdueByDebtor(overdueRowsCapped, todayIso),
       quotaRatio,
       briefingSummaryAr: briefingSummary?.summaryAr,
       briefingSummaryEn: briefingSummary?.summaryEn,
       currency: tenantCurrency,
     });
 
+    for (const task of overdueTaskRowsCapped) {
+      candidates.push({
+        kind: "task_overdue",
+        severity: task.priority === "urgent" ? "urgent" : "warning",
+        titleAr: `مهمة تحصيل متأخرة: ${task.title}`,
+        titleEn: `Overdue collection task: ${task.title}`,
+        bodyAr: `العميل: ${task.debtorName}`,
+        bodyEn: `Customer: ${task.debtorName}`,
+        actionUrl: "/tasks",
+        entityType: "collection_task",
+        entityId: task.id,
+        dedupeKey: `task-overdue:${task.id}`,
+      });
+    }
+
+    for (const approval of pendingApprovalRowsCapped) {
+      const rationale = (approval.rationale ?? "").slice(0, 200);
+      candidates.push({
+        kind: "ai_approval_pending",
+        severity: "info",
+        titleAr: `مقترح ذكي بانتظار موافقتك: ${approval.title}`,
+        titleEn: `AI proposal awaiting approval: ${approval.title}`,
+        bodyAr: rationale,
+        bodyEn: rationale,
+        actionUrl: "/tasks",
+        entityType: "ai_action_approval",
+        entityId: approval.id,
+        dedupeKey: `ai-approval:${approval.id}`,
+      });
+    }
+
     if (candidates.length === 0) return { created: 0, truncatedCategories };
 
     const inserted = await tx
       .insert(notifications)
-      .values(
-        candidates.map((c) => ({
-          id: uuidv7(),
-          tenantId,
-          kind: c.kind,
-          severity: c.severity,
-          titleAr: c.titleAr,
-          titleEn: c.titleEn,
-          bodyAr: c.bodyAr,
-          bodyEn: c.bodyEn,
-          actionUrl: c.actionUrl,
-          entityType: c.entityType ?? null,
-          entityId: c.entityId ?? null,
-          dedupeKey: c.dedupeKey,
-        })),
-      )
+      .values(candidates.map((c) => toNotificationRow(tenantId, c)))
       .onConflictDoNothing({ target: [notifications.tenantId, notifications.dedupeKey] })
       .returning({ id: notifications.id });
 
@@ -300,7 +353,7 @@ export async function listNotifications(
         .from(notifications)
         .where(and(...conds))
         .orderBy(desc(notifications.createdAt))
-        .limit(opts.limit ?? 30),
+        .limit(Math.min(Math.max(opts.limit ?? 30, 1), 100)),
       tx
         .select({
           unreadCount: sql<number>`count(*) filter (where ${notifications.readAt} is null)::int`,
