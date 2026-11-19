@@ -21,7 +21,12 @@ const KIND_ORDER: Record<TimelineEventKind, number> = { payment: 0, dispute: 1, 
 
 export function mergeTimeline(events: readonly TimelineEvent[]): TimelineEvent[] {
   return events.slice().sort((a, b) => {
-    if (a.at !== b.at) return a.at < b.at ? 1 : -1; // newest first
+    if (a.at !== b.at) {
+      const ta = Date.parse(a.at);
+      const tb = Date.parse(b.at);
+      if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return tb - ta; // newest first
+      return a.at < b.at ? 1 : -1;
+    }
     const kindDiff = KIND_ORDER[a.kind] - KIND_ORDER[b.kind];
     if (kindDiff !== 0) return kindDiff;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;

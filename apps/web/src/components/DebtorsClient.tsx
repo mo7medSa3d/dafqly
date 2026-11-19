@@ -261,10 +261,10 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <span className="text-xs font-semibold">{isAr ? "إجمالي المستحق" : "Total Outstanding"}</span>
             <CurrencyCircleDollar size={18} className="text-primary" />
           </div>
-          <span className="tnum text-xl font-black text-text" dir="ltr">
+          <span className="tnum tabular-nums text-xl font-black text-text" dir="ltr">
             {formatAmountOnly(totalOutstandingMinor)} <span className="text-xs font-bold text-text-muted">{currencySymbol}</span>
           </span>
-          <span className="text-[11px] text-text-muted">
+          <span className="tabular-nums text-[11px] text-text-muted">
             {isAr ? `على ${debtCount} عميل مدين` : `Across ${debtCount} debtors`}
           </span>
         </div>
@@ -274,7 +274,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <span className="text-xs font-semibold">{isAr ? "مسددين بالكامل" : "Fully Settled"}</span>
             <CheckCircle size={18} className="text-status-paid-fg" />
           </div>
-          <span className="tnum text-xl font-black text-status-paid-fg dark:text-status-paid-fg" dir="ltr">
+          <span className="tnum tabular-nums text-xl font-black text-status-paid-fg dark:text-status-paid-fg" dir="ltr">
             {settledCount}
           </span>
           <span className="text-[11px] text-text-muted">
@@ -287,7 +287,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <span className="text-xs font-semibold">{isAr ? "إجمالي العملاء" : "Total Customers"}</span>
             <Users size={18} className="text-primary" />
           </div>
-          <span className="tnum text-xl font-black text-text" dir="ltr">
+          <span className="tnum tabular-nums text-xl font-black text-text" dir="ltr">
             {totalCount ?? items.length}
           </span>
           <span className="text-[11px] text-text-muted">
@@ -314,7 +314,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <span className="text-xs font-semibold">{isAr ? "تذكيرات متوقفة" : "Paused Reminders"}</span>
             <BellSlash size={18} className="text-status-due-fg" />
           </div>
-          <span className="tnum text-xl font-black text-status-due-fg dark:text-status-due-fg" dir="ltr">
+          <span className="tnum tabular-nums text-xl font-black text-status-due-fg dark:text-status-due-fg" dir="ltr">
             {optedOutCount}
           </span>
           <span className="text-[11px] text-text-muted">
@@ -334,9 +334,9 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             const otherCurrencies = (item.outstandingByCurrency ?? []).filter((b) => b.currency !== currency);
             return <div key={item.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5">
               <Link href={`/${locale}/debtors/${item.id}`} className="min-w-0 truncate text-sm font-bold text-text hover:text-primary">{index + 1}. {item.displayName}</Link>
-              <span className="tnum text-sm font-extrabold text-text" dir="ltr">{fmt(item.totalOutstandingMinor)}</span>
+              <span className="tnum tabular-nums text-sm font-extrabold text-text" dir="ltr">{fmt(item.totalOutstandingMinor)}</span>
               {otherCurrencies.length > 0 && (
-                <span className="col-span-2 text-xs text-text-muted" dir="ltr">
+                <span className="col-span-2 tabular-nums text-xs text-text-muted" dir="ltr">
                   + {otherCurrencies.map((b) => `${formatCurrencyMinor(BigInt(b.minor), b.currency)} ${b.currency}`).join(" · ")}
                 </span>
               )}
@@ -379,7 +379,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
               className={cn(buttonVariants({ variant: filter === "all" ? "default" : "outline", size: "sm" }), !(filter === "all") && "text-text-muted")}
             >
               <span>{isAr ? "الكل" : "All"}</span>
-              <span className="rounded bg-surface/20 px-1.5 py-0.2 text-[10px]">{items.length}</span>
+              <span className="tabular-nums rounded bg-surface/20 px-1.5 py-0.2 text-[10px]">{items.length}</span>
             </button>
 
             <button
@@ -391,7 +391,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
               <Sparkle size={14} aria-hidden />
               <span>{isAr ? "الأولوية الذكية" : "AI Priority"}</span>
               {aiPriorityCount > 0 && (
-                <span className="rounded bg-callout px-1.5 py-0.2 text-[10px] text-primary">
+                <span className="tabular-nums rounded bg-callout px-1.5 py-0.2 text-[10px] text-primary">
                   {aiPriorityCount}
                 </span>
               )}
@@ -403,7 +403,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
               className={cn(buttonVariants({ variant: filter === "has_balance" ? "default" : "outline", size: "sm" }), !(filter === "has_balance") && "text-text-muted")}
             >
               <span>{isAr ? "عليهم متبقي" : "Has Balance"}</span>
-              <span className="rounded bg-status-overdue-bg px-1.5 py-0.2 text-[10px] text-status-overdue-fg">
+              <span className="tabular-nums rounded bg-status-overdue-bg px-1.5 py-0.2 text-[10px] text-status-overdue-fg">
                 {debtCount}
               </span>
             </button>
@@ -415,7 +415,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             >
               <CheckCircle size={14} className={"text-status-paid-fg"} />
               <span>{isAr ? "مسددين بالكامل" : "Fully Settled"}</span>
-              <span className="rounded bg-status-paid-bg px-1.5 py-0.2 text-[10px] text-status-paid-fg dark:text-status-paid-fg">
+              <span className="tabular-nums rounded bg-status-paid-bg px-1.5 py-0.2 text-[10px] text-status-paid-fg dark:text-status-paid-fg">
                 {settledCount}
               </span>
             </button>
@@ -427,7 +427,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             >
               <BellSlash size={14} className={"text-status-due-fg"} />
               <span>{isAr ? "تذكيرات متوقفة" : "Paused"}</span>
-              <span className="rounded bg-status-due-bg px-1.5 py-0.2 text-[10px]">
+              <span className="tabular-nums rounded bg-status-due-bg px-1.5 py-0.2 text-[10px]">
                 {optedOutCount}
               </span>
             </button>
@@ -440,7 +440,7 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
               >
                 <WarningCircle size={14} />
                 <span>{isAr ? "مخاطرة وشيكات" : "Risk"}</span>
-                <span className="rounded bg-status-overdue-bg px-1.5 py-0.2 text-[10px]">
+                <span className="tabular-nums rounded bg-status-overdue-bg px-1.5 py-0.2 text-[10px]">
                   {riskCount}
                 </span>
               </button>
@@ -506,74 +506,151 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
             <EmptyState
               testId="debtors-empty"
               title={
-                search
+                search.trim()
                   ? (isAr ? `لا توجد نتائج مطابقة لـ "${search}"` : `No customers matching "${search}"`)
-                  : t("empty")
+                  : filter !== "all"
+                    ? (isAr ? "لا يوجد عملاء ضمن هذا التصنيف" : "No customers in this filter")
+                    : t("empty")
               }
-            />
+              body={
+                search.trim() || filter !== "all"
+                  ? (isAr ? "جرّب مسح البحث أو إعادة تعيين التصنيف لعرض جميع العملاء." : "Clear your search or reset the active filter to see all customers.")
+                  : (isAr ? "أضف أول عميل لبدء متابعة الفواتير والتذكيرات التلقائية." : "Add your first customer to start tracking invoices and automated reminders.")
+              }
+            >
+              {search.trim() || filter !== "all" ? (
+                <button
+                  type="button"
+                  onClick={() => { setSearch(""); setFilter("all"); }}
+                  className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-1")}
+                >
+                  {isAr ? "إعادة تعيين الفلاتر" : "Reset filters"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => document.querySelector<HTMLInputElement>('[data-testid="debtor-name"]')?.focus()}
+                  className={`${btnPrimary} mt-1`}
+                >
+                  <Plus size={16} aria-hidden />
+                  {t("add")}
+                </button>
+              )}
+            </EmptyState>
           ) : filteredItems.length === 0 ? null : (
-            <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
-              <ul className="flex flex-col divide-y divide-border">
-                {filteredItems.map((d) => {
-                  const balance = BigInt(d.totalOutstandingMinor || "0");
-                  const hasDebt = balance > 0n;
-                  const isToggling = togglingId === d.id;
+            <div className="panel-shadow overflow-x-auto rounded-xl border border-border bg-surface">
+              <table className="w-full min-w-[640px] border-collapse text-start">
+                <thead className="border-b border-border bg-surface-muted/60 text-xs font-bold text-text-muted">
+                  <tr>
+                    <th scope="col" className="px-4 py-3 text-start">{t("name")}</th>
+                    <th scope="col" className="px-4 py-3 text-start">{isAr ? "الرصيد والحالة" : "Balance & Status"}</th>
+                    <th scope="col" className="px-4 py-3 text-end">{isAr ? "الإجراءات" : "Actions"}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {filteredItems.map((d) => {
+                    const balance = BigInt(d.totalOutstandingMinor || "0");
+                    const hasDebt = balance > 0n;
+                    const isToggling = togglingId === d.id;
 
-                  return (
-                    <li
-                      key={d.id}
-                      data-testid="debtor-row"
-                      className="flex flex-col justify-between gap-3 p-4 transition-colors hover:bg-callout/40 sm:flex-row sm:items-center sm:p-5"
-                    >
-                      {/* Left: Avatar & Identity Details */}
-                      <div className="flex min-w-0 items-start gap-3.5">
-                        <InitialAvatar name={d.displayName} size={44} />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Link
-                              href={`/${locale}/debtors/${d.id}`}
-                              className="max-w-full truncate text-base font-bold text-text hover:text-primary transition-colors"
-                            >
-                              {d.displayName}
-                            </Link>
+                    return (
+                      <tr
+                        key={d.id}
+                        data-testid="debtor-row"
+                        className="align-top transition-colors hover:bg-callout/40"
+                      >
+                        {/* Customer identity & ledger summary */}
+                        <td className="px-4 py-4">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <InitialAvatar name={d.displayName} size={40} />
+                            <div className="min-w-0 flex-1">
+                              <Link
+                                href={`/${locale}/debtors/${d.id}`}
+                                className="block max-w-full truncate text-sm font-bold text-text transition-colors hover:text-primary sm:text-base"
+                              >
+                                {d.displayName}
+                              </Link>
 
-                            {/* Debt / Settled status pill */}
+                              {/* Rules-based next action recommendation */}
+                              {intelById[d.id] && hasDebt && (
+                                <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-primary">
+                                  <Sparkle size={12} aria-hidden className="shrink-0" />
+                                  <span>
+                                    {isAr
+                                      ? intelById[d.id]!.recommendation.titleAr
+                                      : intelById[d.id]!.recommendation.titleEn}
+                                  </span>
+                                </p>
+                              )}
+
+                              {/* Phone & Invoices summary */}
+                              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
+                                <span className="tabular-nums flex items-center gap-1" dir="ltr">
+                                  <Phone size={12} className="text-primary" />
+                                  <span>{d.phoneE164}</span>
+                                </span>
+                                {d.openInvoicesCount !== undefined && d.openInvoicesCount > 0 && (
+                                  <span className="tabular-nums">
+                                    • {isAr ? `${d.openInvoicesCount} فواتير مفتوحة` : `${d.openInvoicesCount} open invoices`}
+                                  </span>
+                                )}
+                                {d.totalPaidMinor && BigInt(d.totalPaidMinor) > 0n && (
+                                  <span className="tabular-nums">
+                                    • {isAr ? `مسدد: ${fmt(d.totalPaidMinor)} ${currencySymbol}` : `Paid: ${fmt(d.totalPaidMinor)} ${currencySymbol}`}
+                                  </span>
+                                )}
+                                {d.totalDisputedMinor && BigInt(d.totalDisputedMinor) > 0n && (
+                                  <span className="tabular-nums">
+                                    • {isAr ? `متنازع عليه (مجمّد): ${fmt(d.totalDisputedMinor)} ${currencySymbol}` : `Disputed (frozen): ${fmt(d.totalDisputedMinor)} ${currencySymbol}`}
+                                  </span>
+                                )}
+                              </div>
+
+                              {d.notes && (
+                                <p className="mt-1 line-clamp-1 text-xs text-text-subtle">
+                                  {d.notes}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Balance & Status pills */}
+                        <td className="px-4 py-4">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             {hasDebt ? (
-                              <span className="inline-flex items-center gap-1 rounded bg-status-overdue-bg px-2.5 py-0.5 text-xs font-extrabold text-status-overdue-fg">
+                              <span className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-status-overdue-bg px-2.5 py-0.5 text-xs font-extrabold text-status-overdue-fg">
                                 <span>{isAr ? "مستحق:" : "Due:"}</span>
-                                <span className="tnum" dir="ltr">{fmt(d.totalOutstandingMinor)}</span>
+                                <span className="tnum tabular-nums" dir="ltr">{fmt(d.totalOutstandingMinor)}</span>
                                 <span className="text-[10px] font-bold">{currencySymbol}</span>
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 rounded bg-status-paid-bg px-2.5 py-0.5 text-[11px] font-bold text-status-paid-fg dark:text-status-paid-fg">
+                              <span className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-status-paid-bg px-2.5 py-0.5 text-[11px] font-bold text-status-paid-fg dark:text-status-paid-fg">
                                 <CheckCircle size={13} />
                                 <span>{isAr ? "خالص ومسدد" : "Fully Settled"}</span>
                               </span>
                             )}
 
-                            {/* Risk Flag */}
                             {d.riskFlag && (
-                              <span className="inline-flex items-center gap-1 rounded bg-status-overdue-bg px-2 py-0.5 text-[11px] font-bold text-status-overdue-fg dark:text-status-overdue-fg">
+                              <span className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-status-overdue-bg px-2 py-0.5 text-[11px] font-bold text-status-overdue-fg dark:text-status-overdue-fg">
                                 <WarningCircle size={12} />
                                 <span>{isAr ? "شيك مرتد" : "Bounced Cheque"}</span>
                               </span>
                             )}
 
-                            {/* Opted Out Pill */}
                             {d.optedOut && (
                               <span
                                 data-testid="debtor-opted-out"
-                                className="inline-flex items-center gap-1 rounded bg-status-due-bg px-2 py-0.5 text-[11px] font-bold text-status-due-fg dark:text-status-due-fg"
+                                className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-status-due-bg px-2 py-0.5 text-[11px] font-bold text-status-due-fg dark:text-status-due-fg"
                               >
                                 <BellSlash size={12} />
                                 <span>{isAr ? "تذكيرات متوقفة" : "Reminders Paused"}</span>
                               </span>
                             )}
 
-                            {/* Deterministic portfolio health score */}
                             {intelById[d.id] && (
                               <span
-                                className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-bold ${
+                                className={`inline-flex items-center gap-1 whitespace-nowrap rounded px-2 py-0.5 text-[11px] font-bold ${
                                   intelById[d.id]!.tier === "critical"
                                     ? "bg-status-overdue-bg text-status-overdue-fg"
                                     : intelById[d.id]!.tier === "at_risk"
@@ -584,126 +661,86 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
                                 }`}
                               >
                                 <Sparkle size={11} aria-hidden />
-                                <span className="tnum" dir="ltr">{intelById[d.id]!.healthScore}/100</span>
+                                <span className="tnum tabular-nums" dir="ltr">{intelById[d.id]!.healthScore}/100</span>
                               </span>
                             )}
                           </div>
+                        </td>
 
-                          {/* Rules-based next action recommendation */}
-                          {intelById[d.id] && hasDebt && (
-                            <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-primary">
-                              <Sparkle size={12} aria-hidden className="shrink-0" />
-                              <span>
-                                {isAr
-                                  ? intelById[d.id]!.recommendation.titleAr
-                                  : intelById[d.id]!.recommendation.titleEn}
-                              </span>
-                            </p>
-                          )}
+                        {/* Direct Actions */}
+                        <td className="px-4 py-4">
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            {hasDebt && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openAiCopilot({
+                                    tab: "composer",
+                                    debtorId: d.id,
+                                    tone: intelById[d.id]?.recommendation.suggestedTone,
+                                    mode: "reminder",
+                                  })
+                                }
+                                className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}
+                                title={isAr ? "صياغة تنبيه بالذكاء الاصطناعي" : "Draft AI reminder"}
+                              >
+                                <Sparkle size={14} aria-hidden />
+                                <span className="hidden xl:inline">{isAr ? "صياغة ذكية" : "AI Draft"}</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => openWhatsApp(d)}
+                              className={cn(buttonVariants({ variant: "success", size: "sm" }), "border-status-paid-fg/30 text-status-paid-fg dark:text-status-paid-fg")}
+                              title={isAr ? "محادثة مباشرة عبر واتساب" : "Chat on WhatsApp"}
+                            >
+                              <WhatsappLogo size={16} />
+                              <span className="hidden md:inline">{isAr ? "واتساب" : "WhatsApp"}</span>
+                            </button>
 
-                          {/* Phone & Invoices summary */}
-                          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
-                            <span className="flex items-center gap-1" dir="ltr">
-                              <Phone size={12} className="text-primary" />
-                              <span>{d.phoneE164}</span>
-                            </span>
-                            {d.openInvoicesCount !== undefined && d.openInvoicesCount > 0 && (
-                              <span>
-                                • {isAr ? `${d.openInvoicesCount} فواتير مفتوحة` : `${d.openInvoicesCount} open invoices`}
-                              </span>
+                            {d.optedOut ? (
+                              <button
+                                type="button"
+                                data-testid="debtor-resume-reminders"
+                                disabled={isToggling}
+                                aria-busy={isToggling}
+                                onClick={() => void onToggleReminders(d.id, true)}
+                                className={cn(buttonVariants({ variant: "success", size: "sm" }), "border-status-paid-fg/40 text-status-paid-fg dark:text-status-paid-fg")}
+                                title={isAr ? "إعادة تفعيل التذكيرات التلقائية لهذا العميل" : "Re-enable automatic reminders"}
+                              >
+                                <BellRinging size={15} />
+                                <span>{isToggling ? (isAr ? "جارٍ..." : "Updating...") : (isAr ? "تفعيل التذكير" : "Resume")}</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                data-testid="debtor-pause-reminders"
+                                disabled={isToggling}
+                                aria-busy={isToggling}
+                                onClick={() => void onToggleReminders(d.id, false)}
+                                className={cn(buttonVariants({ variant: "outline", size: "sm" }), "text-text-muted hover:border-status-due-fg/40 hover:text-status-due-fg")}
+                                title={isAr ? "إيقاف التذكيرات التلقائية مؤقتاً" : "Pause automatic reminders"}
+                              >
+                                <BellSlash size={15} />
+                                <span className="hidden lg:inline">{isToggling ? (isAr ? "جارٍ..." : "Updating...") : (isAr ? "إيقاف التذكير" : "Pause")}</span>
+                              </button>
                             )}
-                            {d.totalPaidMinor && BigInt(d.totalPaidMinor) > 0n && (
-                              <span>
-                                • {isAr ? `مسدد: ${fmt(d.totalPaidMinor)} ${currencySymbol}` : `Paid: ${fmt(d.totalPaidMinor)} ${currencySymbol}`}
-                              </span>
-                            )}
-                            {d.totalDisputedMinor && BigInt(d.totalDisputedMinor) > 0n && (
-                              <span>
-                                • {isAr ? `متنازع عليه (مجمّد): ${fmt(d.totalDisputedMinor)} ${currencySymbol}` : `Disputed (frozen): ${fmt(d.totalDisputedMinor)} ${currencySymbol}`}
-                              </span>
-                            )}
+
+                            <Link
+                              data-testid="debtor-view"
+                              href={`/${locale}/debtors/${d.id}`}
+                              className="inline-flex min-h-[38px] shrink-0 items-center gap-1 rounded border border-border-strong/60 bg-surface px-3.5 py-1.5 text-xs font-bold transition-colors hover:border-primary hover:bg-callout hover:text-primary sm:text-xs"
+                            >
+                              <span>{t("view")}</span>
+                              <ArrowLeft size={13} aria-hidden className="rtl:-scale-x-100" />
+                            </Link>
                           </div>
-
-                          {d.notes && (
-                            <p className="mt-1 line-clamp-1 text-xs text-text-subtle">
-                              💬 {d.notes}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Right: Direct Actions (AI Draft, WhatsApp, Toggle Reminders, View) */}
-                      <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
-                        {hasDebt && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              openAiCopilot({
-                                tab: "composer",
-                                debtorId: d.id,
-                                tone: intelById[d.id]?.recommendation.suggestedTone,
-                                mode: "reminder",
-                              })
-                            }
-                            className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}
-                            title={isAr ? "صياغة تنبيه بالذكاء الاصطناعي" : "Draft AI reminder"}
-                          >
-                            <Sparkle size={14} aria-hidden />
-                            <span className="hidden xl:inline">{isAr ? "صياغة ذكية" : "AI Draft"}</span>
-                          </button>
-                        )}
-                        {/* 1. Direct WhatsApp Chat Button */}
-                        <button
-                          type="button"
-                          onClick={() => openWhatsApp(d)}
-                          className={cn(buttonVariants({ variant: "success", size: "sm" }), "border-status-paid-fg/30 text-status-paid-fg dark:text-status-paid-fg")}
-                          title={isAr ? "محادثة مباشرة عبر واتساب" : "Chat on WhatsApp"}
-                        >
-                          <WhatsappLogo size={16} />
-                          <span className="hidden md:inline">{isAr ? "واتساب" : "WhatsApp"}</span>
-                        </button>
-
-                        {/* 2. Re-enable or Pause Reminders Button */}
-                        {d.optedOut ? (
-                          <button
-                            type="button"
-                            data-testid="debtor-resume-reminders"
-                            disabled={isToggling}
-                            onClick={() => void onToggleReminders(d.id, true)}
-                            className={cn(buttonVariants({ variant: "success", size: "sm" }), "border-status-paid-fg/40 text-status-paid-fg dark:text-status-paid-fg")}
-                            title={isAr ? "إعادة تفعيل التذكيرات التلقائية لهذا العميل" : "Re-enable automatic reminders"}
-                          >
-                            <BellRinging size={15} />
-                            <span>{isAr ? "تفعيل التذكير" : "Resume"}</span>
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            data-testid="debtor-pause-reminders"
-                            disabled={isToggling}
-                            onClick={() => void onToggleReminders(d.id, false)}
-                            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "text-text-muted hover:border-status-due-fg/40 hover:text-status-due-fg")}
-                            title={isAr ? "إيقاف التذكيرات التلقائية مؤقتاً" : "Pause automatic reminders"}
-                          >
-                            <BellSlash size={15} />
-                            <span className="hidden lg:inline">{isAr ? "إيقاف التذكير" : "Pause"}</span>
-                          </button>
-                        )}
-
-                        {/* 3. View Details */}
-                        <Link
-                          data-testid="debtor-view"
-                          href={`/${locale}/debtors/${d.id}`}
-                          className="inline-flex min-h-[38px] shrink-0 items-center gap-1 rounded border border-border-strong/60 bg-surface px-3.5 py-1.5 text-xs font-bold transition-colors hover:border-primary hover:bg-callout hover:text-primary sm:text-xs"
-                        >
-                          <span>{t("view")}</span>
-                          <ArrowLeft size={13} aria-hidden className="rtl:-scale-x-100" />
-                        </Link>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </section>
@@ -756,12 +793,14 @@ export function DebtorsClient({ businessName }: { businessName?: string }) {
               </label>
               {error && <p role="alert" className="text-sm font-semibold text-status-overdue-fg">{error}</p>}
               <button
+                type="submit"
                 data-testid="debtor-create"
                 disabled={busy || name.trim().length < 1 || phone.trim().length < 3}
+                aria-busy={busy}
                 className={`${btnPrimary} w-full justify-center`}
               >
                 <Plus size={18} aria-hidden />
-                {t("add")}
+                {busy ? (isAr ? "جارٍ الحفظ..." : "Saving...") : t("add")}
               </button>
             </form>
           </Panel>

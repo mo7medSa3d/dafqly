@@ -55,6 +55,33 @@ describe("redactWebhookPayload (M6)", () => {
     circular.self = circular;
     expect(redactWebhookPayload(circular)).toEqual({ redacted: true });
   });
+
+  it("handles null and malformed payloads without throwing and redacts contact names", () => {
+    expect(parseWebhookPayload(null)).toEqual([]);
+    expect(parseWebhookPayload({ entry: [null, { changes: "bad" }] })).toEqual([]);
+    expect(redactWebhookPayload(null)).toBeNull();
+    const redacted = redactWebhookPayload(payload);
+    expect(JSON.stringify(redacted)).not.toContain("عميل");
+  });
+
+  it("falls back to a valid Date when Meta sends out-of-range or negative timestamps", () => {
+    const skewed = {
+      entry: [{
+        changes: [{
+          value: {
+            messages: [{ from: "201001234567", id: "wamid.skew1", timestamp: "9999999999999999", type: "text", text: { body: "hi" } }],
+            statuses: [{ id: "wamid.skew0", status: "delivered", timestamp: "-500" }],
+          },
+        }],
+      }],
+    };
+    const events = parseWebhookPayload(skewed);
+    expect(events).toHaveLength(2);
+    for (const ev of events) {
+      expect(Number.isNaN(ev.at.getTime())).toBe(false);
+      expect(ev.at.getUTCFullYear()).toBeGreaterThanOrEqual(2020);
+    }
+  });
 });
 
 describe("resolveTenantWhatsappOverride", () => {

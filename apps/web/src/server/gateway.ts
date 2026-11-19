@@ -212,7 +212,7 @@ export async function createGatewayLink(
 export async function listPaymentLinks(app: Db, tenantId: string, debtorId: string): Promise<PaymentLinkView[]> {
   return withTenant(app, tenantId, async (tx) => {
     const rows = await tx.select().from(paymentLinks)
-      .where(eq(paymentLinks.debtorId, debtorId)).orderBy(desc(paymentLinks.createdAt));
+      .where(and(eq(paymentLinks.tenantId, tenantId), eq(paymentLinks.debtorId, debtorId))).orderBy(desc(paymentLinks.createdAt));
     return rows.map(toPaymentLinkView);
   });
 }
@@ -355,11 +355,16 @@ export async function handlePaymobCallback(
           } else {
             subResult = await withTenant(deps.app, sub.tenantId, async (tx): Promise<WebhookOutcome> => {
               const [lockedSub] = await tx.select().from(subscriptionInvoices)
-                .where(eq(subscriptionInvoices.id, sub.id))
+                .where(and(eq(subscriptionInvoices.tenantId, sub.tenantId), eq(subscriptionInvoices.id, sub.id)))
                 .for("update");
               if (!lockedSub) return { outcome: "unmatched", reason: "unknown special_reference" };
               if (lockedSub.status === "paid") return { outcome: "duplicate" };
               if (lockedSub.status === "void") return { outcome: "ignored", reason: "subscription_invoice_void" };
+              const [subTenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, lockedSub.tenantId));
+              const expectedCurrency = normalizeCurrencyCode(subTenant?.settings?.currency);
+              if (cb.currency !== expectedCurrency) {
+                return { outcome: "ignored", reason: "currency_mismatch" };
+              }
               await tx.update(subscriptionInvoices)
                 .set({ status: "paid", providerRef: cb.transactionId, updatedAt: now })
                 .where(eq(subscriptionInvoices.id, lockedSub.id));
@@ -378,7 +383,7 @@ export async function handlePaymobCallback(
           return subResult;
         } catch (err) {
           await deps.owner.update(webhookEvents)
-            .set({ processError: err instanceof Error ? err.message : String(err) })
+            .set({ processError: (err instanceof Error ? err.message : String(err)).slice(0, 1000) })
             .where(eq(webhookEvents.dedupeKey, dedupeKey))
             .catch(() => undefined);
           throw err;
@@ -545,7 +550,7 @@ export async function handlePaymobCallback(
       .where(eq(webhookEvents.dedupeKey, dedupeKey));
   } catch (err) {
     await deps.owner.update(webhookEvents)
-      .set({ processError: err instanceof Error ? err.message : String(err) })
+      .set({ processError: (err instanceof Error ? err.message : String(err)).slice(0, 1000) })
       .where(eq(webhookEvents.dedupeKey, dedupeKey))
       .catch(() => undefined);
     throw err;
@@ -558,7 +563,7 @@ export async function handlePaymobCallback(
 // ------------------------------------------------------------------- refunds
 export const refundInput = z.object({
   paymentId: z.string().uuid(),
-  amount: z.string().trim().min(1).optional(), // decimal string in payment currency; omitted = refund everything remaining
+  amount: z.string().trim().min(1).max(32).optional(), // decimal string in payment currency; omitted = refund everything remaining
 });
 export type RefundInputType = z.infer<typeof refundInput>;
 
@@ -644,11 +649,13 @@ export async function refundGatewayPayment(
   }
 
   const written = await withTenant(deps.app, tenantId, async (tx) => {
-    const [row] = await tx.select().from(payments).where(eq(payments.id, intent.id)).for("update");
+    const [row] = await tx.select().from(payments).where(and(eq(payments.tenantId, tenantId), eq(payments.id, intent.id))).for("update");
     if (!row || row.status !== "claimed") throw new AppError("INVALID_REFUND", "Refund intent is no longer pending", 409);
+    await lockDebtor(tx, intent.payment.debtorId);
+    await lockInvoicesById(tx, intent.plan.allocations.map((a) => a.invoiceId));
     await tx.update(payments).set({
       status: "confirmed", gatewayTransactionId: refundTransactionId, updatedAt: new Date(),
-    }).where(eq(payments.id, intent.id));
+    }).where(and(eq(payments.tenantId, tenantId), eq(payments.id, intent.id)));
     if (intent.plan.allocations.length > 0) await recomputeInvoicesPaid(tx, tenantId, intent.plan.allocations.map((a) => a.invoiceId));
     else await recomputeDebtorCredit(tx, tenantId, intent.payment.debtorId);
     await audit(tx, tenantId, actor, "payment.refunded", "payment", intent.id, {
@@ -836,8 +843,8 @@ export interface ReconciliationView {
 /** F5 acceptance: the report's gateway total IS the sum of confirmed gateway payments; discrepancies flag any link/payment drift. */
 export async function getReconciliation(app: Db, tenantId: string): Promise<ReconciliationView> {
   return withTenant(app, tenantId, async (tx) => {
-    const pays = await tx.select().from(payments);
-    const links = await tx.select().from(paymentLinks);
+    const pays = await tx.select().from(payments).where(eq(payments.tenantId, tenantId));
+    const links = await tx.select().from(paymentLinks).where(eq(paymentLinks.tenantId, tenantId));
     const report = reconcileGateway(
       pays.map((p) => ({
         id: p.id, amountMinor: p.amountMinor, status: p.status,

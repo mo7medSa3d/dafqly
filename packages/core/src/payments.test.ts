@@ -105,9 +105,10 @@ describe("decideGatewayCallback (webhook is the only source of truth)", () => {
     expect(decideGatewayCallback(cb({ is_auth: true, is_capture: false }), { link, now, txnAlreadyProcessed: false })).toEqual({ action: "ignore", reason: "auth_only" });
     expect(decideGatewayCallback(cb({ is_auth: true, is_capture: true }), { link, now, txnAlreadyProcessed: false }).action).toBe("fulfil");
   });
-  it("a late success for an expired link is flagged, not fulfilled", () => {
+  it("a late success for an expired link or invalid expiresAt is flagged, not fulfilled", () => {
     const late = new Date("2026-11-09T12:00:00Z");
     expect(decideGatewayCallback(cb({}), { link, now: late, txnAlreadyProcessed: false })).toEqual({ action: "ignore", reason: "link_expired" });
+    expect(decideGatewayCallback(cb({}), { link: { ...link, expiresAt: new Date("invalid") }, now, txnAlreadyProcessed: false })).toEqual({ action: "ignore", reason: "link_expired" });
   });
   it("does not treat an unsigned cumulative refund amount as a trusted reversal amount", () => {
     // refunded_amount_cents is not in Paymob's 20-field HMAC message. The callback
@@ -284,6 +285,7 @@ describe("statement tokens (F10: 32 random bytes, hash-only storage)", () => {
     expect(statementLinkState({ ...base, expiresAt: new Date("2026-11-09T09:59:59Z") }, now)).toBe("expired");
     expect(statementLinkState({ ...base, revokedAt: new Date("2026-11-09T09:00:00Z") }, now)).toBe("revoked");
     expect(statementLinkState(null, now)).toBe("not_found");
+    expect(statementLinkState({ ...base, expiresAt: new Date("invalid") }, now)).toBe("expired");
     expect(STATEMENT_DEFAULT_EXPIRY_DAYS).toBe(30);
   });
 });

@@ -35,6 +35,13 @@ export function ReminderFunnelChart({
     { key: "replied", label: labels.replied, value: replied, pct: sent > 0 ? (replied / base) * 100 : 0, pctText: formatPct(sent > 0 ? replied / base : 0), color: "var(--chart-1)" },
     { key: "paid", label: labels.paidWithin7d, value: paidWithin7d, pct: sent > 0 ? (paidWithin7d / base) * 100 : 0, pctText: formatPct(sent > 0 ? paidWithin7d / base : 0), color: "var(--primary)" },
   ];
+  if (sent <= 0 && delivered <= 0 && replied <= 0 && paidWithin7d <= 0) {
+    return (
+      <div role="status" className="flex min-h-[140px] items-center justify-center rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+        {isAr ? "لا توجد بيانات تذكيرات بعد." : "No reminder data yet."}
+      </div>
+    );
+  }
   const segTotal = Math.max(1, sent + delivered + replied + paidWithin7d);
 
   return (
@@ -52,7 +59,7 @@ export function ReminderFunnelChart({
                 <i className="size-2 rounded-full" style={{ background: s.color }} />
                 {s.label}
               </span>
-              <span className="tnum font-extrabold text-foreground" dir="ltr">
+              <span className="tnum tabular-nums font-extrabold text-foreground" dir="ltr">
                 {s.value.toLocaleString("en-US")} <span className="text-muted-foreground">· {s.pctText}</span>
               </span>
             </div>

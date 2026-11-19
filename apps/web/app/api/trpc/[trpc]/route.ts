@@ -7,6 +7,8 @@ import { env } from "@/server/env";
 import { clientIp, rateLimit } from "@/server/rate-limit";
 import { readRequestBodyLimited, RequestBodyTooLargeError } from "@/server/request-body";
 
+export const dynamic = "force-dynamic";
+
 /**
  * M7: the tRPC handler is rate-limited per caller — 120 req/min overall,
  * plus a stricter 20/min bucket for the AI/file procedures (ledger
@@ -39,7 +41,7 @@ function verifySignedSessionToken(rawCookieValue: string): string | null {
   if (!token || !sig) return null;
   let secret: string | undefined;
   try {
-    secret = process.env.BETTER_AUTH_SECRET ?? env().SESSION_SECRET;
+    secret = process.env.BETTER_AUTH_SECRET?.trim() || env().SESSION_SECRET;
   } catch {
     return null;
   }
@@ -69,8 +71,14 @@ function callerKey(req: Request): string {
 }
 
 function isAiProcedure(req: Request): boolean {
-  const path = new URL(req.url).pathname.replace(/^\/api\/trpc\/?/, "");
-  if (!path) return false;
+  const rawPath = new URL(req.url).pathname.replace(/^\/api\/trpc\/?/, "");
+  if (!rawPath) return false;
+  let path = rawPath;
+  try {
+    path = decodeURIComponent(rawPath);
+  } catch {
+    // Keep raw path if percent-encoding is malformed.
+  }
   return path.split(",").some((proc) =>
     AI_PROCEDURES.has(proc) || AI_PROCEDURE_PREFIXES.some((prefix) => proc.startsWith(prefix)),
   );
@@ -98,7 +106,7 @@ const handler = async (req: Request): Promise<Response> => {
       forwardedReq = new Request(req.url, {
         method: req.method,
         headers: req.headers,
-        body: rawBytes as never,
+        body: Buffer.from(rawBytes),
       });
     } catch (err) {
       if (err instanceof RequestBodyTooLargeError) {
@@ -120,7 +128,7 @@ const handler = async (req: Request): Promise<Response> => {
       router: appRouter,
       createContext: () => createTrpcContext(req.headers),
       responseMeta(opts) {
-        const appErr = opts.errors.map((e) => e.cause).find((c) => c instanceof AppError) as AppError | undefined;
+        const appErr = opts.errors.map((e) => e.cause).find((c): c is AppError => c instanceof AppError);
         return appErr ? { status: appErr.status, headers: NO_STORE } : { headers: NO_STORE };
       },
     });

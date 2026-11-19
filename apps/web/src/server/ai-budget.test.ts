@@ -41,6 +41,17 @@ describe("global AI USD metering", () => {
     expect(estimateAiCostUsdMicros("gemini-3.8-flash", -10, -20)).toBe(0n);
   });
 
+  it("handles NaN, Infinity, negative, and float token counts without RangeError or negative cost", () => {
+    expect(estimateAiCostUsdMicros("gemini-3.8-flash", Number.NaN, Number.NaN)).toBe(0n);
+    expect(estimateAiCostUsdMicros("gemini-3.8-flash", Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY)).toBe(0n);
+    expect(estimateAiCostUsdMicros("gemini-3.8-flash", -100, -0.5)).toBe(0n);
+    expect(estimateAiCostUsdMicros("gemini-3.8-flash", Number.NaN, 1_000_000)).toBe(3_750_000n);
+    expect(estimateAiCostUsdMicros("gemini-3.8-flash", 1_000_000, Number.POSITIVE_INFINITY)).toBe(750_000n);
+    // Float token counts: 1.5 * 0.75 + 2.7 * 3.75 = 11.25 -> ceil = 12n.
+    expect(estimateAiCostUsdMicros("gemini-3.8-flash", 1.5, 2.7)).toBe(12n);
+    expect(estimateAiCostUsdMicros("gemini-3.8-flash", -5.5, 1.2)).toBe(5n);
+  });
+
   it("releases reservations only for definitive provider rejections", () => {
     expect(providerDefinitelyRejected(new Error("Gemini API error: HTTP 401 invalid key"))).toBe(true);
     expect(providerDefinitelyRejected(new Error("LLM API error: HTTP 429 rate limited"))).toBe(true);

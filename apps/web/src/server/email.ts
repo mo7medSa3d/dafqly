@@ -47,6 +47,14 @@ function getPooledTransport(smtpUrl: string): Transporter {
   return transport;
 }
 
+function assertSafeEmailHeader(value: string, field: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || /[\r\n\0]/.test(trimmed)) {
+    throw new AppError("INVALID_EMAIL_HEADER", `Invalid email ${field}`, 400);
+  }
+  return trimmed;
+}
+
 export interface SendEmailInput {
   to: string;
   subject: string;
@@ -70,11 +78,14 @@ export async function sendEmail(
         socketTimeout: 15_000,
       } as unknown as Parameters<typeof nodemailer.createTransport>[0])
     : getPooledTransport(smtpUrl);
+  const from = assertSafeEmailHeader(overrides.from ?? safeEnv()?.EMAIL_FROM ?? "Dafqly <no-reply@localhost>", "from");
+  const to = assertSafeEmailHeader(input.to, "to");
+  const subject = assertSafeEmailHeader(input.subject, "subject");
   try {
     await transport.sendMail({
-      from: overrides.from ?? safeEnv()?.EMAIL_FROM ?? "Dafqly <no-reply@localhost>",
-      to: input.to,
-      subject: input.subject,
+      from,
+      to,
+      subject,
       text: input.text,
       html: input.html,
     });
@@ -91,6 +102,15 @@ export async function sendVerificationEmailLink(
   },
   overrides: { smtpUrl?: string; from?: string } = {},
 ): Promise<void> {
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(input.url);
+  } catch {
+    throw new AppError("INVALID_VERIFICATION_URL", "Invalid verification URL", 400);
+  }
+  if ((parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") || /[\r\n\0]/.test(input.url)) {
+    throw new AppError("INVALID_VERIFICATION_URL", "Invalid verification URL", 400);
+  }
   await sendEmail(
     {
       to: input.to,

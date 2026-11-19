@@ -136,7 +136,7 @@ export function forecastCashflow(input: {
 }): ForecastResult {
   for (const inv of input.openInvoices) assertSafeMinor(inv.outstandingMinor, `open invoice ${inv.id}`);
   for (const row of input.paidHistory) assertSafeMinor(row.amountMinor, `paid history ${row.debtorId}/${row.dueOn}`);
-  const weekCount = typeof input.weeks === "number" && Number.isInteger(input.weeks) && input.weeks > 0 ? input.weeks : 8;
+  const weekCount = typeof input.weeks === "number" && Number.isInteger(input.weeks) && input.weeks > 0 ? Math.min(input.weeks, 104) : 8;
   const weeks: ForecastWeek[] = Array.from({ length: weekCount }, (_, i) => ({
     weekStart: addDaysIso(input.today, i * 7), expectedMinor: 0, conservativeMinor: 0,
   }));
@@ -203,7 +203,9 @@ export function backtestForecast(input: {
   horizonWeeks?: number;
 }): BacktestResult {
   for (const row of input.history) assertSafeMinor(row.amountMinor, `backtest history ${row.debtorId}/${row.dueOn}`);
-  const horizon = input.horizonWeeks ?? 8;
+  const horizon = typeof input.horizonWeeks === "number" && Number.isInteger(input.horizonWeeks) && input.horizonWeeks > 0
+    ? Math.min(input.horizonWeeks, 104)
+    : 8;
   const training = input.history.filter((r) => r.paidOn <= input.cutoff);
   const future = input.history.filter((r) => r.paidOn > input.cutoff);
   const weeks: BacktestWeek[] = Array.from({ length: horizon }, (_, i) => ({

@@ -166,13 +166,13 @@ export async function getWorkspaceIntelligence(
           tx
             .select()
             .from(debtors)
-            .where(isNull(debtors.deletedAt))
+            .where(and(eq(debtors.tenantId, tenantId), isNull(debtors.deletedAt)))
             .orderBy(
               sql`(select coalesce(sum(${invoices.amountMinor} - ${invoices.paidMinor}), 0) from ${invoices} where ${invoices.debtorId} = ${debtors.id} and ${invoices.status} in ('open','partially_paid') and ${invoices.currency} = ${summary.currency}) desc`,
               asc(debtors.id),
             )
             .limit(500),
-          tx.select({ count: sql<number>`count(*)::int` }).from(debtors).where(isNull(debtors.deletedAt)),
+          tx.select({ count: sql<number>`count(*)::int` }).from(debtors).where(and(eq(debtors.tenantId, tenantId), isNull(debtors.deletedAt))),
           tx
             .select({
               id: invoices.id,
@@ -184,7 +184,7 @@ export async function getWorkspaceIntelligence(
               dueOn: invoices.dueOn,
               status: invoices.status,
             })
-            .from(invoices),
+            .from(invoices).where(eq(invoices.tenantId, tenantId)),
           tx
             .select({
               id: cheques.id,
@@ -194,20 +194,20 @@ export async function getWorkspaceIntelligence(
               status: cheques.status,
               amountMinor: cheques.amountMinor,
             })
-            .from(cheques),
+            .from(cheques).where(eq(cheques.tenantId, tenantId)),
           tx
             .select({ debtorId: disputes.debtorId })
             .from(disputes)
-            .where(eq(disputes.status, "open")),
+            .where(and(eq(disputes.tenantId, tenantId), eq(disputes.status, "open"))),
           tx
             .select({ debtorId: payments.debtorId })
             .from(payments)
-            .where(eq(payments.status, "claimed")),
-          tx.select({ debtorId: optOuts.debtorId }).from(optOuts),
+            .where(and(eq(payments.tenantId, tenantId), eq(payments.status, "claimed"))),
+          tx.select({ debtorId: optOuts.debtorId }).from(optOuts).where(eq(optOuts.tenantId, tenantId)),
           tx
             .select({ count: sql<number>`count(*)::int` })
             .from(messageIntents)
-            .where(and(eq(messageIntents.resolvedBy, "human"), eq(messageIntents.actionTaken, "human_inbox"))),
+            .where(and(eq(messageIntents.tenantId, tenantId), eq(messageIntents.resolvedBy, "human"), eq(messageIntents.actionTaken, "human_inbox"))),
         ]);
 
       return { debtorRows, debtorTotalRows, invoiceRows, chequeRows, disputeRows, claimRows, optOutRows, intentCountRows };
@@ -470,9 +470,9 @@ export async function listCopilotConversations(
   return withTenant(app, tenantId, async (tx) => {
     const [rows, [countRow]] = await Promise.all([
       tx.select({ id: aiConversations.id, title: aiConversations.title, updatedAt: aiConversations.updatedAt })
-        .from(aiConversations).where(eq(aiConversations.userId, userId))
+        .from(aiConversations).where(and(eq(aiConversations.tenantId, tenantId), eq(aiConversations.userId, userId)))
         .orderBy(desc(aiConversations.updatedAt)).limit(20),
-      tx.select({ n: sql<number>`count(*)` }).from(aiConversations).where(eq(aiConversations.userId, userId)),
+      tx.select({ n: sql<number>`count(*)` }).from(aiConversations).where(and(eq(aiConversations.tenantId, tenantId), eq(aiConversations.userId, userId))),
     ]);
     // F-18: the list is capped at the latest 20 — the drawer says so when
     // the total is larger, instead of silently hiding older conversations.
@@ -488,7 +488,7 @@ export async function getCopilotConversation(
 ): Promise<{ id: string; title: string; totalMessages: number; messages: { id: string; role: string; content: string; createdAt: string }[] }> {
   return withTenant(app, tenantId, async (tx) => {
     const [conversation] = await tx.select({ id: aiConversations.id, title: aiConversations.title })
-      .from(aiConversations).where(and(eq(aiConversations.id, conversationId), eq(aiConversations.userId, userId)));
+      .from(aiConversations).where(and(eq(aiConversations.tenantId, tenantId), eq(aiConversations.id, conversationId), eq(aiConversations.userId, userId)));
     if (!conversation) throw new AppError("NOT_FOUND", "AI conversation not found", 404);
     // F-18: the old code took the FIRST 60 messages (asc + limit), so a
     // long conversation silently lost its newest turns. Take the LATEST 60
@@ -513,10 +513,10 @@ export async function deleteCopilotConversation(
 ): Promise<{ ok: true }> {
   return withTenant(app, tenantId, async (tx) => {
     const [conversation] = await tx.select({ id: aiConversations.id })
-      .from(aiConversations).where(and(eq(aiConversations.id, conversationId), eq(aiConversations.userId, userId)));
+      .from(aiConversations).where(and(eq(aiConversations.tenantId, tenantId), eq(aiConversations.id, conversationId), eq(aiConversations.userId, userId)));
     if (!conversation) throw new AppError("NOT_FOUND", "AI conversation not found", 404);
-    await tx.delete(aiMessages).where(eq(aiMessages.conversationId, conversationId));
-    await tx.delete(aiConversations).where(and(eq(aiConversations.id, conversationId), eq(aiConversations.userId, userId)));
+    await tx.delete(aiMessages).where(and(eq(aiMessages.tenantId, tenantId), eq(aiMessages.conversationId, conversationId)));
+    await tx.delete(aiConversations).where(and(eq(aiConversations.tenantId, tenantId), eq(aiConversations.id, conversationId), eq(aiConversations.userId, userId)));
     return { ok: true };
   });
 }
@@ -529,7 +529,7 @@ export async function renameCopilotConversation(
   return withTenant(app, tenantId, async (tx) => {
     const [updated] = await tx.update(aiConversations)
       .set({ title: clean, updatedAt: new Date() })
-      .where(and(eq(aiConversations.id, conversationId), eq(aiConversations.userId, userId)))
+      .where(and(eq(aiConversations.tenantId, tenantId), eq(aiConversations.id, conversationId), eq(aiConversations.userId, userId)))
       .returning({ id: aiConversations.id, title: aiConversations.title });
     if (!updated) throw new AppError("NOT_FOUND", "AI conversation not found", 404);
     return updated;
@@ -540,11 +540,11 @@ export async function clearCopilotConversations(
   app: Db, tenantId: string, userId: string,
 ): Promise<{ ok: true }> {
   return withTenant(app, tenantId, async (tx) => {
-    const rows = await tx.select({ id: aiConversations.id }).from(aiConversations).where(eq(aiConversations.userId, userId));
+    const rows = await tx.select({ id: aiConversations.id }).from(aiConversations).where(and(eq(aiConversations.tenantId, tenantId), eq(aiConversations.userId, userId)));
     if (rows.length > 0) {
-      await tx.delete(aiMessages).where(inArray(aiMessages.conversationId, rows.map((r) => r.id)));
+      await tx.delete(aiMessages).where(and(eq(aiMessages.tenantId, tenantId), inArray(aiMessages.conversationId, rows.map((r) => r.id))));
     }
-    await tx.delete(aiConversations).where(eq(aiConversations.userId, userId));
+    await tx.delete(aiConversations).where(and(eq(aiConversations.tenantId, tenantId), eq(aiConversations.userId, userId)));
     return { ok: true };
   });
 }

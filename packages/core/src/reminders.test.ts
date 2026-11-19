@@ -56,7 +56,7 @@ describe("planReminders (F4 pure planner)", () => {
 });
 
 describe("isOptOutText (runs before any LLM — F4/F8)", () => {
-  it.each(["إيقاف", "ايقاف", "إيقاف التذكيرات", "STOP", "stop", "إيقاف.", " إيقاف ", "unsubscribe", "إلغاء"])("treats %s as opt-out", (t) => {
+  it.each(["إيقاف", "ايقاف", "إيقاف التذكيرات", "STOP", "stop", "إيقاف.", "إيقاف. ", "إيـــقاف", " إيقاف ", "unsubscribe", "إلغاء"])("treats %s as opt-out", (t) => {
     expect(isOptOutText(t)).toBe(true);
   });
   it.each(["هدفع بكرة", "شكرًا", "stop", "دفعت خلاص", "؟؟"])("does not misfire on %s (except exact stop)", (t) => {

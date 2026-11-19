@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { Queue, Worker } from "bullmq";
+import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { Redis } from "ioredis";
 import pino from "pino";
 import { parseEnv } from "@tahseel/core";
@@ -8,6 +8,7 @@ import { assertAppRole, createDb, createAppDb } from "@tahseel/db";
 import { SystemClock } from "@tahseel/providers";
 import { createEngineDeps } from "@tahseel/reminders";
 import {
+  InvalidJobPayloadError,
   processPlannerTick, processReplanInvoice, processReplanTenant,
   processDispatchTick, processMaintenanceTick,
 } from "./processors";
@@ -15,31 +16,42 @@ import {
 // Same monorepo root-.env convenience as the web app (no-op in production).
 (function loadRootEnv() {
   if (process.env.DATABASE_URL) return;
-  const candidate = resolve(process.cwd(), "../../.env");
-  if (!existsSync(candidate)) return;
-  for (const line of readFileSync(candidate, "utf8").split("\n")) {
-    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
-    if (!m || !m[1] || process.env[m[1]] !== undefined) continue;
-    let value = m[2] ?? "";
-    // dotenv semantics: quoted values keep everything up to the closing
-    // quote; unquoted values end at an inline " #" comment. (.env.example
-    // uses trailing comments, e.g. NEXT_PUBLIC_BRAND_FONT=off  # on only…)
-    if (value.startsWith('"')) {
-      const end = value.indexOf('"', 1);
-      value = end > 0 ? value.slice(1, end) : value.replace(/^"|"$/g, "");
-    } else {
-      value = value.split(" #")[0]?.trim() ?? "";
+  const candidates = [
+    resolve(process.cwd(), ".env"),
+    resolve(process.cwd(), "../../.env"),
+  ];
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    for (const rawLine of readFileSync(candidate, "utf8").split(/\r?\n/)) {
+      const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(rawLine);
+      if (!m || !m[1] || process.env[m[1]] !== undefined) continue;
+      let value = m[2] ?? "";
+      // dotenv semantics: quoted values keep everything up to the closing
+      // quote; unquoted values end at an inline " #" comment. (.env.example
+      // uses trailing comments, e.g. NEXT_PUBLIC_BRAND_FONT=off  # on only…)
+      if (value.startsWith('"') || value.startsWith("'")) {
+        const quote = value[0]!;
+        const end = value.indexOf(quote, 1);
+        value = end > 0 ? value.slice(1, end) : value.slice(1);
+      } else {
+        value = value.split(" #")[0]?.trim() ?? "";
+      }
+      process.env[m[1]] = value;
     }
-    process.env[m[1]] = value;
+    return;
   }
 })();
 
 const env = parseEnv(process.env); // fails fast on invalid env
-// §8 (M6): no PII in logs — any phone-shaped field is censored by pino's
-// redactor before it can reach stdout (see core maskPhone for display use).
+// §8 (M6): no PII or secrets in logs — phone-shaped and credential fields are
+// censored by pino's redactor before reaching stdout.
 const log = pino({
   level: env.LOG_LEVEL,
-  redact: ["phoneE164", "toE164", "debtorPhone", "phone", "waId", "*.phoneE164", "*.toE164", "*.phone"],
+  redact: [
+    "phoneE164", "toE164", "debtorPhone", "phone", "waId",
+    "*.phoneE164", "*.toE164", "*.phone",
+    "*.authorization", "*.password", "*.token", "*.accessToken", "*.secret",
+  ],
 });
 
 // Runtime tenant access must use the RLS-bound role. The owner URL is
@@ -68,9 +80,43 @@ const engine = createEngineDeps({
 });
 const deps = { clock: new SystemClock(), dryRun: env.DRY_RUN_MESSAGING, engine };
 
-const plannerQueue = new Queue("reminders-planner", { connection: queueConnection });
-const dispatcherQueue = new Queue("reminders-dispatcher", { connection: queueConnection });
-const maintenanceQueue = new Queue("maintenance", { connection: queueConnection });
+// BullMQ production lock tuning (>2x outbound HTTP timeout, explicit stall cap)
+// so I/O-heavy reminder/maintenance ticks do not prematurely stall and double-run.
+const WORKER_LOCK_OPTIONS = {
+  lockDuration: 60_000,
+  stalledInterval: 30_000,
+  maxStalledCount: 2,
+} as const;
+
+const SHUTDOWN_TIMEOUT_MS = 15_000;
+
+const plannerQueue = new Queue("reminders-planner", {
+  connection: queueConnection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 5_000 },
+    removeOnComplete: 50,
+    removeOnFail: 100,
+  },
+});
+const dispatcherQueue = new Queue("reminders-dispatcher", {
+  connection: queueConnection,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: { type: "exponential", delay: 2_000 },
+    removeOnComplete: 50,
+    removeOnFail: 100,
+  },
+});
+const maintenanceQueue = new Queue("maintenance", {
+  connection: queueConnection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 10_000 },
+    removeOnComplete: 50,
+    removeOnFail: 100,
+  },
+});
 plannerQueue.on("error", (err) => log.error({ err }, "planner queue error"));
 dispatcherQueue.on("error", (err) => log.error({ err }, "dispatcher queue error"));
 maintenanceQueue.on("error", (err) => log.error({ err }, "maintenance queue error"));
@@ -82,6 +128,38 @@ let plannerWorker: Worker | null = null;
 let dispatcherWorker: Worker | null = null;
 let maintenanceWorker: Worker | null = null;
 
+function jobDurationMs(job: Job | undefined): number | undefined {
+  if (!job?.processedOn) return undefined;
+  return Math.max(0, (job.finishedOn ?? Date.now()) - job.processedOn);
+}
+
+function logJobCompleted(label: string, job: Job, result: unknown): void {
+  log.info(
+    {
+      jobId: job.id,
+      jobName: job.name,
+      attemptsMade: job.attemptsMade,
+      durationMs: jobDurationMs(job),
+      result,
+    },
+    `${label} done`,
+  );
+}
+
+function logJobFailure(label: string, job: Job | undefined, err: Error): void {
+  log.error(
+    {
+      jobId: job?.id,
+      jobName: job?.name,
+      attemptsMade: job?.attemptsMade,
+      maxAttempts: job?.opts.attempts,
+      durationMs: jobDurationMs(job),
+      err,
+    },
+    `${label} failed`,
+  );
+}
+
 async function main(): Promise<void> {
   // Fail closed before any repeatable job can touch tenant data. A wrong
   // role silently disables PostgreSQL RLS and voids tenant isolation.
@@ -91,15 +169,22 @@ async function main(): Promise<void> {
   plannerWorker = new Worker(
     "reminders-planner",
     async (job) => {
-      if (job.name === "replan-invoice") {
-        return processReplanInvoice(deps, job.data as { tenantId: string; invoiceId: string });
+      try {
+        if (job.name === "replan-invoice") {
+          return await processReplanInvoice(deps, job.data as { tenantId: string; invoiceId: string });
+        }
+        if (job.name === "replan-tenant") {
+          return await processReplanTenant(deps, job.data as { tenantId: string });
+        }
+        return await processPlannerTick(deps);
+      } catch (err) {
+        if (err instanceof InvalidJobPayloadError) {
+          throw new UnrecoverableError(err.message);
+        }
+        throw err;
       }
-      if (job.name === "replan-tenant") {
-        return processReplanTenant(deps, job.data as { tenantId: string });
-      }
-      return processPlannerTick(deps);
     },
-    { connection: workerConnection, lockDuration: 120_000 },
+    { connection: workerConnection, concurrency: 2, ...WORKER_LOCK_OPTIONS },
   );
   dispatcherWorker = new Worker(
     "reminders-dispatcher",
@@ -107,27 +192,35 @@ async function main(): Promise<void> {
       const tenantId = (job.data as { tenantId?: string } | undefined)?.tenantId;
       return processDispatchTick(tenantId ? { ...deps, tenantId } : deps);
     },
-    { connection: workerConnection, lockDuration: 120_000 },
+    { connection: workerConnection, concurrency: 1, ...WORKER_LOCK_OPTIONS },
   );
-  maintenanceWorker = new Worker("maintenance", async () => processMaintenanceTick(deps), { connection: workerConnection, lockDuration: 120_000 });
-  plannerWorker.on("completed", (job, result) => log.info({ job: job.id, name: job.name, result }, "planner tick done"));
-  dispatcherWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "dispatch tick done"));
-  maintenanceWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "maintenance tick done"));
-  plannerWorker.on("failed", (_job, err) => log.error({ err }, "planner tick failed"));
-  dispatcherWorker.on("failed", (_job, err) => log.error({ err }, "dispatcher tick failed"));
-  maintenanceWorker.on("failed", (_job, err) => log.error({ err }, "maintenance tick failed"));
+  maintenanceWorker = new Worker(
+    "maintenance",
+    async () => processMaintenanceTick(deps),
+    { connection: workerConnection, concurrency: 1, ...WORKER_LOCK_OPTIONS },
+  );
+  plannerWorker.on("completed", (job, result) => logJobCompleted("planner tick", job, result));
+  dispatcherWorker.on("completed", (job, result) => logJobCompleted("dispatch tick", job, result));
+  maintenanceWorker.on("completed", (job, result) => logJobCompleted("maintenance tick", job, result));
+  plannerWorker.on("failed", (job, err) => logJobFailure("planner tick", job, err));
+  dispatcherWorker.on("failed", (job, err) => logJobFailure("dispatch tick", job, err));
+  maintenanceWorker.on("failed", (job, err) => logJobFailure("maintenance tick", job, err));
+  plannerWorker.on("stalled", (jobId) => log.warn({ jobId }, "planner job stalled"));
+  dispatcherWorker.on("stalled", (jobId) => log.warn({ jobId }, "dispatch job stalled"));
+  maintenanceWorker.on("stalled", (jobId) => log.warn({ jobId }, "maintenance job stalled"));
   plannerWorker.on("error", (err) => log.error({ err }, "planner worker error"));
   dispatcherWorker.on("error", (err) => log.error({ err }, "dispatcher worker error"));
   maintenanceWorker.on("error", (err) => log.error({ err }, "maintenance worker error"));
   // Repeatable jobs (BUILD_PLAN §3): planner nightly, dispatcher every minute.
-  // The engines behind them land in M2; the schedules are wired now.
-  await plannerQueue.add("nightly", {}, { repeat: { pattern: "0 2 * * *", tz: env.DEFAULT_TIMEZONE }, removeOnComplete: 50, removeOnFail: 50 });
-  await dispatcherQueue.add("every-minute", {}, { repeat: { every: 60_000 }, removeOnComplete: 50, removeOnFail: 50 });
+  await plannerQueue.add("nightly", {}, { repeat: { pattern: "0 2 * * *", tz: env.DEFAULT_TIMEZONE } });
+  await dispatcherQueue.add("every-minute", {}, { repeat: { every: 60_000 } });
   // M3/M6: nightly payload-retention purge (90-day tombstone) + failed webhook replay.
-  await maintenanceQueue.add("nightly", {}, { repeat: { pattern: "0 3 * * *", tz: env.DEFAULT_TIMEZONE }, removeOnComplete: 50, removeOnFail: 50 });
+  await maintenanceQueue.add("nightly", {}, { repeat: { pattern: "0 3 * * *", tz: env.DEFAULT_TIMEZONE } });
   // One immediate tick so a fresh boot proves the plumbing end to end.
-  await plannerQueue.add("boot-tick", {}, { removeOnComplete: 50, removeOnFail: 50 });
-  await dispatcherQueue.add("boot-tick", {}, { removeOnComplete: 50, removeOnFail: 50 });
+  // Minute-bucket jobId dedupes simultaneous multi-replica restarts.
+  const bootBucket = Math.floor(Date.now() / 60_000);
+  await plannerQueue.add("boot-tick", {}, { jobId: `boot-tick-${bootBucket}` });
+  await dispatcherQueue.add("boot-tick", {}, { jobId: `boot-tick-${bootBucket}` });
   // F-02: production + dry-run + a configured WhatsApp number is the silent
   // trap — the operator sees a working number and assumes messages go out,
   // but the dry-run renderer queues them and never sends. Warn loudly at
@@ -144,8 +237,12 @@ async function shutdown(signal: string, exitCode = 0): Promise<void> {
   shuttingDown = true;
   log.info({ signal }, "shutting down");
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   const closeTimeout = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, 10_000);
+    timer = setTimeout(() => {
+      timedOut = true;
+      resolve();
+    }, SHUTDOWN_TIMEOUT_MS);
     timer.unref();
   });
   await Promise.race([
@@ -161,17 +258,28 @@ async function shutdown(signal: string, exitCode = 0): Promise<void> {
       await Promise.allSettled([
         workerConnection.quit().catch(() => workerConnection.disconnect()),
         queueConnection.quit().catch(() => queueConnection.disconnect()),
-        appConnection.client.end(),
-        ownerConnection.client.end(),
+        appConnection.client.end({ timeout: 5 }),
+        ownerConnection.client.end({ timeout: 5 }),
       ]);
     })(),
     closeTimeout,
   ]);
   if (timer) clearTimeout(timer);
+  if (timedOut) {
+    log.warn({ signal, timeoutMs: SHUTDOWN_TIMEOUT_MS }, "graceful shutdown timed out; forcing exit");
+  }
   process.exit(exitCode);
 }
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("unhandledRejection", (reason) => {
+  log.fatal({ err: reason }, "unhandled promise rejection");
+  void shutdown("UNHANDLED_REJECTION", 1);
+});
+process.on("uncaughtException", (err) => {
+  log.fatal({ err }, "uncaught exception");
+  void shutdown("UNCAUGHT_EXCEPTION", 1);
+});
 
 main().catch((err) => {
   log.error({ err }, "worker failed to start");

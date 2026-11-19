@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * v0.9.0 premium redesign evidence: AFTER screenshots paired with the
@@ -7,7 +8,7 @@ import { mkdirSync } from "node:fs";
  * exactly one nav instance per testid at any viewport (sidebar and bottom
  * bar are one morphing DOM node) and no horizontal overflow on mobile.
  */
-const shotsDir = "e2e/screenshots/redesign";
+const shotsDir = join("e2e", "screenshots", "redesign");
 mkdirSync(shotsDir, { recursive: true });
 
 test.use({ reducedMotion: "reduce" });
@@ -15,8 +16,9 @@ test.use({ reducedMotion: "reduce" });
 /** Fixed shell bars render once, at the page edge, in full-page captures. */
 async function fullShot(page: Page, name: string) {
   await page.addStyleTag({ content: "aside { position: absolute !important; } :has(> aside) { position: relative !important; }" }).catch(() => {});
-  await page.waitForTimeout(600); // let client data settle before capturing
-  await page.screenshot({ path: `${shotsDir}/${name}`, fullPage: true });
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({ path: join(shotsDir, name), fullPage: true });
 }
 
 async function login(page: Page) {
@@ -41,7 +43,7 @@ test("redesign: single nav instance + no mobile overflow + AFTER shots (mobile)"
   await noOverflow(page);
   await fullShot(page, "after-dashboard-mobile.png");
   const reports = page.getByTestId("reports");
-  await reports.screenshot({ path: `${shotsDir}/after-reports-mobile.png` });
+  await reports.screenshot({ path: join(shotsDir, "after-reports-mobile.png") });
 
   for (const [route, name] of [["invoices", "invoices"], ["debtors", "debtors"], ["import", "import"], ["ledger-photo", "ledger-photo"], ["ai-inbox", "ai-inbox"], ["cheques", "cheques"]] as const) {
     await page.goto(`/ar/${route}`);
@@ -61,43 +63,55 @@ test("redesign: single nav instance + no mobile overflow + AFTER shots (mobile)"
   expect(res.ok()).toBeTruthy();
   const body = (await res.json()) as { result: { data: { path: string } } };
   const pub = await page.context().newPage();
-  await pub.goto(body.result.data.path);
-  await expect(pub.getByTestId("statement-page")).toBeVisible();
-  await noOverflow(pub);
-  await fullShot(pub, "after-statement-mobile.png");
-  await pub.close();
+  try {
+    await pub.goto(body.result.data.path);
+    await expect(pub.getByTestId("statement-page")).toBeVisible();
+    await noOverflow(pub);
+    await fullShot(pub, "after-statement-mobile.png");
+  } finally {
+    await pub.close();
+  }
 });
 
 test("redesign: AFTER shots (desktop + dark + onboarding)", async ({ page, browser }) => {
   const desk = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "ar-EG", reducedMotion: "reduce" });
-  const dp = await desk.newPage();
-  await dp.goto("/ar");
-  await fullShot(dp, "after-landing-desktop.png");
-  await dp.goto("/ar/login");
-  await fullShot(dp, "after-login-desktop.png");
-  await login(dp);
-  await fullShot(dp, "after-dashboard-desktop.png");
-  await dp.goto("/ar/invoices");
-  await fullShot(dp, "after-invoices-desktop.png");
-  await dp.goto("/ar/debtors");
-  await fullShot(dp, "after-debtors-desktop.png");
-  await desk.close();
+  try {
+    const dp = await desk.newPage();
+    await dp.goto("/ar");
+    await fullShot(dp, "after-landing-desktop.png");
+    await dp.goto("/ar/login");
+    await fullShot(dp, "after-login-desktop.png");
+    await login(dp);
+    await fullShot(dp, "after-dashboard-desktop.png");
+    await dp.goto("/ar/invoices");
+    await fullShot(dp, "after-invoices-desktop.png");
+    await dp.goto("/ar/debtors");
+    await fullShot(dp, "after-debtors-desktop.png");
+  } finally {
+    await desk.close();
+  }
 
   const dark = await browser.newContext({ colorScheme: "dark", viewport: { width: 1440, height: 900 }, locale: "ar-EG", reducedMotion: "reduce" });
-  const kp = await dark.newPage();
-  await kp.goto("/ar/login");
-  await fullShot(kp, "after-login-desktop-dark.png");
-  await login(kp);
-  await fullShot(kp, "after-dashboard-desktop-dark.png");
-  await dark.close();
+  try {
+    const kp = await dark.newPage();
+    await kp.goto("/ar/login");
+    await fullShot(kp, "after-login-desktop-dark.png");
+    await login(kp);
+    await fullShot(kp, "after-dashboard-desktop-dark.png");
+  } finally {
+    await dark.close();
+  }
 
   const darkMobile = await browser.newContext({ colorScheme: "dark", viewport: { width: 390, height: 844 }, locale: "ar-EG", reducedMotion: "reduce" });
-  const mp = await darkMobile.newPage();
-  await mp.goto("/ar/login");
-  await fullShot(mp, "after-login-mobile-dark.png");
-  await login(mp);
-  await fullShot(mp, "after-dashboard-mobile-dark.png");
-  await darkMobile.close();
+  try {
+    const mp = await darkMobile.newPage();
+    await mp.goto("/ar/login");
+    await fullShot(mp, "after-login-mobile-dark.png");
+    await login(mp);
+    await fullShot(mp, "after-dashboard-mobile-dark.png");
+  } finally {
+    await darkMobile.close();
+  }
 
   // Onboarding wizard (fresh user, no tenant yet).
   await page.goto("/ar/signup");

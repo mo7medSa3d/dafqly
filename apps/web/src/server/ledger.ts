@@ -185,7 +185,7 @@ export async function createDebtor(app: Db, tenantId: string, actor: string, inp
   try {
     return await withTenant(app, tenantId, async (tx) => {
       const [existing] = await tx.select().from(debtors)
-        .where(and(eq(debtors.phoneE164, normalized.e164), isNull(debtors.deletedAt)));
+        .where(and(eq(debtors.tenantId, tenantId), eq(debtors.phoneE164, normalized.e164), isNull(debtors.deletedAt)));
       if (existing) throw new AppError("DUPLICATE_PHONE", "A debtor with this phone already exists for this tenant", 409);
       const [row] = await tx.insert(debtors).values({
         tenantId, displayName: input.displayName, phoneE164: normalized.e164,
@@ -205,14 +205,14 @@ export async function createDebtor(app: Db, tenantId: string, actor: string, inp
 
 export async function updateDebtor(app: Db, tenantId: string, actor: string, debtorId: string, input: { displayName?: string; notes?: string | null; riskFlag?: boolean }): Promise<DebtorView> {
   return withTenant(app, tenantId, async (tx) => {
-    const [before] = await tx.select().from(debtors).where(and(eq(debtors.id, debtorId), isNull(debtors.deletedAt))).for("update");
+    const [before] = await tx.select().from(debtors).where(and(eq(debtors.tenantId, tenantId), eq(debtors.id, debtorId), isNull(debtors.deletedAt))).for("update");
     if (!before) throw new AppError("NOT_FOUND", "Debtor not found", 404);
     const [row] = await tx.update(debtors).set({
       ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
       ...(input.notes !== undefined ? { notes: input.notes } : {}),
       ...(input.riskFlag !== undefined ? { riskFlag: input.riskFlag } : {}),
       updatedAt: new Date(),
-    }).where(eq(debtors.id, debtorId)).returning();
+    }).where(and(eq(debtors.tenantId, tenantId), eq(debtors.id, debtorId))).returning();
     await audit(tx, tenantId, actor, "debtor.updated", "debtor", debtorId, { displayName: before.displayName }, { displayName: row!.displayName });
     return toDebtorView(row!);
   });
@@ -221,9 +221,9 @@ export async function updateDebtor(app: Db, tenantId: string, actor: string, deb
 /** Soft-delete (F1 edge): history and audit are kept; the debtor leaves every list. */
 export async function softDeleteDebtor(app: Db, tenantId: string, actor: string, debtorId: string): Promise<void> {
   await withTenant(app, tenantId, async (tx) => {
-    const [before] = await tx.select().from(debtors).where(and(eq(debtors.id, debtorId), isNull(debtors.deletedAt))).for("update");
+    const [before] = await tx.select().from(debtors).where(and(eq(debtors.tenantId, tenantId), eq(debtors.id, debtorId), isNull(debtors.deletedAt))).for("update");
     if (!before) throw new AppError("NOT_FOUND", "Debtor not found", 404);
-    await tx.update(debtors).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(debtors.id, debtorId));
+    await tx.update(debtors).set({ deletedAt: new Date(), updatedAt: new Date() }).where(and(eq(debtors.tenantId, tenantId), eq(debtors.id, debtorId)));
     await audit(tx, tenantId, actor, "debtor.deleted", "debtor", debtorId, { displayName: before.displayName }, { deletedAt: "set" });
   });
 }
@@ -231,7 +231,7 @@ export async function softDeleteDebtor(app: Db, tenantId: string, actor: string,
 export async function listDebtorsPage2(app: Db, tenantId: string, opts: { cursor?: Cursor; limit?: number; search?: string }) {
   const limit = parseLimit(opts.limit);
   return withTenant(app, tenantId, async (tx) => {
-    const conditions = [isNull(debtors.deletedAt)];
+    const conditions = [eq(debtors.tenantId, tenantId), isNull(debtors.deletedAt)];
     if (opts.cursor) conditions.push(gt(debtors.id, opts.cursor.id));
     if (opts.search) conditions.push(or(ilike(debtors.displayName, likePattern(opts.search)), ilike(debtors.phoneE164, likePattern(opts.search)))!);
     const rows = await tx.select().from(debtors).where(and(...conditions)).orderBy(asc(debtors.id)).limit(limit + 1);
@@ -240,7 +240,7 @@ export async function listDebtorsPage2(app: Db, tenantId: string, opts: { cursor
     // F-15: the header aggregates are computed client-side from the loaded
     // page (first 200) — without a total the UI presented partial counts
     // as tenant totals. Count the same search, ignoring the cursor.
-    const countConditions = [isNull(debtors.deletedAt)];
+    const countConditions = [eq(debtors.tenantId, tenantId), isNull(debtors.deletedAt)];
     if (opts.search) countConditions.push(or(ilike(debtors.displayName, likePattern(opts.search)), ilike(debtors.phoneE164, likePattern(opts.search)))!);
     const [countRow] = await tx.select({ n: sql<number>`count(*)` }).from(debtors).where(and(...countConditions));
     const totalCount = Number(countRow?.n ?? 0);
@@ -256,7 +256,7 @@ export async function listDebtorsPage2(app: Db, tenantId: string, opts: { cursor
         paidMinor: invoices.paidMinor,
         status: invoices.status,
         currency: invoices.currency,
-      }).from(invoices).where(inArray(invoices.debtorId, debtorIds));
+      }).from(invoices).where(and(eq(invoices.tenantId, tenantId), inArray(invoices.debtorId, debtorIds)));
 
       for (const inv of invRows) {
         if (!statsMap[inv.debtorId]) {
@@ -408,6 +408,7 @@ export async function listInvoicesPage(app: Db, tenantId: string, filters: Invoi
     // The cursor is kept out of baseConditions so the F-15 total count
     // below counts the whole filtered set, not just the current page.
     const baseConditions = [
+      eq(invoices.tenantId, tenantId),
       filters.debtorId ? eq(invoices.debtorId, filters.debtorId) : undefined,
       filters.status ? eq(invoices.status, filters.status) : undefined,
       filters.search ? or(ilike(invoices.reference, likePattern(filters.search)), ilike(invoices.description, likePattern(filters.search))) : undefined,
@@ -452,7 +453,7 @@ export async function updateInvoice(app: Db, tenantId: string, actor: string, in
   let view: InvoiceView;
   try {
   view = await withTenant(app, tenantId, async (tx) => {
-    const [before] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for("update");
+    const [before] = await tx.select().from(invoices).where(and(eq(invoices.tenantId, tenantId), eq(invoices.id, invoiceId))).for("update");
     if (!before) throw new AppError("NOT_FOUND", "Invoice not found", 404);
     // H06: terminal invoices bypassed the status machine — a paid,
     // cancelled or written-off invoice could still be edited. Only the
@@ -482,7 +483,7 @@ export async function updateInvoice(app: Db, tenantId: string, actor: string, in
       ...(input.dueOn !== undefined ? { dueOn: input.dueOn } : {}),
       ...(input.issuedOn !== undefined ? { issuedOn: input.issuedOn } : {}),
       updatedAt: new Date(),
-    }).where(eq(invoices.id, invoiceId)).returning();
+    }).where(and(eq(invoices.tenantId, tenantId), eq(invoices.id, invoiceId))).returning();
     await audit(tx, tenantId, actor, "invoice.updated", "invoice", invoiceId,
       { amountMinor: before.amountMinor.toString(), status: before.status, dueOn: before.dueOn },
       { amountMinor: amountMinor.toString(), status, dueOn: row!.dueOn });
@@ -503,7 +504,7 @@ export async function updateInvoice(app: Db, tenantId: string, actor: string, in
 
 export async function transitionInvoice(app: Db, tenantId: string, actor: string, invoiceId: string, to: InvoiceStatus, today = "9999-12-31"): Promise<InvoiceView> {
   const view = await withTenant(app, tenantId, async (tx) => {
-    const [before] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for("update");
+    const [before] = await tx.select().from(invoices).where(and(eq(invoices.tenantId, tenantId), eq(invoices.id, invoiceId))).for("update");
     if (!before) throw new AppError("NOT_FOUND", "Invoice not found", 404);
     if (!canTransition(before.status, to)) {
       throw new AppError("ILLEGAL_TRANSITION", `Cannot move invoice from ${before.status} to ${to}`, 409);
@@ -515,7 +516,7 @@ export async function transitionInvoice(app: Db, tenantId: string, actor: string
       }
     }
     const [row] = await tx.update(invoices).set({ status: to, updatedAt: new Date() })
-      .where(eq(invoices.id, invoiceId)).returning();
+      .where(and(eq(invoices.tenantId, tenantId), eq(invoices.id, invoiceId))).returning();
     await audit(tx, tenantId, actor, to === "disputed" ? "invoice.disputed" : "invoice.status_changed", "invoice", invoiceId,
       { status: before.status }, { status: to });
     const settings = await tenantSettings(tx, tenantId);
@@ -684,7 +685,7 @@ export async function recordPayment(app: Db, tenantId: string, actor: string, in
     const firstOpen = openInvoices.find((i) =>
       (i.status === "open" || i.status === "partially_paid") && i.amountMinor > i.paidMinor,
     );
-    const settings = input.currency || selectedAllocationCurrency || !firstOpen
+    const settings = input.currency || selectedAllocationCurrency || firstOpen
       ? null
       : await tenantSettings(tx, tenantId);
     const currency = input.currency ?? selectedAllocationCurrency ?? firstOpen?.currency ?? settings?.currency ?? "EGP";
@@ -845,17 +846,17 @@ export interface LedgerReconciliationView {
  */
 export async function getLedgerReconciliation(app: Db, tenantId: string): Promise<LedgerReconciliationView> {
   return withTenant(app, tenantId, async (tx) => {
-    const invs = await tx.select({ id: invoices.id, paidMinor: invoices.paidMinor, currency: invoices.currency }).from(invoices);
+    const invs = await tx.select({ id: invoices.id, paidMinor: invoices.paidMinor, currency: invoices.currency }).from(invoices).where(eq(invoices.tenantId, tenantId));
     const pays = await tx.select({
       id: payments.id, debtorId: payments.debtorId, amountMinor: payments.amountMinor,
       currency: payments.currency, status: payments.status, createdAt: payments.createdAt,
-    }).from(payments);
+    }).from(payments).where(eq(payments.tenantId, tenantId));
     const allocs = await tx.select({
       paymentId: paymentAllocations.paymentId, invoiceId: paymentAllocations.invoiceId, amountMinor: paymentAllocations.amountMinor,
-    }).from(paymentAllocations);
+    }).from(paymentAllocations).where(eq(paymentAllocations.tenantId, tenantId));
     const debts = await tx.select({
       id: debtors.id, creditMinor: debtors.creditMinor, creditCurrency: debtors.creditCurrency,
-    }).from(debtors);
+    }).from(debtors).where(eq(debtors.tenantId, tenantId));
     const r = reconcileLedger(
       invs,
       pays.map((p) => ({ ...p, createdAt: p.createdAt.toISOString() })),

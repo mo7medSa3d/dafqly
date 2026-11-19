@@ -1,6 +1,61 @@
 import { formatCurrencyMinor, formatMoney, type SupportedCurrency } from "@tahseel/core";
 
 const NUMBER_LOCALE = "en-US";
+const MAX_FORMATTER_CACHE = 64;
+
+const DEFAULT_NUMBER_FMT = new Intl.NumberFormat(NUMBER_LOCALE, { numberingSystem: "latn" });
+const numberFormatterCache = new Map<string, Intl.NumberFormat>();
+const dateTimeFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function buildCacheKey(locale: string, options?: Record<string, unknown>): string {
+  if (!options) return locale;
+  const keys = Object.keys(options).sort();
+  let key = locale;
+  for (const k of keys) {
+    const v = options[k];
+    if (v !== undefined) key += `|${k}=${String(v)}`;
+  }
+  return key;
+}
+
+function getOrCreate<T>(cache: Map<string, T>, key: string, create: () => T): T {
+  const cached = cache.get(key);
+  if (cached) return cached;
+  if (cache.size >= MAX_FORMATTER_CACHE) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  const created = create();
+  cache.set(key, created);
+  return created;
+}
+
+/** Return a cached Intl.NumberFormat instance (bounded FIFO cache). */
+export function getNumberFormatter(
+  locale: string = NUMBER_LOCALE,
+  options?: Intl.NumberFormatOptions,
+): Intl.NumberFormat {
+  const key = buildCacheKey(locale, options as Record<string, unknown> | undefined);
+  return getOrCreate(numberFormatterCache, key, () => new Intl.NumberFormat(locale, options));
+}
+
+/** Return a cached Intl.DateTimeFormat instance (bounded FIFO cache). */
+export function getDateTimeFormatter(
+  locale: string,
+  options?: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat {
+  const key = buildCacheKey(locale, options as Record<string, unknown> | undefined);
+  return getOrCreate(dateTimeFormatterCache, key, () => new Intl.DateTimeFormat(locale, options));
+}
+
+/** Format a date/timestamp using a cached Intl.DateTimeFormat instance. */
+export function formatDateTime(
+  value: Date | number,
+  locale: string,
+  options?: Intl.DateTimeFormatOptions,
+): string {
+  return getDateTimeFormatter(locale, options).format(value);
+}
 
 /** Format a numeric value with consistent Western/Latin digits (0-9) in both Arabic and English. */
 export function formatNumber(
@@ -9,7 +64,8 @@ export function formatNumber(
   options?: Intl.NumberFormatOptions,
 ): string {
   if (typeof value === "number" && !Number.isFinite(value)) return "0";
-  return new Intl.NumberFormat(NUMBER_LOCALE, {
+  if (!options) return DEFAULT_NUMBER_FMT.format(value);
+  return getNumberFormatter(NUMBER_LOCALE, {
     ...options,
     numberingSystem: "latn",
   }).format(value);
@@ -39,17 +95,18 @@ export function formatCurrency(
   return formatMoney(minor, currency, { locale, digits: "latin" });
 }
 
+/** Safely convert a minor-unit value to bigint without throwing on floats, NaN, or malformed strings. */
+export function toSafeBigInt(minor: bigint | number | string | null | undefined): bigint {
+  if (typeof minor === "bigint") return minor;
+  if (typeof minor === "number") return Number.isFinite(minor) ? BigInt(Math.trunc(minor)) : 0n;
+  const trimmed = String(minor ?? "").trim();
+  return /^-?\d+$/.test(trimmed) ? BigInt(trimmed) : 0n;
+}
+
 /** Format a minor-unit monetary amount without currency symbol using Western/Latin digits. */
 export function formatCurrencyAmount(
   minor: bigint | number | string,
   currency: SupportedCurrency | string = "EGP",
 ): string {
-  let b = 0n;
-  if (typeof minor === "bigint") b = minor;
-  else if (typeof minor === "number") b = Number.isFinite(minor) ? BigInt(Math.trunc(minor)) : 0n;
-  else {
-    const trimmed = String(minor ?? "").trim();
-    b = /^-?\d+$/.test(trimmed) ? BigInt(trimmed) : 0n;
-  }
-  return formatCurrencyMinor(b, currency, { digits: "latin" });
+  return formatCurrencyMinor(toSafeBigInt(minor), currency, { digits: "latin" });
 }

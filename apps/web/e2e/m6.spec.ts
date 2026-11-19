@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import postgres from "postgres";
+import { isoDate } from "./helpers";
 
 /**
  * M6 pilot-ready (§12): timed onboarding — sign up -> wizard -> debtor +
@@ -37,7 +38,7 @@ test("M6 timed onboarding: sign-up to first scheduled reminder in under 5 minute
     displayName: `عميل م٦ ${stamp}`, phone: `01016${stamp}`,
   });
   const invoice = await trpcMutate<{ id: string }>(page, "invoices.create", {
-    debtorId: debtor.id, amount: "750.00", issuedOn: "2026-11-09", dueOn: "2026-11-19",
+    debtorId: debtor.id, amount: "750.00", issuedOn: isoDate(0), dueOn: isoDate(10),
   });
   // The planner hook (replanLater) is async: poll the real reminders table.
   const dbUrl = process.env.DATABASE_URL;
@@ -45,15 +46,14 @@ test("M6 timed onboarding: sign-up to first scheduled reminder in under 5 minute
   const sql = postgres(dbUrl!);
   let scheduled = 0;
   try {
-    for (let i = 0; i < 30 && scheduled === 0; i++) {
+    await expect.poll(async () => {
       const rows = await sql<{ n: number }[]>`select count(*)::int as n from reminders where invoice_id = ${invoice.id} and status = 'scheduled'`;
-      scheduled = rows[0]!.n;
-      if (scheduled === 0) await page.waitForTimeout(1000);
-    }
+      scheduled = rows[0]?.n ?? 0;
+      return scheduled;
+    }, { timeout: 30_000, intervals: [250, 500, 1000] }).toBeGreaterThan(0);
   } finally {
     await sql.end();
   }
-  expect(scheduled).toBeGreaterThan(0);
   const elapsedMs = Date.now() - started;
   console.log(`M6 onboarding elapsed: ${elapsedMs}ms (sign-up -> wizard -> debtor + invoice -> ${scheduled} reminder(s) scheduled)`);
   expect(elapsedMs).toBeLessThan(5 * 60 * 1000);

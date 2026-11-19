@@ -25,6 +25,8 @@ describe("cursor pagination", () => {
     expect(parseLimit("500")).toBe(100);
     expect(parseLimit("0")).toBe(1);
     expect(parseLimit("abc")).toBe(25);
+    expect(parseLimit(Infinity)).toBe(25);
+    expect(() => decodeCursor(encodeCursor({ id: "" }))).toThrow(AppError);
   });
 });
 describe("idempotency guard for send-triggering POSTs", () => {
@@ -37,5 +39,8 @@ describe("idempotency guard for send-triggering POSTs", () => {
       expect(toApiErrorBody(e).error.code).toBe("IDEMPOTENCY_KEY_REQUIRED");
     }
     expect(() => requireIdempotencyKey(new Headers({ "idempotency-key": "x" }))).toThrow(AppError);
+    // A real Headers refuses control chars at construction, so stub get() to
+    // exercise the guard's own control-char branch.
+    expect(() => requireIdempotencyKey({ get: () => "abc12345\x00key" } as unknown as Headers)).toThrow(AppError);
   });
 });

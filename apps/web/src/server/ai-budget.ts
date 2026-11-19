@@ -71,8 +71,10 @@ export function estimateAiCostUsdMicros(model: string, inputTokens: number, outp
     inputRate = 0.59; outputRate = 0.79;
   }
   if (override) { inputRate = override.input; outputRate = override.output; }
+  const safeIn = Number.isFinite(inputTokens) ? Math.max(0, inputTokens) : 0;
+  const safeOut = Number.isFinite(outputTokens) ? Math.max(0, outputTokens) : 0;
   // USD per million tokens * tokens = micro-USD (one USD = one million micros).
-  return BigInt(Math.ceil(Math.max(0, inputTokens) * inputRate + Math.max(0, outputTokens) * outputRate));
+  return BigInt(Math.ceil(safeIn * inputRate + safeOut * outputRate));
 }
 
 export async function reserveGlobalAiBudget(
@@ -119,8 +121,10 @@ export async function settleGlobalAiBudget(
   await owner.transaction(async (tx) => {
     const [usage] = await tx.select().from(aiGlobalUsage).where(eq(aiGlobalUsage.requestKey, requestKey)).for("update");
     if (!usage || usage.status !== "reserved") return;
+    const safeInputTokens = Number.isFinite(inputTokens) ? Math.max(0, Math.trunc(inputTokens)) : 0;
+    const safeOutputTokens = Number.isFinite(outputTokens) ? Math.max(0, Math.trunc(outputTokens)) : 0;
     const meteredModel = model ?? usage.model;
-    const actual = estimateAiCostUsdMicros(meteredModel, inputTokens, outputTokens);
+    const actual = estimateAiCostUsdMicros(meteredModel, safeInputTokens, safeOutputTokens);
     const targetPeriod = budgetPeriod ?? monthStart(usage.createdAt);
     const [budget] = await tx.select().from(aiGlobalBudget).where(eq(aiGlobalBudget.singletonId, 1)).for("update");
     if (budget?.periodStart === targetPeriod) {
@@ -136,7 +140,7 @@ export async function settleGlobalAiBudget(
       }).where(eq(aiGlobalBudget.singletonId, 1));
     }
     await tx.update(aiGlobalUsage).set({
-      status: "settled", actualUsdMicros: actual, inputTokens, outputTokens,
+      status: "settled", actualUsdMicros: actual, inputTokens: safeInputTokens, outputTokens: safeOutputTokens,
       model: model ?? usage.model, updatedAt: new Date(),
     }).where(eq(aiGlobalUsage.id, usage.id));
   });
@@ -178,8 +182,8 @@ function usageFromResult(result: unknown): { inputTokens: number; outputTokens: 
   if (!result || typeof result !== "object") return { inputTokens: 0, outputTokens: 0 };
   const value = result as { inputTokens?: unknown; outputTokens?: unknown; model?: unknown };
   return {
-    inputTokens: typeof value.inputTokens === "number" ? value.inputTokens : 0,
-    outputTokens: typeof value.outputTokens === "number" ? value.outputTokens : 0,
+    inputTokens: typeof value.inputTokens === "number" && Number.isFinite(value.inputTokens) ? Math.max(0, Math.trunc(value.inputTokens)) : 0,
+    outputTokens: typeof value.outputTokens === "number" && Number.isFinite(value.outputTokens) ? Math.max(0, Math.trunc(value.outputTokens)) : 0,
     model: typeof value.model === "string" ? value.model : undefined,
   };
 }

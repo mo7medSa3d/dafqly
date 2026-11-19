@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { AppError } from "@tahseel/core";
 import { sha256Of, sniffImageMime, stripImageExif } from "@tahseel/core/files-crypto";
@@ -51,7 +51,7 @@ export async function storeUpload(
   // written); the unique index + onConflictDoNothing below closes the
   // race between the lookup and the insert.
   const existing = await withTenant(app, tenantId, async (tx) => {
-    const [row] = await tx.select().from(files).where(eq(files.sha256, sha256)).limit(1);
+    const [row] = await tx.select().from(files).where(and(eq(files.tenantId, tenantId), eq(files.sha256, sha256))).limit(1);
     return row ?? null;
   });
   if (existing) {
@@ -78,7 +78,7 @@ export async function storeUpload(
         // Lost the race: another upload of the same bytes committed first.
         // Drop this blob (it is orphaned) and return the winner's row.
         await storage.delete(storageKey).catch(() => undefined);
-        const [winner] = await tx.select().from(files).where(eq(files.sha256, sha256)).limit(1);
+        const [winner] = await tx.select().from(files).where(and(eq(files.tenantId, tenantId), eq(files.sha256, sha256))).limit(1);
         if (!winner) throw new AppError("UPLOAD_CONFLICT", "Upload conflicted with an identical file", 409);
         return { ...toView(winner), bytes: clean, deduped: true };
       }
@@ -97,7 +97,7 @@ export async function storeUpload(
 
 async function getFile(app: Db, tenantId: string, fileId: string): Promise<FileView> {
   return withTenant(app, tenantId, async (tx) => {
-    const [row] = await tx.select().from(files).where(eq(files.id, fileId));
+    const [row] = await tx.select().from(files).where(and(eq(files.tenantId, tenantId), eq(files.id, fileId)));
     if (!row) throw new AppError("NOT_FOUND", "File not found", 404);
     return toView(row);
   });

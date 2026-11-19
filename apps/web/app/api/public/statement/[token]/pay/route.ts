@@ -1,3 +1,6 @@
+import { AppError, toApiErrorBody } from "@tahseel/core";
+import { clientIp, rateLimit } from "@/server/rate-limit";
+
 const HEADERS = { "X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store" };
 
 /**
@@ -5,7 +8,15 @@ const HEADERS = { "X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-stor
  * platform SaaS subscriptions in billing.ts. Debtors pay using the merchant's
  * offline paymentInstructions and upload a receipt on the statement portal.
  */
-export async function POST(): Promise<Response> {
+export async function POST(req: Request): Promise<Response> {
+  const ip = clientIp(req.headers);
+  const limit = rateLimit(`statement:pay:${ip}`, { limit: 30, windowSeconds: 60 });
+  if (!limit.allowed) {
+    return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), {
+      status: 429,
+      headers: { ...HEADERS, "Retry-After": String(limit.retryAfterSeconds) },
+    });
+  }
   return Response.json(
     {
       error: {

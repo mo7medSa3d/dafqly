@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { initTRPC, TRPCError } from "@trpc/server";
 import { AppError } from "@tahseel/core";
 import { z } from "zod";
@@ -6,11 +7,21 @@ import { appDb, ownerDb } from "./db";
 import { listTenantsForUser, todayInTimezone } from "./services";
 import { withAiTenantContext } from "./ai-budget";
 
+const REQUEST_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+
+/** Extract a safe incoming x-request-id or generate a UUID for log correlation. */
+export function resolveRequestId(headers: Headers): string {
+  const raw = headers.get("x-request-id")?.trim();
+  return raw && REQUEST_ID_RE.test(raw) ? raw : randomUUID();
+}
+
 export interface TrpcContext {
   user: { id: string; email: string; name: string; emailVerified: boolean } | null;
   headers: Headers;
   appDb: ReturnType<typeof appDb>;
   ownerDb: ReturnType<typeof ownerDb>;
+  /** Sanitized x-request-id or generated UUID (optional for legacy test callers). */
+  requestId?: string;
 }
 
 export async function createTrpcContext(headers: Headers): Promise<TrpcContext> {
@@ -22,15 +33,29 @@ export async function createTrpcContext(headers: Headers): Promise<TrpcContext> 
     headers,
     appDb: appDb(),
     ownerDb: ownerDb(),
+    requestId: resolveRequestId(headers),
   };
 }
 
 const t = initTRPC.context<TrpcContext>().create({
   // Uniform API error shape on the wire: preserve shape.code as numeric JSON-RPC code
   // for @trpc/client deserialization, and provide semantic app error codes in data.
-  errorFormatter({ shape, error }) {
+  errorFormatter({ shape, error, ctx, path, type }) {
     const appErr = error.cause instanceof AppError ? error.cause : undefined;
     const zodIssues = error.cause instanceof z.ZodError ? error.cause.issues : undefined;
+    const isUnexpected5xx = error.code === "INTERNAL_SERVER_ERROR" && !zodIssues && (!appErr || appErr.status >= 500);
+    if (isUnexpected5xx) {
+      const requestId = ctx?.requestId ?? (ctx?.headers ? resolveRequestId(ctx.headers) : null);
+      console.error(JSON.stringify({
+        level: "error",
+        event: "trpc.internal_error",
+        requestId,
+        path: path ?? shape.data?.path ?? null,
+        type,
+        code: appErr?.code ?? error.code,
+        message: error.cause instanceof Error ? error.cause.message : error.message,
+      }));
+    }
     const isProdInternal = process.env.NODE_ENV === "production" && error.code === "INTERNAL_SERVER_ERROR" && !appErr && !zodIssues;
     return {
       ...shape,

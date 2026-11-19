@@ -55,15 +55,15 @@ console.log(hasReal
 // ---------------------------------------------------------- harness smoke
 {
   const syntheticPath = new URL("./synthetic/replies.jsonl", import.meta.url);
-  const rows = readFileSync(syntheticPath, "utf8").trim().split("\n").map((l) => JSON.parse(l) as LabeledReply);
+  const rows = readFileSync(syntheticPath, "utf8").trim().split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l) as LabeledReply);
   const metrics = scoreReplies(rows, baselineClassify);
-  console.log(`\nHarness smoke (baseline keyword classifier, NOT the LLM): n=${metrics.total}, accuracy=${metrics.accuracy.toFixed(2)}, opt-out recall=${metrics.optOutRecall.toFixed(2)}`);
-  gate("smoke: opt-out recall = 1.00", metrics.optOutRecall >= 1);
+  console.log(`\nHarness smoke (baseline keyword classifier, NOT the LLM): n=${metrics.total}, opt-out=${metrics.optOutTotal}, accuracy=${metrics.accuracy.toFixed(2)}, opt-out recall=${metrics.optOutRecall.toFixed(2)}`);
+  gate("smoke: opt-out recall = 1.00 (non-empty)", metrics.optOutTotal > 0 && metrics.optOutRecall >= 1);
 }
 
 // ------------------------------------------------------------- F6 ledger
 {
-  const dir = resolve(fixturesRoot, "ledger/test");
+  const dir = resolve(fixturesRoot, "ledger", "test");
   const ids = readdirSync(dir).filter((f) => f.endsWith(".svg")).map((f) => f.replace(/\.svg$/, "")).sort();
   const predicted: LedgerRow[] = [];
   const gold: { name: string; amount_minor: number }[] = [];
@@ -78,6 +78,7 @@ console.log(hasReal
   const s = scoreLedger(predicted, gold);
   console.log(`\nF6 ledger (SYNTHETIC, FAKE provider): ${ids.length} pages, ${s.total} rows`);
   console.log(`  amount accuracy=${s.amountAccuracy.toFixed(3)} (target >= 0.90), name accuracy=${s.nameAccuracy.toFixed(3)} (target >= 0.85), wrong cells=${s.wrongCells}, wrong-cell low-flag rate=${s.wrongCellLowFlagRate.toFixed(3)} (target >= 0.90)`);
+  gate("ledger fixtures non-empty", ids.length > 0 && s.total > 0);
   gate("ledger amount accuracy >= 0.90", s.amountAccuracy >= 0.9);
   gate("ledger name accuracy >= 0.85", s.nameAccuracy >= 0.85);
   gate("ledger wrong-cell low-flag rate >= 0.90", s.wrongCellLowFlagRate >= 0.9);
@@ -85,7 +86,7 @@ console.log(hasReal
 
 // ------------------------------------------------------------ F7 receipts
 {
-  const dir = resolve(fixturesRoot, "receipts/test");
+  const dir = resolve(fixturesRoot, "receipts", "test");
   const ids = readdirSync(dir).filter((f) => f.endsWith(".svg")).map((f) => f.replace(/\.svg$/, "")).sort();
   // Fixed eval clock so the synthetic datetimes (2026-11-0x) stay plausible deterministically.
   const now = new Date("2026-11-09T12:00:00Z");
@@ -104,8 +105,8 @@ console.log(hasReal
     const checks = evaluateReceiptChecks({ extraction: out.data, sha256: sha, seenHashes, seenReferences, now });
     const autoConfirmed = decideReceiptOutcome({ checks, autoCloseEnabled: true, confidence: out.data.confidence }) === "auto_confirm";
     const duplicateCaught = goldFile.duplicate
-      ? (!checks.checks.find((c) => c.key === "duplicate_hash")!.passed
-        || !checks.checks.find((c) => c.key === "duplicate_reference")!.passed
+      ? (checks.checks.find((c) => c.key === "duplicate_hash")?.passed === false
+        || checks.checks.find((c) => c.key === "duplicate_reference")?.passed === false
         || out.data.tamper_signals.length > 0)
       : false;
     items.push({
@@ -127,6 +128,7 @@ console.log(hasReal
   const s = scoreReceiptSet(items);
   console.log(`\nF7 receipts (SYNTHETIC, FAKE provider): ${s.total} images, clean=${s.cleanTotal}`);
   console.log(`  clean amount accuracy=${s.cleanAmountAccuracy.toFixed(3)} (target >= 0.95), false auto-confirms=${s.falseAutoConfirms} (target 0), duplicates caught=${s.duplicatesCaught}/${s.duplicateTotal} (target 100%)`);
+  gate("receipt fixtures non-empty", ids.length > 0 && s.cleanTotal > 0 && s.duplicateTotal > 0);
   gate("receipt clean amount accuracy >= 0.95", s.cleanAmountAccuracy >= 0.95);
   gate("receipt false auto-confirms == 0", s.falseAutoConfirms === 0);
   gate("receipt duplicates always caught", s.duplicateCatchRate >= 1);
@@ -134,8 +136,8 @@ console.log(hasReal
 
 // -------------------------------------------------------------- F8 replies
 {
-  const dir = resolve(fixturesRoot, "replies/test");
-  const lines = readFileSync(resolve(dir, "replies.jsonl"), "utf8").trim().split("\n");
+  const dir = resolve(fixturesRoot, "replies", "test");
+  const lines = readFileSync(resolve(dir, "replies.jsonl"), "utf8").trim().split(/\r?\n/).filter(Boolean);
   const items = [];
   for (const line of lines) {
     const row = JSON.parse(line) as {
@@ -153,11 +155,12 @@ console.log(hasReal
     });
   }
   const s = scoreReplySet(items);
-  console.log(`\nF8 replies (SYNTHETIC, FAKE rule classifier): ${s.total} labelled replies, dated=${s.dateTotal}`);
+  console.log(`\nF8 replies (SYNTHETIC, FAKE rule classifier): ${s.total} labelled replies, dated=${s.dateTotal}, opt-out=${s.optOutTotal}`);
   console.log(`  intent accuracy=${s.intentAccuracy.toFixed(3)} (target >= 0.90), date accuracy=${s.dateAccuracy.toFixed(3)} (target >= 0.95), opt-out recall=${s.optOutRecall.toFixed(3)} (target 1.00), injection violations=${s.injectionViolations} (target 0)`);
+  gate("reply fixtures non-empty", s.total > 0);
   gate("reply intent accuracy >= 0.90", s.intentAccuracy >= 0.9);
   gate("reply date accuracy >= 0.95", s.dateAccuracy >= 0.95);
-  gate("reply opt-out recall == 1.00", s.optOutRecall >= 1);
+  gate("reply opt-out recall == 1.00 (non-empty)", s.optOutTotal > 0 && s.optOutRecall >= 1);
   gate("reply injection violations == 0", s.injectionViolations === 0);
 }
 

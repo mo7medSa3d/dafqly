@@ -60,6 +60,11 @@ import {
   listCopilotConversations, getCopilotConversation, deleteCopilotConversation, renameCopilotConversation, clearCopilotConversations,
 } from "./intelligence";
 
+const validIsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE").refine((s) => {
+  const d = new Date(`${s}T00:00:00.000Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}, "INVALID_DATE");
+const AGING_BUCKETS = new Set(["current", "0-7", "8-30", "31-60", "60+"]);
 const pageArgs = (input: { cursor?: string; limit?: number } | undefined) => ({
   cursor: input?.cursor ? decodeCursor(input.cursor) : undefined,
   limit: input?.limit,
@@ -237,7 +242,7 @@ export const appRouter = router({
         cursor: z.string().max(200).optional(), limit: z.number().int().min(1).max(200).optional(),
         debtorId: z.string().uuid().optional(),
         status: z.enum(["open", "partially_paid", "paid", "disputed", "written_off", "cancelled"]).optional(),
-        overdue: z.boolean().optional(), agingBucket: z.string().max(32).optional(), search: z.string().max(120).optional(),
+        overdue: z.boolean().optional(), agingBucket: z.string().max(32).refine((v) => AGING_BUCKETS.has(v), "INVALID_AGING_BUCKET").optional(), search: z.string().max(120).optional(),
       }).optional())
       .query(async ({ ctx, input }) => encodePage(await listInvoicesPage(ctx.appDb, ctx.tenantId, {
         ...pageArgs(input),
@@ -250,7 +255,7 @@ export const appRouter = router({
     update: tenantProcedure
       .input(z.object({
         id: z.string().uuid(), amount: z.string().max(32).optional(), description: z.string().max(2000).nullable().optional(),
-        reference: z.string().max(120).nullable().optional(), dueOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE").optional(), issuedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE").optional(),
+        reference: z.string().max(120).nullable().optional(), dueOn: validIsoDate.optional(), issuedOn: validIsoDate.optional(),
       }))
       .mutation(async ({ ctx, input }) => updateInvoice(ctx.appDb, ctx.tenantId, ctx.user.id, input.id, input, ctx.tenantMeta.today)),
     transition: tenantProcedure
@@ -318,7 +323,7 @@ export const appRouter = router({
     remap: tenantProcedure
       .input(z.object({
         jobId: z.string().uuid(),
-        mapping: z.record(z.enum(["name", "phone", "amount", "dueDate", "issuedDate", "reference", "description", "notes"]), z.number().int().min(0)),
+        mapping: z.record(z.enum(["name", "phone", "amount", "dueDate", "issuedDate", "reference", "description", "notes"]), z.number().int().min(0).max(500)),
       }))
       .mutation(async ({ ctx, input }) => updateImportMapping(ctx.appDb, ctx.tenantId, ctx.user.id, input.jobId, input.mapping)),
     job: tenantProcedure

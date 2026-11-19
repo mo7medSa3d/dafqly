@@ -26,15 +26,21 @@ export function appDb(): Db {
   if (!globalForDb.app) {
     const app = createAppDb(appDatabaseUrl());
     globalForDb.app = app;
-    globalForDb.appRoleCheck = assertAppRole(app.client).catch((err: unknown) => {
+    const check = assertAppRole(app.client).catch((err: unknown) => {
       // Fail closed: drop the mis-roled connection so the next call retries
       // (and fails again) instead of serving tenant traffic as the owner.
-      globalForDb.app = undefined;
-      globalForDb.appRoleCheck = undefined;
+      if (globalForDb.app === app) {
+        globalForDb.app = undefined;
+        globalForDb.appRoleCheck = undefined;
+      }
       void app.client.end({ timeout: 1 }).catch(() => {});
       console.error("[db] APP_DATABASE_URL role check failed:", err instanceof Error ? err.message : err);
       throw err;
     });
+    // Prevent unhandledRejection when appDb() is called without assertAppDbReady();
+    // assertAppDbReady() still returns `check` directly and observes the rejection.
+    check.catch(() => {});
+    globalForDb.appRoleCheck = check;
   }
   return globalForDb.app.db;
 }

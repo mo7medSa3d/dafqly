@@ -22,7 +22,7 @@
   --background: oklch(0.99 0 0);
   --font-serif: Georgia, serif;
   --foreground: oklch(0 0 0);
-  --destructive: oklch(0.63 0.19 23.03);
+  --destructive: oklch(0.53 0.20 23.03);
   --shadow-blur: 2px;
   --shadow-color: hsl(0 0% 0%);
   --sidebar-ring: oklch(0 0 0);
@@ -123,7 +123,7 @@
   --status-overdue-bg: oklch(0.95 0.04 23);
   --status-disputed-fg: oklch(0.46 0.18 290);
   --status-disputed-bg: oklch(0.95 0.04 290);
-  --status-partial-fg: var(--chart-2);
+  --status-partial-fg: oklch(0.46 0.20 264);
   --status-partial-bg: oklch(0.95 0.04 264);
   --status-draft-fg: var(--muted-foreground);
   --status-draft-bg: var(--muted);
@@ -219,7 +219,7 @@
   --status-overdue-bg: oklch(0.24 0.07 23);
   --status-disputed-fg: oklch(0.78 0.14 290);
   --status-disputed-bg: oklch(0.24 0.06 290);
-  --status-partial-fg: var(--chart-2);
+  --status-partial-fg: oklch(0.78 0.14 260);
   --status-partial-bg: oklch(0.24 0.06 264);
   --status-draft-fg: var(--muted-foreground);
   --status-draft-bg: var(--muted);
@@ -298,7 +298,7 @@
     --status-overdue-bg: oklch(0.24 0.07 23);
     --status-disputed-fg: oklch(0.78 0.14 290);
     --status-disputed-bg: oklch(0.24 0.06 290);
-    --status-partial-fg: var(--chart-2);
+    --status-partial-fg: oklch(0.78 0.14 260);
     --status-partial-bg: oklch(0.24 0.06 264);
     --status-draft-fg: var(--muted-foreground);
     --status-draft-bg: var(--muted);

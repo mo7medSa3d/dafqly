@@ -132,6 +132,7 @@ describe("storage helpers", () => {
     expect(validateUpload({ mime: "application/pdf", size: 100 })).toMatchObject({ ok: false, code: "UNSUPPORTED_MIME" });
     expect(validateUpload({ mime: "image/png", size: MAX_UPLOAD_BYTES + 1 })).toMatchObject({ ok: false, code: "FILE_TOO_LARGE" });
     expect(validateUpload({ mime: "image/png", size: 0 })).toMatchObject({ ok: false, code: "EMPTY_FILE" });
+    expect(validateUpload({ mime: "image/png", size: Number.NaN })).toMatchObject({ ok: false, code: "EMPTY_FILE" });
   });
   it("computeSha256 is stable and the fake storage round-trips get/delete", async () => {
     const bytes = new TextEncoder().encode("receipt-bytes");
@@ -179,6 +180,7 @@ describe("S3CompatibleStorageProvider (SigV4) contract", () => {
     expect(signed.searchParams.get("X-Amz-Signature")).toMatch(/^[a-f0-9]{64}$/);
     await expect(store.getSignedUrl("tenant-a/receipt-1", 604_801)).rejects.toThrow(/7 days/i);
     await expect(store.get("../outside-tenant/object")).rejects.toThrow(/Invalid object storage key/);
+    await expect(store.get("tenant-a\\..\\secret")).rejects.toThrow(/Invalid object storage key/);
   });
 
   it("returns null for missing objects and rejects non-local HTTP endpoints", async () => {

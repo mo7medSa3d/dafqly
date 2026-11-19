@@ -51,6 +51,7 @@ export function ChequesClient() {
   const [msg, setMsg] = useState<{ text: string; isError?: boolean } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
   const todayIso = localTodayIso();
   const due30Iso = localTodayIso(30);
   const [matchedInfo, setMatchedInfo] = useState<{
@@ -93,7 +94,7 @@ export function ChequesClient() {
   }, [form.debtorId]);
 
   async function onPhoto(file: File) {
-    setBusy(true); setMsg(null); setMatchedInfo(null);
+    setBusy(true); setBusyKey("photo"); setMsg(null); setMatchedInfo(null);
     try {
       const out = await trpc.cheques.extractPhoto.mutate({
         fileName: file.name, mime: file.type || "image/png",
@@ -125,13 +126,13 @@ export function ChequesClient() {
       }
     } catch (err: unknown) {
       setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setBusyKey(null); }
   }
 
   async function onRegister(e: React.FormEvent) {
     e.preventDefault();
     if (busy || !form.debtorId || !form.number.trim() || !form.bank.trim() || !form.amount.trim()) return;
-    setBusy(true); setMsg(null);
+    setBusy(true); setBusyKey("register"); setMsg(null);
     try {
       await trpc.cheques.register.mutate({
         debtorId: form.debtorId,
@@ -153,28 +154,28 @@ export function ChequesClient() {
       await load();
     } catch (err: unknown) {
       setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setBusyKey(null); }
   }
 
   async function onTransition(id: string, to: string) {
     if (busy) return;
-    setBusy(true); setMsg(null);
+    setBusy(true); setBusyKey(`transition:${id}:${to}`); setMsg(null);
     try {
       await trpc.cheques.transition.mutate({ id, to: to as never });
       setMsg({ text: t("saved") });
       await load();
     } catch (err: unknown) {
       setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setBusyKey(null); }
   }
 
   async function onRunAlerts() {
     if (busy) return;
-    setBusy(true); setMsg(null);
+    setBusy(true); setBusyKey("alerts"); setMsg(null);
     try { await trpc.cheques.runAlerts.mutate(); await load(); }
     catch (err: unknown) {
       setMsg({ text: err instanceof Error && err.message ? err.message : t("failed"), isError: true });
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setBusyKey(null); }
   }
 
   const debtorMap = useMemo(() => new Map(debtors.map((d) => [d.id, d.displayName])), [debtors]);
@@ -198,7 +199,7 @@ export function ChequesClient() {
     return { held: toSorted(held), cleared: toSorted(cleared), bounced: toSorted(bounced) };
   }, [cheques]);
   const money = (minor: string, currency: string) => (
-    <span className="tnum" dir="ltr">
+    <span className="tnum tabular-nums" dir="ltr">
       {formatAmountOnly(BigInt(minor), { currency })} <span className="text-[11px] font-bold text-text-muted">{currency}</span>
     </span>
   );
@@ -221,8 +222,8 @@ export function ChequesClient() {
         {cheques.length > 0 && (() => {
           const { held, cleared, bounced } = portfolioSummary;
           const totals = (items: Array<[string, bigint]>) => items.length === 0
-            ? <span className="tnum text-lg font-extrabold text-text-muted">—</span>
-            : items.map(([currency, minor]) => <span key={currency} className="tnum text-lg font-extrabold text-primary" dir="ltr">{formatAmountOnly(minor, { currency })} <span className="text-xs font-bold text-text-muted">{currency}</span></span>);
+            ? <span className="tnum tabular-nums text-lg font-extrabold text-text-muted">—</span>
+            : items.map(([currency, minor]) => <span key={currency} className="tnum tabular-nums text-lg font-extrabold text-primary" dir="ltr">{formatAmountOnly(minor, { currency })} <span className="text-xs font-bold text-text-muted">{currency}</span></span>);
           return (
             <div data-testid="cheques-visual-summary" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="panel-shadow flex flex-col gap-1 rounded-xl border border-border bg-surface p-4">
@@ -245,7 +246,7 @@ export function ChequesClient() {
         <Panel
           title={t("alertsTitle")}
           icon={BellRinging}
-          actions={<button data-testid="cheque-run-alerts" onClick={onRunAlerts} disabled={busy} className={btnGhost}>{t("runAlerts")}</button>}
+          actions={<button type="button" data-testid="cheque-run-alerts" onClick={onRunAlerts} disabled={busy} aria-busy={busyKey === "alerts"} className={btnGhost}>{t("runAlerts")}</button>}
         >
           {loading ? (
             <LoadingState isAr={isAr} />
@@ -259,7 +260,7 @@ export function ChequesClient() {
               {alerts.map((a) => (
                 <li key={a.id} data-testid="cheque-alert" className="flex items-center gap-2.5 py-2.5 text-sm">
                   <BellRinging size={16} aria-hidden className="shrink-0 text-status-due-fg" />
-                  <span>{t(a.alertKind as "due_in_3_days" | "due_today")} — <span dir="ltr">{a.alertDate}</span></span>
+                  <span>{t(a.alertKind as "due_in_3_days" | "due_today")} — <span dir="ltr" className="tabular-nums">{a.alertDate}</span></span>
                 </li>
               ))}
             </ul>
@@ -270,7 +271,7 @@ export function ChequesClient() {
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-extrabold">{t("listTitle")}</h2>
-            <span className="rounded bg-callout px-3 py-1 text-xs font-bold text-primary">
+            <span className="tabular-nums rounded bg-callout px-3 py-1 text-xs font-bold text-primary">
               {cheques.length} {isAr ? "شيك" : "Cheques"}
             </span>
           </div>
@@ -285,7 +286,7 @@ export function ChequesClient() {
                 {cheques.map((c) => (
                   <li key={c.id} data-testid="cheque-row" className="flex flex-col gap-2.5 p-4 transition-colors hover:bg-callout/40 sm:p-5">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                      <span className="font-extrabold text-primary" dir="ltr">{c.number}</span>
+                      <span className="tabular-nums font-extrabold text-primary" dir="ltr">{c.number}</span>
                       <span className="text-text-muted">{c.bank}</span>
                       <span className="min-w-0 break-words font-semibold">{debtorName(c.debtorId)}</span>
                       <span className="rounded bg-surface-muted px-2.5 py-0.5 text-xs font-bold">{t(c.direction as "receivable" | "payable")}</span>
@@ -293,8 +294,8 @@ export function ChequesClient() {
                     </div>
                     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border/50 pt-2">
                       <div className="flex items-center gap-3">
-                        <span className="tnum text-base font-extrabold text-text">{money(c.amountMinor, c.currency)}</span>
-                        <span className="text-xs text-text-muted">{t("dueDate")}: <span dir="ltr" className="font-semibold text-text">{c.dueDate}</span></span>
+                        <span className="tnum tabular-nums text-base font-extrabold text-text">{money(c.amountMinor, c.currency)}</span>
+                        <span className="text-xs text-text-muted">{t("dueDate")}: <span dir="ltr" className="tabular-nums font-semibold text-text">{c.dueDate}</span></span>
                       </div>
                       <div className="flex flex-wrap gap-1.5">
                         {(NEXT[c.status] ?? []).map((n) => (
@@ -303,10 +304,11 @@ export function ChequesClient() {
                             type="button"
                             data-testid={`cheque-to-${n.to}`}
                             disabled={busy}
+                            aria-busy={busyKey === `transition:${c.id}:${n.to}`}
                             onClick={() => void onTransition(c.id, n.to)}
                             className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
                           >
-                            {t(n.label as "deposit")}
+                            {busyKey === `transition:${c.id}:${n.to}` ? `${t(n.label as "deposit")}…` : t(n.label as "deposit")}
                           </button>
                         ))}
                       </div>
@@ -334,13 +336,13 @@ export function ChequesClient() {
             <div className="grid gap-4 sm:grid-cols-2">
               {calendar.map((g) => (
                 <div key={g.weekStart} className="panel-shadow rounded-xl border border-border bg-surface p-4 sm:p-5">
-                  <p className="mb-2 font-bold text-sm text-text">{t("weekOf")} <span dir="ltr">{g.weekStart}</span></p>
+                  <p className="mb-2 font-bold text-sm text-text">{t("weekOf")} <span dir="ltr" className="tabular-nums">{g.weekStart}</span></p>
                   <ul className="flex flex-col divide-y divide-border">
                     {g.cheques.map((c) => (
                       <li key={c.id} className="flex flex-wrap items-center gap-2 py-2 text-xs sm:text-sm">
-                        <span dir="ltr" className="font-semibold">{c.number}</span>
-                        <span className="text-text-muted" dir="ltr">{c.dueDate}</span>
-                        <span className="ms-auto font-bold">{money(c.amountMinor, c.currency)}</span>
+                        <span dir="ltr" className="tabular-nums font-semibold">{c.number}</span>
+                        <span className="tabular-nums text-text-muted" dir="ltr">{c.dueDate}</span>
+                        <span className="ms-auto tabular-nums font-bold">{money(c.amountMinor, c.currency)}</span>
                       </li>
                     ))}
                   </ul>
@@ -355,7 +357,7 @@ export function ChequesClient() {
       <aside className="flex min-w-0 flex-col gap-6 lg:col-span-4">
         <Panel title={t("registerTitle")} icon={Checks}>
           <form onSubmit={onRegister} className="flex flex-col gap-4">
-            <label className="flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-border/80 bg-surface-muted/40 px-4 py-5 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/70">
+            <label aria-busy={busyKey === "photo"} className={cn("flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-border/80 bg-surface-muted/40 px-4 py-5 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/70 focus-within:border-primary focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2", busy && "cursor-not-allowed opacity-70")}>
               <Camera size={26} aria-hidden className="text-status-paid-fg dark:text-status-paid-fg" />
               <span className="font-bold text-sm">{t("photoTitle")}</span>
               <span className="text-xs text-text-muted">{t("photoHint")}</span>
@@ -403,11 +405,11 @@ export function ChequesClient() {
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
               <label className={labelCls}><span>{t("number")}</span>
-                <input data-testid="cheque-number" required maxLength={40} value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} className={inputCls} /></label>
+                <input data-testid="cheque-number" dir="ltr" required maxLength={40} value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} className={cn(inputCls, "tabular-nums")} /></label>
               <label className={labelCls}><span>{t("bank")}</span>
                 <input data-testid="cheque-bank" required maxLength={160} value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} className={inputCls} /></label>
               <label className={labelCls}><span>{t("amount")}</span>
-                <input data-testid="cheque-amount" required value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={inputCls} /></label>
+                <input data-testid="cheque-amount" dir="ltr" inputMode="decimal" required value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={cn(inputCls, "tabular-nums")} /></label>
               {form.direction === "receivable" && (
                 <label className={labelCls}><span>{t("invoice")}</span>
                   <select
@@ -429,13 +431,13 @@ export function ChequesClient() {
                   </select></label>
               )}
               <label className={labelCls}><span>{t("issueDate")}</span>
-                <input data-testid="cheque-issue" required type="date" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} className={inputCls} /></label>
+                <input data-testid="cheque-issue" dir="ltr" required type="date" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} className={cn(inputCls, "tabular-nums")} /></label>
               <label className={labelCls}><span>{t("dueDate")}</span>
-                <input data-testid="cheque-due" required type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className={inputCls} /></label>
+                <input data-testid="cheque-due" dir="ltr" required type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className={cn(inputCls, "tabular-nums")} /></label>
             </div>
 
-            <button data-testid="cheque-submit" type="submit" disabled={busy} className={`${btnPrimary} w-full justify-center`}>
-              {t("register")}
+            <button data-testid="cheque-submit" type="submit" disabled={busy} aria-busy={busyKey === "register"} className={`${btnPrimary} w-full justify-center`}>
+              {busyKey === "register" ? `${t("register")}…` : t("register")}
             </button>
           </form>
         </Panel>

@@ -80,7 +80,7 @@ function unwrapGeneratedText(value: string): string {
 // 1. Smart Header Mapper
 // -----------------------------------------------------------------------------
 export const mapHeadersInput = z.object({
-  headers: z.array(z.string().trim().min(1)).min(1).max(50),
+  headers: z.array(z.string().trim().min(1).max(200)).min(1).max(50),
 });
 export type MapHeadersInput = z.input<typeof mapHeadersInput>;
 
@@ -110,8 +110,8 @@ export async function mapWorkspaceHeaders(
 // -----------------------------------------------------------------------------
 export const analyzeReceiptInput = z.object({
   contentBase64: z.string().min(4).max(MAX_UPLOAD_BASE64_CHARS),
-  mime: z.string().default("image/jpeg"),
-  fileName: z.string().optional(),
+  mime: z.string().trim().min(3).max(80).default("image/jpeg"),
+  fileName: z.string().trim().max(200).optional(),
   extractedData: z.record(z.string(), z.unknown()).optional(),
   autoCloseOptIn: z.boolean().default(false),
 });
@@ -251,16 +251,16 @@ export async function analyzeWorkspaceReceipt(
 // -----------------------------------------------------------------------------
 export const generateNotificationInput = z.object({
   debtorId: z.string().uuid().optional(),
-  debtorName: z.string().min(1),
+  debtorName: z.string().trim().min(1).max(160),
   amountMinor: z.number().int().positive(),
-  currency: z.string().optional(),
+  currency: z.string().trim().max(8).optional(),
   daysOverdue: z.number().int().default(0),
-  dueDate: z.string().default(() => new Date().toISOString().slice(0, 10)),
+  dueDate: z.string().max(32).default(() => new Date().toISOString().slice(0, 10)),
   riskFlag: z.boolean().default(false),
-  reference: z.string().trim().optional(),
+  reference: z.string().trim().max(120).optional(),
   tone: z.enum(["friendly", "polite", "firm", "urgent"]).optional(),
   locale: z.enum(["ar", "en"]).default("ar"),
-  paymentLink: z.string().url().optional(),
+  paymentLink: z.string().url().max(2048).refine((u) => /^https?:\/\//i.test(u), "INVALID_PAYMENT_LINK").optional(),
   channel: z.enum(["whatsapp"]).default("whatsapp"),
 });
 export type GenerateNotificationInput = z.input<typeof generateNotificationInput>;
@@ -389,12 +389,15 @@ export async function generateWorkspaceNotification(
 // -----------------------------------------------------------------------------
 export const proposeInstallmentInput = z.object({
   debtorId: z.string().uuid().optional(),
-  debtorName: z.string().min(1).optional(),
+  debtorName: z.string().trim().min(1).max(160).optional(),
   totalMinor: z.number().int().positive().optional(),
   installmentsCount: z.union([z.literal(2), z.literal(3), z.literal(4), z.literal(6)]).default(3),
   interval: z.enum(["weekly", "biweekly", "monthly"]).default("monthly"),
   downPaymentPct: z.union([z.literal(0), z.literal(10), z.literal(20), z.literal(25), z.literal(30), z.literal(50)]).default(0),
-  startDateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  startDateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((s) => {
+    const d = new Date(`${s}T00:00:00.000Z`);
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+  }, "INVALID_DATE").optional(),
 });
 export type ProposeInstallmentInput = z.input<typeof proposeInstallmentInput>;
 
@@ -556,10 +559,10 @@ export async function proposeWorkspaceInstallmentPlan(
 export const suggestInboxReplyInput = z.object({
   intentId: z.string().uuid().optional(),
   debtorId: z.string().uuid().optional(),
-  intent: z.string().min(1),
-  debtorName: z.string().optional(),
+  intent: z.string().trim().min(1).max(80),
+  debtorName: z.string().trim().max(160).optional(),
   customerMessage: z.string().max(1000).optional(),
-  promisedDate: z.string().optional(),
+  promisedDate: z.string().max(32).optional(),
 });
 export type SuggestInboxReplyInput = z.input<typeof suggestInboxReplyInput>;
 

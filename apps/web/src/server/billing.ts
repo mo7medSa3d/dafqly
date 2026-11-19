@@ -130,6 +130,13 @@ export async function changePlan(
     if (!tenant) throw new AppError("NOT_FOUND", "Tenant not found", 404);
     const periodStart = localDateOf(now, tenant.timezone ?? "Africa/Cairo");
     const periodEnd = addMonthsIso(periodStart, 1);
+    const [existingForPeriod] = await tx.select({ status: subscriptionInvoices.status })
+      .from(subscriptionInvoices)
+      .where(and(eq(subscriptionInvoices.tenantId, tenantId), eq(subscriptionInvoices.periodStart, periodStart)))
+      .for("update");
+    if (existingForPeriod?.status === "paid") {
+      throw new AppError("PLAN_ALREADY_CHANGED", "A paid subscription invoice already exists for this billing date", 409);
+    }
     const id = uuidv7();
     const [row] = await tx.insert(subscriptionInvoices).values({
       id, tenantId, planKey: plan.key, periodStart, periodEnd,
@@ -202,7 +209,7 @@ export async function changePlan(
 
 export async function listSubscriptionInvoices(app: Db, tenantId: string): Promise<SubscriptionInvoiceView[]> {
   return withTenant(app, tenantId, async (tx) => {
-    const rows = await tx.select().from(subscriptionInvoices);
+    const rows = await tx.select().from(subscriptionInvoices).where(eq(subscriptionInvoices.tenantId, tenantId));
     return rows.map(toInvoiceView).sort((a, b) => (a.periodStart < b.periodStart ? 1 : -1));
   });
 }
@@ -237,7 +244,7 @@ export async function generateSubscriptionInvoices(owner: Db, app: Db, now: Date
       const existing = await tx
         .select({ id: subscriptionInvoices.id })
         .from(subscriptionInvoices)
-        .where(and(lte(subscriptionInvoices.periodStart, todayIso), gt(subscriptionInvoices.periodEnd, todayIso)))
+        .where(and(eq(subscriptionInvoices.tenantId, tenant.id), lte(subscriptionInvoices.periodStart, todayIso), gt(subscriptionInvoices.periodEnd, todayIso)))
         .limit(1);
       if (existing.length > 0) return 0;
       const rows = await tx.insert(subscriptionInvoices).values({
@@ -246,7 +253,7 @@ export async function generateSubscriptionInvoices(owner: Db, app: Db, now: Date
       }).onConflictDoNothing().returning();
       if (rows.length > 0) {
         await audit(tx, tenant.id, null, "subscription.invoice_generated", "subscription_invoice", rows[0]!.id, {
-          planKey: plan.key, amountMinor: plan.priceMinor, priceIsPlaceholder: true, job: true,
+          planKey: plan.key, amountMinor: plan.priceMinor, priceIsPlaceholder: PLAN_PRICES_ARE_PLACEHOLDERS, job: true,
         });
       }
       return rows.length;

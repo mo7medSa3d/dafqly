@@ -123,16 +123,23 @@ function stripPngMetadata(bytes: Uint8Array): Uint8Array {
 function stripWebpExif(bytes: Uint8Array): Uint8Array {
   if (bytes.length < 12 || ascii(bytes, 0, 4) !== "RIFF" || ascii(bytes, 8, 4) !== "WEBP") throw invalidImage();
   const kept: Uint8Array[] = [];
+  let strippedExif = false;
   let at = 12;
   while (at + 8 <= bytes.length) {
     const id = ascii(bytes, at, 4);
     const len = (bytes[at + 4]! | (bytes[at + 5]! << 8) | (bytes[at + 6]! << 16) | (bytes[at + 7]! << 24)) >>> 0;
     const padded = len + (len % 2);
     if (len < 0 || at + 8 + padded > bytes.length) throw invalidImage();
-    if (id !== "EXIF") kept.push(bytes.subarray(at, at + 8 + padded));
+    if (id === "EXIF") strippedExif = true;
+    else kept.push(bytes.subarray(at, at + 8 + padded));
     at += 8 + padded;
   }
-  if (at !== bytes.length) throw invalidImage();
+  if (at !== bytes.length || kept.length === 0) throw invalidImage();
+  if (strippedExif && kept[0] && kept[0].length >= 9 && ascii(kept[0], 0, 4) === "VP8X") {
+    const vp8x = new Uint8Array(kept[0]);
+    vp8x[8] = vp8x[8]! & ~0x08; // clear VP8X EXIF flag bit without mutating input
+    kept[0] = vp8x;
+  }
   const bodyLen = 4 + kept.reduce((sum, c) => sum + c.length, 0);
   const out = new Uint8Array(8 + bodyLen);
   out.set([0x52, 0x49, 0x46, 0x46], 0); // "RIFF"
@@ -170,7 +177,7 @@ export function decodeBase64Upload(b64: string, maxBytes: number = MAX_UPLOAD_BY
   if (!Number.isFinite(maxBytes) || maxBytes <= 0) throw new AppError("INVALID_UPLOAD", "Invalid max upload size", 400);
   let body = b64;
   const comma = b64.indexOf(",");
-  if (comma !== -1 && /^data:[^,]*;base64$/.test(b64.slice(0, comma))) body = b64.slice(comma + 1);
+  if (comma !== -1 && comma < 256 && /^data:[^,]*;base64$/i.test(b64.slice(0, comma))) body = b64.slice(comma + 1);
   // 4 encoded chars per 3 bytes, plus headroom for padding/newlines.
   const maxChars = maxBytes === MAX_UPLOAD_BYTES ? MAX_UPLOAD_BASE64_CHARS : Math.ceil(maxBytes / 3) * 4 + 64;
   if (body.length > maxChars) {

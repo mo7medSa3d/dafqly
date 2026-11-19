@@ -34,7 +34,8 @@ const clean = (v: string | undefined): string | undefined => (v && v.trim() ? v.
 
 /**
  * Resolves the single unified AI configuration from env/code inputs.
- * Priority: explicit `AI_API_KEY` -> provider-specific legacy key if set.
+ * Priority: explicit `AI_API_KEY` -> matching provider-specific legacy key only
+ * (never leaks one vendor's API key to a different provider's endpoint).
  */
 export function resolveAiConfig(e: AiEnvInput): UnifiedAiOptions {
   const provider = e.AI_PROVIDER.trim().toLowerCase() || "gemini";
@@ -42,10 +43,7 @@ export function resolveAiConfig(e: AiEnvInput): UnifiedAiOptions {
     clean(e.AI_API_KEY) ??
     (provider === "gemini" || provider === "google" ? clean(e.GEMINI_API_KEY) : undefined) ??
     (provider === "anthropic" || provider === "claude" ? clean(e.ANTHROPIC_API_KEY) : undefined) ??
-    (provider === "openrouter" ? clean(e.OPENROUTER_API_KEY) : undefined) ??
-    clean(e.GEMINI_API_KEY) ??
-    clean(e.ANTHROPIC_API_KEY) ??
-    clean(e.OPENROUTER_API_KEY);
+    (provider === "openrouter" ? clean(e.OPENROUTER_API_KEY) : undefined);
 
   const model = clean(e.AI_MODEL) ?? clean(e.AI_MODEL_AGENT) ?? clean(e.AI_MODEL_FAST) ?? clean(e.AI_MODEL_VISION);
   const baseUrl = clean(e.AI_BASE_URL);
@@ -74,7 +72,7 @@ export function hasUsableLlmConfig(e: AiEnvInput): boolean {
   const preset = PROVIDER_PRESETS[cfg.provider];
   const baseUrl = cfg.baseUrl ?? preset?.baseUrl ?? "";
   if (!baseUrl) return false;
-  const isLocal = /^(https?:\/\/)(localhost|127\.0\.0\.1|\[::1\]|host\.docker\.internal)/i.test(baseUrl);
+  const isLocal = /^(https?:\/\/)(localhost|127\.0\.0\.1|\[::1\]|host\.docker\.internal)(:\d+)?(\/|$)/i.test(baseUrl);
   return Boolean(cfg.apiKey) || isLocal || preset?.requiresKey === false;
 }
 

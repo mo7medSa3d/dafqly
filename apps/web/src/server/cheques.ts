@@ -1,11 +1,11 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import { AppError, canTransitionCheque, dueAlertKind, formatMoney, groupChequesByWeek, isTerminalStatus, normalizeCurrencyCode, parseMoney, planReversalAllocations, suggestDebtorByName,
   type ChequeAlertKind, type ChequeStatus, type ChequeExtraction,
 } from "@tahseel/core";
 import {
-  auditLog, chequeAlerts, cheques, debtors, invoices, paymentAllocations, payments, tenants, usageLedger,
+  auditLog, chequeAlerts, cheques, debtors, files, invoices, paymentAllocations, payments, tenants, usageLedger,
 } from "@tahseel/db/schema";
 import { withTenant, type Db } from "@tahseel/db";
 import type { OcrLlmProvider, StorageProvider } from "@tahseel/providers";
@@ -35,7 +35,10 @@ import { upsertNotificationInTx } from "./notifications";
 // F-06: same permissive pre-check as ledger.ts — KWD (3 decimals) is the
 // most permissive exponent; the currency-aware parse happens at the site.
 const moneyString = z.string().trim().min(1).refine((s) => { try { return parseMoney(s, "KWD") > 0n; } catch { return false; } }, "INVALID_AMOUNT");
-const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE");
+const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE").refine((s) => {
+  const d = new Date(`${s}T00:00:00.000Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}, "INVALID_DATE");
 
 export const registerChequeInput = z.object({
   debtorId: z.string().uuid(),
@@ -71,14 +74,18 @@ async function audit(tx: Db, tenantId: string, actor: string | null, action: str
 
 export async function registerCheque(app: Db, tenantId: string, actor: string, input: RegisterChequeInput): Promise<ChequeView> {
   return withTenant(app, tenantId, async (tx) => {
-    const [debtor] = await tx.select().from(debtors).where(and(eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
+    const [debtor] = await tx.select().from(debtors).where(and(eq(debtors.tenantId, tenantId), eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
     if (!debtor) throw new AppError("NOT_FOUND", "Debtor not found", 404);
+    if (input.imageFileId) {
+      const [img] = await tx.select({ id: files.id }).from(files).where(and(eq(files.tenantId, tenantId), eq(files.id, input.imageFileId))).limit(1);
+      if (!img) throw new AppError("NOT_FOUND", "Cheque image file not found", 404);
+    }
     // F-06: the cheque amount is parsed in the linked invoice's currency
     // when one is given, else the tenant default — the old pre-tx parse
     // could only assume EGP (a KWD cheque was 10× wrong).
     let currency: string | undefined;
     if (input.invoiceId) {
-      const [inv] = await tx.select().from(invoices).where(eq(invoices.id, input.invoiceId));
+      const [inv] = await tx.select().from(invoices).where(and(eq(invoices.tenantId, tenantId), eq(invoices.id, input.invoiceId)));
       if (!inv || inv.debtorId !== input.debtorId) throw new AppError("NOT_FOUND", "Invoice not found for this debtor", 404);
       if (isTerminalStatus(inv.status)) throw new AppError("INVALID_STATE", `Cannot link a cheque to a ${inv.status} invoice`, 409);
       currency = inv.currency;
@@ -105,7 +112,7 @@ export async function listCheques(app: Db, tenantId: string, opts: { status?: Ch
     const [tenant] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
     const defaultCurrency = tenant?.settings.currency ?? "EGP";
     const rows = await tx.select().from(cheques)
-      .where(opts.status ? eq(cheques.status, opts.status) : undefined);
+      .where(opts.status ? and(eq(cheques.tenantId, tenantId), eq(cheques.status, opts.status)) : eq(cheques.tenantId, tenantId));
     const invoiceIds = [...new Set(rows.flatMap((row) => row.invoiceId ? [row.invoiceId] : []))];
     const invoiceRows = invoiceIds.length
       ? await tx.select({ id: invoices.id, currency: invoices.currency }).from(invoices).where(inArray(invoices.id, invoiceIds))
@@ -292,7 +299,7 @@ export interface ChequeAlertView { id: string; chequeId: string; alertKind: Cheq
  */
 export async function runChequeAlerts(app: Db, tenantId: string, todayIso: string): Promise<ChequeAlertView[]> {
   return withTenant(app, tenantId, async (tx) => {
-    const rows = await tx.select().from(cheques);
+    const rows = await tx.select().from(cheques).where(eq(cheques.tenantId, tenantId));
     const candidates = rows
       .map((cheque) => ({ cheque, kind: dueAlertKind({ dueDate: cheque.dueDate, status: cheque.status }, todayIso) }))
       .filter((x): x is { cheque: typeof rows[number]; kind: ChequeAlertKind } => x.kind !== null);
@@ -327,7 +334,7 @@ export async function runChequeAlerts(app: Db, tenantId: string, todayIso: strin
 
 export async function listChequeAlerts(app: Db, tenantId: string): Promise<ChequeAlertView[]> {
   return withTenant(app, tenantId, async (tx) => {
-    const rows = await tx.select().from(chequeAlerts);
+    const rows = await tx.select().from(chequeAlerts).where(eq(chequeAlerts.tenantId, tenantId));
     return rows
       .map((r) => ({ id: r.id, chequeId: r.chequeId, alertKind: r.alertKind as ChequeAlertKind, alertDate: r.alertDate }))
       .sort((a, b) => (a.alertDate < b.alertDate ? 1 : -1));
@@ -428,7 +435,8 @@ export async function extractChequePhoto(
           const debInvs = await tx
             .select({ id: invoices.id, reference: invoices.reference, amountMinor: invoices.amountMinor, paidMinor: invoices.paidMinor, dueOn: invoices.dueOn })
             .from(invoices)
-            .where(and(eq(invoices.debtorId, deb.id), inArray(invoices.status, ["open", "partially_paid"]), eq(invoices.currency, matchingCurrency)));
+            .where(and(eq(invoices.tenantId, tenantId), eq(invoices.debtorId, deb.id), inArray(invoices.status, ["open", "partially_paid"]), eq(invoices.currency, matchingCurrency)))
+            .orderBy(asc(invoices.dueOn));
 
           const totalOutstanding = debInvs.reduce((acc, inv) => acc + (inv.amountMinor - inv.paidMinor), 0n);
 

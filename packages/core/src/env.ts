@@ -9,7 +9,12 @@ export class EnvError extends Error {
 }
 
 const boolFromString = (def: boolean) =>
-  z.preprocess((v) => (v === undefined ? def : v === "true" || v === "1" || v === true), z.boolean());
+  z.preprocess((v) => (v === undefined || v === "" ? def : v === "true" || v === "1" || v === true), z.boolean());
+
+const isLoopbackHost = (host: string): boolean => {
+  const h = host.toLowerCase();
+  return h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "[::1]" || h === "0.0.0.0";
+};
 const secret = (name: string) =>
   z.string().trim().min(32, `${name} must be at least 32 chars`).refine((v) => !v.startsWith("change-me"), `${name} still has the placeholder value`);
 
@@ -119,16 +124,16 @@ export function parseEnv(input: Record<string, string | undefined>): AppEnv {
     // production host never sets the flag and still fails closed here.
     if (!s3.E2E_FAKE_PROVIDERS) {
       const appUrl = new URL(s3.APP_URL);
-      if (appUrl.protocol !== "https:" || appUrl.hostname === "localhost" || appUrl.hostname === "127.0.0.1") {
+      if (appUrl.protocol !== "https:" || isLoopbackHost(appUrl.hostname)) {
         throw new EnvError("Production requires APP_URL to be an HTTPS non-localhost URL");
       }
-      if (s3.EMAIL_VERIFICATION_ENABLED && s3.SMTP_URL.startsWith("smtp://localhost")) {
+      if (s3.EMAIL_VERIFICATION_ENABLED && /(?:^|\/\/)(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(?::|\/|$)/i.test(s3.SMTP_URL)) {
         throw new EnvError("Production with EMAIL_VERIFICATION_ENABLED=true requires a non-localhost SMTP_URL");
       }
     }
     if (!s3.E2E_FAKE_PROVIDERS && !s3.ALLOW_LOCAL_S3) {
       const s3Url = new URL(s3.S3_ENDPOINT);
-      if (s3Url.protocol !== "https:" || s3Url.hostname === "localhost" || s3Url.hostname === "127.0.0.1") {
+      if (s3Url.protocol !== "https:" || isLoopbackHost(s3Url.hostname)) {
         throw new EnvError("Production requires S3_ENDPOINT to be an HTTPS object-storage endpoint (not localhost)");
       }
       if (s3.S3_ACCESS_KEY === "minioadmin" || s3.S3_SECRET_KEY === "minioadmin") {

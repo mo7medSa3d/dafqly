@@ -16,12 +16,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   const { token } = await params;
   const ip = clientIp(req.headers);
   const limit = rateLimit(`statement:dispute:${ip}`, { limit: 10, windowSeconds: 60 });
-  // M9: per-token bucket too, so one link cannot be hammered from many IPs.
-  const tokenLimit = rateLimit(`statement:dispute:token:${tokenBucketKey(token)}`, { limit: 5, windowSeconds: 60 });
-  if (!limit.allowed || !tokenLimit.allowed) {
-    const retryAfter = Math.max(limit.retryAfterSeconds, tokenLimit.retryAfterSeconds);
+  if (!limit.allowed) {
     return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), {
-      status: 429, headers: { ...HEADERS, "Retry-After": String(retryAfter) },
+      status: 429, headers: { ...HEADERS, "Retry-After": String(limit.retryAfterSeconds) },
+    });
+  }
+  if (!TOKEN_RE.test(token)) {
+    return Response.json(toApiErrorBody(new AppError("NOT_FOUND", "Not found", 404)), { status: 404, headers: HEADERS });
+  }
+  // M9: per-token bucket too, so one link cannot be hammered from many IPs.
+  // Evaluated after IP limit + token format check so bogus tokens cannot evict rate-limit buckets.
+  const tokenLimit = rateLimit(`statement:dispute:token:${tokenBucketKey(token)}`, { limit: 5, windowSeconds: 60 });
+  if (!tokenLimit.allowed) {
+    return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), {
+      status: 429, headers: { ...HEADERS, "Retry-After": String(tokenLimit.retryAfterSeconds) },
     });
   }
   let body: unknown;
@@ -37,9 +45,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   const parsed = raiseDisputeInput.safeParse(body);
   if (!parsed.success) {
     return Response.json(toApiErrorBody(new AppError("BAD_REQUEST", "invoiceId and a reason are required", 400)), { status: 400, headers: HEADERS });
-  }
-  if (!TOKEN_RE.test(token)) {
-    return Response.json(toApiErrorBody(new AppError("NOT_FOUND", "Not found", 404)), { status: 404, headers: HEADERS });
   }
   try {
     const out = await raiseStatementDispute(appDb(), ownerDb(), token, parsed.data, new Date());

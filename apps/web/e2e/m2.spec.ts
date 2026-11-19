@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { createHmac } from "node:crypto";
+import { join } from "node:path";
 import { clickNav } from "./helpers";
 
 /**
@@ -67,5 +68,5 @@ test("M2 webhook: handshake, signature gate, signed opt-out lands in the UI", as
   await page.getByTestId("debtor-view").first().click();
   await expect(page.getByTestId("debtor-opted-out")).toBeVisible();
   await expect(page.getByTestId("timeline-message").first()).toBeVisible();
-  await page.screenshot({ path: "e2e/screenshots/m2-opted-out-ar-light.png" });
+  await page.screenshot({ path: join("e2e", "screenshots", "m2-opted-out-ar-light.png") });
 });

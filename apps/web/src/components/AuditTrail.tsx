@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { Clock, ShieldCheck, UserCheck } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
+import { formatDateTime } from "@/lib/format";
 import { Panel } from "./ui";
 
 interface AuditEntry {
@@ -52,10 +53,10 @@ function formatAction(action: string, isAr: boolean): { label: string; color: st
 
 function formatDate(iso: string, locale: string): string {
   try {
-    return new Intl.DateTimeFormat(locale === "ar" ? "ar-EG-u-nu-latn" : "en-GB", {
+    return formatDateTime(new Date(iso), locale === "ar" ? "ar-EG-u-nu-latn" : "en-GB", {
       dateStyle: "medium",
       timeStyle: "short",
-    }).format(new Date(iso));
+    });
   } catch {
     return iso.slice(0, 16);
   }
@@ -124,7 +125,7 @@ export function AuditTrail() {
           {isAr ? "سجل العمليات متاح لمالك الحساب فقط." : "Audit log is restricted to workspace owners."}
         </div>
       ) : error ? (
-        <div className="py-8 text-center text-xs font-semibold text-danger">
+        <div role="alert" className="py-8 text-center text-xs font-semibold text-danger">
           {error}
         </div>
       ) : logs.length === 0 ? (
@@ -153,17 +154,17 @@ export function AuditTrail() {
                       </span>
                     </td>
                     <td className="px-4 py-3 font-medium text-text">
-                      <span className="font-mono text-xs text-text-muted">
+                      <span className="font-mono text-xs text-text-muted tabular-nums" dir="ltr">
                         {log.entity} #{log.entityId.slice(0, 8)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-text-muted">
-                      <span className="inline-flex items-center gap-1 font-mono text-xs">
+                      <span className="inline-flex items-center gap-1 font-mono text-xs tabular-nums">
                         <UserCheck size={13} aria-hidden className="text-primary" />
                         {log.actorUserId ? log.actorUserId.slice(0, 10) : (isAr ? "النظام" : "System")}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-text-muted font-medium whitespace-nowrap" dir="ltr">
+                    <td className="px-4 py-3 text-text-muted font-medium whitespace-nowrap tabular-nums" dir="ltr">
                       <span className="inline-flex items-center gap-1">
                         <Clock size={13} aria-hidden className="text-text-subtle" />
                         {formatDate(log.createdAt, locale)}

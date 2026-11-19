@@ -19,6 +19,9 @@ import { addDaysIso, daysOverdue, isCollectibleStatus } from "./invoices";
  * - collectionRate = netCollected / (netCollected + totalOutstanding),
  *   where netCollected = collectedInMonth − refundedInMonth floored at 0;
  *   0 when the denominator is 0.
+ * - ceiPct (Collection Effectiveness Index, 0–100): netCollected /
+ *   (netCollected + overdueAmount) × 100, excluding not-yet-due current
+ *   receivables from the collectible pool; `null` when collectible is 0.
  * - dsoDays = (totalOutstanding / invoicedInLast90Days) * 90, where the
  *   denominator is Σ amounts of invoices ISSUED in [today−89, today],
  *   excluding cancelled/written-off invoices (not real sales);
@@ -70,6 +73,8 @@ export interface KpiReport {
    * visible instead of silently netting against another month's number. */
   refundedInMonthMinor: number;
   collectionRate: number;
+  /** Collection Effectiveness Index (0–100): netCollected / (netCollected + overdueAmount) × 100, or null when collectible is 0. */
+  ceiPct: number | null;
   dsoDays: number;
   agingBuckets: Record<AgingBucketKey, number>;
   topDebtors: { debtorId: string; displayName: string; outstandingMinor: number }[];
@@ -114,7 +119,7 @@ export function computeKpis(input: {
   let collected = 0;
   let refunded = 0;
   for (const p of input.payments) {
-    if (p.status === "confirmed" && p.receivedOn.slice(0, 7) === monthPrefix) {
+    if (p.status === "confirmed" && Number.isFinite(p.amountMinor) && p.receivedOn.slice(0, 7) === monthPrefix) {
       if (p.amountMinor >= 0) collected += p.amountMinor;
       else refunded += -p.amountMinor;
     }
@@ -129,7 +134,9 @@ export function computeKpis(input: {
   let invoiced90 = 0;
   for (const inv of input.invoices) {
     if (inv.status === "cancelled" || inv.status === "written_off") continue;
-    if (inv.issuedOn >= windowStart && inv.issuedOn <= input.today) invoiced90 += inv.amountMinor;
+    if (inv.issuedOn >= windowStart && inv.issuedOn <= input.today && Number.isFinite(inv.amountMinor) && inv.amountMinor > 0) {
+      invoiced90 += inv.amountMinor;
+    }
   }
 
   const topDebtors = [...perDebtor.entries()]
@@ -138,8 +145,13 @@ export function computeKpis(input: {
       displayName: input.debtorNames.get(debtorId) ?? debtorId,
       outstandingMinor,
     }))
-    .sort((a, b) => b.outstandingMinor - a.outstandingMinor || (a.debtorId < b.debtorId ? -1 : 1))
+    .sort((a, b) => b.outstandingMinor - a.outstandingMinor || (a.debtorId < b.debtorId ? -1 : a.debtorId > b.debtorId ? 1 : 0))
     .slice(0, 10);
+
+  const ceiCollectible = netCollected + overdueAmount;
+  const ceiPct = ceiCollectible > 0
+    ? Math.round(Math.min(100, Math.max(0, (netCollected / ceiCollectible) * 100)) * 100) / 100
+    : null;
 
   return {
     totalOutstandingMinor: totalOutstanding,
@@ -147,6 +159,7 @@ export function computeKpis(input: {
     collectedInMonthMinor: collected,
     refundedInMonthMinor: refunded,
     collectionRate: netCollected + totalOutstanding > 0 ? netCollected / (netCollected + totalOutstanding) : 0,
+    ceiPct,
     // Rounded to 2 decimals: DSO is a reporting figure, and the rounding
     // keeps it free of binary float dust (140000/200000*90 is 63, not 62.999...).
     dsoDays: invoiced90 > 0 ? Math.round(((totalOutstanding / invoiced90) * 90) * 100) / 100 : 0,

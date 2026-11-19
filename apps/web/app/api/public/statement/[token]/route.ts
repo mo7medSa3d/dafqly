@@ -3,6 +3,8 @@ import { appDb, ownerDb } from "@/server/db";
 import { clientIp, rateLimit } from "@/server/rate-limit";
 import { getStatementData } from "@/server/statements";
 
+export const dynamic = "force-dynamic";
+
 /**
  * Public statement data (F10): token-authorized, rate-limited per IP,
  * noindex, no-store. Unknown, expired and revoked tokens all return the

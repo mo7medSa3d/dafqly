@@ -91,10 +91,10 @@ export function groupChequesByWeek<T extends { dueDate: string; id: string }>(ch
     byWeek.set(week, list);
   }
   return [...byWeek.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([weekStart, list]) => ({
       weekStart,
-      cheques: list.sort((a, b) => (a.dueDate === b.dueDate ? (a.id < b.id ? -1 : 1) : a.dueDate < b.dueDate ? -1 : 1)),
+      cheques: list.sort((a, b) => (a.dueDate === b.dueDate ? (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) : a.dueDate < b.dueDate ? -1 : 1)),
     }));
 }
 
@@ -115,12 +115,23 @@ const chequeAmountMinorField = z.union([z.number(), z.string()]).transform((v, c
   return minor;
 });
 
+function isValidChequeDate(iso: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return false;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
+const chequeDateField = z.string().refine(isValidChequeDate, "must be a valid YYYY-MM-DD calendar date");
+
 const chequeExtractionSchema = z.object({
   number: z.string().trim().min(1).max(40).nullable(),
   bank: z.string().trim().min(1).max(120).nullable(),
   amount_minor: chequeAmountMinorField.nullable(),
-  issue_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
-  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  issue_date: chequeDateField.nullable(),
+  due_date: chequeDateField.nullable(),
   drawer_name: z.string().trim().nullable().optional().default(null),
   payee_name: z.string().trim().nullable().optional().default(null),
   confidence: z.number().min(0).max(1),

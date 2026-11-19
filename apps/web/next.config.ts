@@ -53,7 +53,14 @@ const nextConfig: NextConfig = {
     // so only the icons a page actually renders reach its bundle.
     optimizePackageImports: ["lucide-react"],
   },
-  transpilePackages: ["@tahseel/core", "@tahseel/db", "@tahseel/brand"],
+  transpilePackages: [
+    "@tahseel/core",
+    "@tahseel/db",
+    "@tahseel/brand",
+    "@tahseel/providers",
+    "@tahseel/reminders",
+    "@tahseel/templates",
+  ],
   serverExternalPackages: ["argon2", "postgres"],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

@@ -44,6 +44,42 @@ describe("rateLimit", () => {
     expect(rateLimit("peek", opts, 0).allowed).toBe(true);
     expect(rateLimitPeek("peek", opts, 0).allowed).toBe(false);
   });
+  it("fails closed on non-positive or non-finite limit/windowSeconds without creating buckets", () => {
+    const invalidOpts = [
+      { limit: 0, windowSeconds: 60 },
+      { limit: -5, windowSeconds: 60 },
+      { limit: Number.NaN, windowSeconds: 60 },
+      { limit: Number.POSITIVE_INFINITY, windowSeconds: 60 },
+      { limit: 5, windowSeconds: 0 },
+      { limit: 5, windowSeconds: -10 },
+      { limit: 5, windowSeconds: Number.NaN },
+      { limit: 5, windowSeconds: Number.POSITIVE_INFINITY },
+    ];
+    for (const opts of invalidOpts) {
+      expect(rateLimitPeek("invalid", opts, 0)).toEqual({ allowed: false, remaining: 0, retryAfterSeconds: 1 });
+      expect(rateLimit("invalid", opts, 0)).toEqual({ allowed: false, remaining: 0, retryAfterSeconds: 1 });
+    }
+    expect(rateLimitBucketCount()).toBe(0);
+  });
+  it("at bucket cap, evicts the oldest active key and sweeps expired buckets before evicting", () => {
+    const opts = { limit: 1, windowSeconds: 60 };
+    for (let i = 0; i < MAX_RATE_LIMIT_BUCKETS; i++) {
+      rateLimit(`cap-${i}`, opts, 0);
+    }
+    expect(rateLimitBucketCount()).toBe(MAX_RATE_LIMIT_BUCKETS);
+    expect(rateLimitPeek("cap-0", opts, 0).allowed).toBe(false);
+    expect(rateLimitPeek("cap-1", opts, 0).allowed).toBe(false);
+
+    // At cap with all entries active, inserting a new key evicts the oldest (cap-0).
+    expect(rateLimit("cap-overflow", opts, 0).allowed).toBe(true);
+    expect(rateLimitBucketCount()).toBe(MAX_RATE_LIMIT_BUCKETS);
+    expect(rateLimitPeek("cap-0", opts, 0).allowed).toBe(true);
+    expect(rateLimitPeek("cap-1", opts, 0).allowed).toBe(false);
+
+    // Once entries expire, inserting at cap sweeps expired buckets first.
+    expect(rateLimit("cap-after-expiry", opts, 61_000).allowed).toBe(true);
+    expect(rateLimitBucketCount()).toBe(1);
+  });
 });
 
 describe("clientIp (H2)", () => {

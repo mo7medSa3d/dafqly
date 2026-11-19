@@ -26,53 +26,66 @@ export type WebhookEvent =
   | { kind: "status"; dedupeKey: string; providerMessageId: string; status: ProviderMessageStatus; errorCode: number | null; at: Date };
 
 interface WaStatus { id?: string; status?: string; timestamp?: string; recipient_id?: string; errors?: { code?: number }[] }
+interface WaMedia { id?: string; mime_type?: string; caption?: string; filename?: string }
 interface WaMessage {
   from?: string; id?: string; timestamp?: string; type?: string;
-  text?: { body?: string }; image?: { id?: string; mime_type?: string };
-  video?: { id?: string; mime_type?: string }; audio?: { id?: string; mime_type?: string };
-  document?: { id?: string; mime_type?: string };
+  text?: { body?: string }; image?: WaMedia;
+  video?: WaMedia; audio?: WaMedia;
+  document?: WaMedia;
 }
-interface WaValue { metadata?: { display_phone_number?: string; phone_number_id?: string }; messages?: WaMessage[]; statuses?: WaStatus[]; contacts?: { wa_id?: string }[] }
+interface WaValue { metadata?: { display_phone_number?: string; phone_number_id?: string }; messages?: WaMessage[]; statuses?: WaStatus[]; contacts?: { wa_id?: string; profile?: { name?: string } }[] }
 interface WaPayload { entry?: { changes?: { value?: WaValue }[] }[] }
 
 const STATUS_MAP: Record<string, ProviderMessageStatus> = {
   sent: "sent", delivered: "delivered", read: "read", failed: "failed",
 };
 
+const MIN_UNIX_SEC = 1_000_000_000; // 2001-09-09
+const MAX_UNIX_SEC = 4_102_444_800; // 2100-01-01
+
+function parseMetaTimestamp(raw?: string): Date {
+  if (!raw) return new Date();
+  const sec = Number(raw);
+  if (!Number.isFinite(sec) || sec < MIN_UNIX_SEC || sec > MAX_UNIX_SEC) return new Date();
+  return new Date(sec * 1000);
+}
+
 /** Parse a Meta webhook payload into events. Unknown shapes yield no events (never throw on provider input). */
 export function parseWebhookPayload(payload: unknown): WebhookEvent[] {
+  if (!payload || typeof payload !== "object") return [];
   const events: WebhookEvent[] = [];
   const p = payload as WaPayload;
-  for (const entry of p.entry ?? []) {
-    for (const change of entry.changes ?? []) {
-      const value = change.value ?? {};
-      const phoneNumberId = value.metadata?.phone_number_id ?? null;
-      for (const m of value.messages ?? []) {
-        if (!m.id || !m.from) continue;
+  if (!Array.isArray(p.entry)) return [];
+  for (const entry of p.entry) {
+    if (!entry || typeof entry !== "object" || !Array.isArray(entry.changes)) continue;
+    for (const change of entry.changes) {
+      if (!change || typeof change !== "object") continue;
+      const value = change.value && typeof change.value === "object" ? change.value : {};
+      const phoneNumberId = typeof value.metadata?.phone_number_id === "string" ? value.metadata.phone_number_id : null;
+      for (const m of Array.isArray(value.messages) ? value.messages : []) {
+        if (!m || typeof m !== "object" || typeof m.id !== "string" || typeof m.from !== "string" || !m.id || !m.from) continue;
         const media = m.image ?? m.video ?? m.audio ?? m.document;
-        const inTs = m.timestamp ? Number(m.timestamp) * 1000 : NaN;
         events.push({
           kind: "inbound",
           dedupeKey: `in:${m.id}`,
           waId: m.from,
           providerMessageId: m.id,
-          at: Number.isFinite(inTs) ? new Date(inTs) : new Date(),
+          at: parseMetaTimestamp(m.timestamp),
           text: m.type === "text" ? (m.text?.body ?? null) : null,
           mediaId: media?.id ?? null,
           mediaMime: media?.mime_type ?? null,
           phoneNumberId,
         });
       }
-      for (const s of value.statuses ?? []) {
-        if (!s.id || !s.status || !STATUS_MAP[s.status]) continue;
-        const stTs = s.timestamp ? Number(s.timestamp) * 1000 : NaN;
+      for (const s of Array.isArray(value.statuses) ? value.statuses : []) {
+        if (!s || typeof s !== "object" || typeof s.id !== "string" || typeof s.status !== "string" || !s.id || !STATUS_MAP[s.status]) continue;
         events.push({
           kind: "status",
           dedupeKey: `st:${s.id}:${s.status}`,
           providerMessageId: s.id,
           status: STATUS_MAP[s.status]!,
           errorCode: s.errors?.[0]?.code ?? null,
-          at: Number.isFinite(stTs) ? new Date(stTs) : new Date(),
+          at: parseMetaTimestamp(s.timestamp),
         });
       }
     }
@@ -93,20 +106,31 @@ export function redactWebhookPayload(payload: unknown): unknown {
   } catch {
     return { redacted: true };
   }
+  if (!copy || typeof copy !== "object") return copy;
   const p = copy as WaPayload & Record<string, unknown>;
-  for (const entry of p.entry ?? []) {
-    for (const change of entry.changes ?? []) {
-      const value = change.value ?? {};
-      for (const m of value.messages ?? []) {
+  for (const entry of Array.isArray(p.entry) ? p.entry : []) {
+    if (!entry || typeof entry !== "object") continue;
+    for (const change of Array.isArray(entry.changes) ? entry.changes : []) {
+      if (!change || typeof change !== "object") continue;
+      const value = change.value && typeof change.value === "object" ? change.value : {};
+      for (const m of Array.isArray(value.messages) ? value.messages : []) {
+        if (!m || typeof m !== "object") continue;
         if (m.from !== undefined) m.from = "[redacted]";
         if (m.text?.body !== undefined) m.text.body = "[redacted]";
+        for (const media of [m.image, m.video, m.audio, m.document]) {
+          if (!media || typeof media !== "object") continue;
+          if (media.caption !== undefined) media.caption = "[redacted]";
+          if (media.filename !== undefined) media.filename = "[redacted]";
+        }
       }
-      // The phone also appears as the contact's wa_id and the status
-      // recipient_id — both are identifiers, not processing inputs.
-      for (const c of value.contacts ?? []) {
+      // The phone and display name also appear on contacts and statuses — both are PII, not processing inputs.
+      for (const c of Array.isArray(value.contacts) ? value.contacts : []) {
+        if (!c || typeof c !== "object") continue;
         if (c.wa_id !== undefined) c.wa_id = "[redacted]";
+        if (c.profile?.name !== undefined) c.profile.name = "[redacted]";
       }
-      for (const s of value.statuses ?? []) {
+      for (const s of Array.isArray(value.statuses) ? value.statuses : []) {
+        if (!s || typeof s !== "object") continue;
         if (s.recipient_id !== undefined) s.recipient_id = "[redacted]";
       }
     }
@@ -152,7 +176,8 @@ export async function persistWebhookEvents(owner: Db, payload: unknown): Promise
  * are dropped. Run nightly from the worker maintenance tick.
  */
 export async function purgeOldWebhookPayloads(owner: Db, olderThanDays = 90, now: Date = new Date()): Promise<{ webhookEvents: number; messages: number }> {
-  const cutoff = new Date(now.getTime() - olderThanDays * 86_400_000);
+  const safeDays = Number.isFinite(olderThanDays) && olderThanDays > 0 ? olderThanDays : 90;
+  const cutoff = new Date(now.getTime() - safeDays * 86_400_000);
   const events = await owner.update(webhookEvents)
     .set({ payload: { redacted: true } })
     .where(and(lt(webhookEvents.receivedAt, cutoff), sql`${webhookEvents.payload} IS DISTINCT FROM '{"redacted":true}'::jsonb`))
@@ -173,6 +198,7 @@ export async function replayFailedWebhooks(
   now: Date,
   limit = 50,
 ): Promise<{ replayed: number; failed: number }> {
+  const safeLimit = Math.max(1, Math.min(200, Math.trunc(limit) || 50));
   const rows = await deps.owner
     .select()
     .from(webhookEvents)
@@ -183,13 +209,16 @@ export async function replayFailedWebhooks(
       ne(webhookEvents.processError, "cannot replay redacted inbound payload"),
     ))
     .orderBy(asc(webhookEvents.receivedAt))
-    .limit(limit);
+    .limit(safeLimit);
 
   let replayed = 0;
   let failed = 0;
   for (const row of rows) {
     try {
-      const events = parseWebhookPayload(row.payload);
+      // Scope replay strictly to this row's dedupeKey so mixed batches don't block or duplicate sibling events.
+      const parsed = parseWebhookPayload(row.payload);
+      const matched = parsed.filter((ev) => ev.dedupeKey === row.dedupeKey);
+      const events = matched.length > 0 ? matched : parsed;
       const hasRedactedInbound = events.some((ev) => ev.kind === "inbound" && ev.waId === "[redacted]");
       if (hasRedactedInbound) {
         await deps.owner
@@ -210,7 +239,7 @@ export async function replayFailedWebhooks(
     } catch (err) {
       await deps.owner
         .update(webhookEvents)
-        .set({ processError: err instanceof Error ? err.message : "replay failed" })
+        .set({ processError: (err instanceof Error ? err.message : "replay failed").slice(0, 500) })
         .where(eq(webhookEvents.id, row.id));
       failed++;
     }
@@ -235,7 +264,7 @@ export async function processWebhookEvents(deps: EngineDeps, events: WebhookEven
       const msg = found[0];
       if (!msg) { summary.unknown++; continue; }
       await withTenant(deps.app, msg.tenantId, async (tx) => {
-        const [current] = await tx.select().from(messages).where(eq(messages.id, msg.id));
+        const [current] = await tx.select().from(messages).where(eq(messages.id, msg.id)).for("update");
         if (!current) return;
         if (current.status === "received" || !canAdvanceMessageStatus(current.status, event.status)) { summary.statusesIgnored++; return; }
         await tx.update(messages).set({
@@ -261,8 +290,8 @@ export async function processWebhookEvents(deps: EngineDeps, events: WebhookEven
           .limit(1)
       : [];
     const candidates = matchedTenant
-      ? await deps.owner.select().from(debtors).where(and(eq(debtors.tenantId, matchedTenant.id), eq(debtors.phoneE164, e164)))
-      : await deps.owner.select().from(debtors).where(eq(debtors.phoneE164, e164));
+      ? await deps.owner.select().from(debtors).where(and(eq(debtors.tenantId, matchedTenant.id), eq(debtors.phoneE164, e164))).orderBy(asc(debtors.createdAt), asc(debtors.id))
+      : await deps.owner.select().from(debtors).where(eq(debtors.phoneE164, e164)).orderBy(asc(debtors.createdAt), asc(debtors.id));
     if (candidates.length === 0) { summary.unknown++; continue; }
     let debtor = candidates[0]!;
     if (!matchedTenant && candidates.length > 1) {

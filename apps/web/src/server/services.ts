@@ -1,5 +1,5 @@
 import { createCipheriv, createHash, createHmac, randomBytes } from "node:crypto";
-import { asc, count, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, count, eq, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import { AppError, isValidTimezone, safeTimezone } from "@tahseel/core";
@@ -137,7 +137,7 @@ export async function getDashboardSummary(app: Db, tenantId: string, todayIso: s
   return withTenant(app, tenantId, async (tx) => {
     const [[tenant], [d], byCurrencyRows, collectedRows] = await Promise.all([
       tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId)),
-      tx.select({ c: count() }).from(debtors).where(isNull(debtors.deletedAt)),
+      tx.select({ c: count() }).from(debtors).where(and(eq(debtors.tenantId, tenantId), isNull(debtors.deletedAt))),
       tx.execute(sql`
         select currency,
           coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor), 0)::bigint as outstanding,
@@ -155,7 +155,7 @@ export async function getDashboardSummary(app: Db, tenantId: string, todayIso: s
         group by currency order by currency`) as unknown as Promise<{ currency: string; collected: string; refunded: string }[]>,
     ]);
 
-    const currency = tenant?.settings.currency ?? "EGP";
+    const currency = tenant?.settings?.currency ?? "EGP";
     const collectedMap = new Map(collectedRows.map((c) => [c.currency, c]));
     const byCurrency = byCurrencyRows.map((b) => {
       const c = collectedMap.get(b.currency);
@@ -188,13 +188,24 @@ export async function getDashboardSummary(app: Db, tenantId: string, todayIso: s
   });
 }
 
+const todayFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getTodayFormatter(timeZone: string): Intl.DateTimeFormat {
+  let fmt = todayFormatters.get(timeZone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+    todayFormatters.set(timeZone, fmt);
+  }
+  return fmt;
+}
+
 /**
  * Tenant-local "today" (YYYY-MM-DD) in the tenant's timezone. A stored
  * timezone that is no longer valid (legacy row, bad import) falls back to
  * Africa/Cairo instead of throwing a 500 on every request.
  */
 export function todayInTimezone(timezone: string, now = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: safeTimezone(timezone), year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const parts = getTodayFormatter(safeTimezone(timezone)).formatToParts(now);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
@@ -270,10 +281,10 @@ export async function updateTenantSettings(app: Db, tenantId: string, actorUserI
       // Include them in the lock or a default-currency edit would rewrite the
       // interpretation of already-entered financial records.
       const [inv, pay, chq, prom] = await Promise.all([
-        tx.select({ id: invoices.id }).from(invoices).limit(1),
-        tx.select({ id: payments.id }).from(payments).limit(1),
-        tx.select({ id: cheques.id }).from(cheques).limit(1),
-        tx.select({ id: promisesToPay.id }).from(promisesToPay).limit(1),
+        tx.select({ id: invoices.id }).from(invoices).where(eq(invoices.tenantId, tenantId)).limit(1),
+        tx.select({ id: payments.id }).from(payments).where(eq(payments.tenantId, tenantId)).limit(1),
+        tx.select({ id: cheques.id }).from(cheques).where(eq(cheques.tenantId, tenantId)).limit(1),
+        tx.select({ id: promisesToPay.id }).from(promisesToPay).where(eq(promisesToPay.tenantId, tenantId)).limit(1),
       ]);
       if (inv.length > 0 || pay.length > 0 || chq.length > 0 || prom.length > 0) {
         throw new AppError("CURRENCY_LOCKED", "Default currency cannot be changed after financial activity exists. Use an explicit ledger migration instead.", 409);

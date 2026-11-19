@@ -103,7 +103,7 @@ export async function processReceiptImage(
           debtor = allDebtors.find((d) => d.id === suggestion.debtorId) ?? null;
         }
       }
-      if (!debtor && extraction.amount_minor && Number.isInteger(extraction.amount_minor) && extraction.amount_minor > 0) {
+      if (!debtor && extraction.amount_minor && Number.isSafeInteger(extraction.amount_minor) && extraction.amount_minor > 0) {
         const openInvs = await tx.select().from(invoices).where(and(eq(invoices.tenantId, tenantId), inArray(invoices.status, ["open", "partially_paid"]), eq(invoices.currency, paymentCurrency)));
         const match = openInvs.find((i) => (i.amountMinor - i.paidMinor) === BigInt(extraction.amount_minor!));
         if (match) {

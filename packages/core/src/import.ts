@@ -1,3 +1,4 @@
+import { inflateRawSync } from "node:zlib";
 import ExcelJS from "exceljs";
 import { normalizeDigits } from "./digits";
 import { parseEgp } from "./money";
@@ -251,6 +252,7 @@ export function detectHeaderRow(grid: Grid, maxScanRows = 25): { rowIndex: numbe
 // --------------------------------------------------------------------- dates
 /** Excel serial day -> YYYY-MM-DD (epoch 1899-12-30, the standard SheetJS convention). */
 export function excelSerialToIso(serial: number): string {
+  if (!Number.isFinite(serial)) throw new RangeError("Invalid Excel serial date");
   const ms = Date.UTC(1899, 11, 30) + Math.floor(serial) * 86_400_000;
   return new Date(ms).toISOString().slice(0, 10);
 }
@@ -270,7 +272,7 @@ export function parseImportDate(value: CellValue | undefined): string | null {
     return null;
   }
   const s = normalizeDigits(String(value)).trim();
-  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:$|[\sT])/.exec(s);
   if (m) return isRealDate(+m[1]!, +m[2]!, +m[3]!) ? `${m[1]}-${pad(+m[2]!)}-${pad(+m[3]!)}` : null;
   m = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(s);
   if (m) return isRealDate(+m[3]!, +m[2]!, +m[1]!) ? `${m[3]}-${pad(+m[2]!)}-${pad(+m[1]!)}` : null;
@@ -342,8 +344,10 @@ function parseRow(row: CellValue[], mapping: ColumnMapping, rowNumber: number): 
   } else if (typeof amountRaw === "number") {
     if (!Number.isFinite(amountRaw) || amountRaw <= 0) errors.push({ field: "amount", reason: "amount must be positive" });
     else {
-      const minor = Math.round(amountRaw * 100);
-      if (Math.abs(amountRaw * 100 - minor) > 1e-6) errors.push({ field: "amount", reason: "amount has more than 2 decimal places" });
+      const scaled = amountRaw * 100;
+      const minor = Math.round(scaled);
+      if (!Number.isSafeInteger(minor)) errors.push({ field: "amount", reason: "amount exceeds safe integer range" });
+      else if (Math.abs(scaled - minor) > 1e-6) errors.push({ field: "amount", reason: "amount has more than 2 decimal places" });
       else amountMinor = BigInt(minor);
     }
   } else {
@@ -385,6 +389,9 @@ function parseRow(row: CellValue[], mapping: ColumnMapping, rowNumber: number): 
 
 /** Parses every row below the header, in chunks so 5,000-row files stay flat in memory behaviour. */
 export function parseImportGrid(grid: Grid, mapping: ColumnMapping, headerRowIndex: number): ParsedImportRow[] {
+  if (!Number.isInteger(headerRowIndex) || headerRowIndex < -1) {
+    throw new Error(`invalid headerRowIndex: ${headerRowIndex}`);
+  }
   for (const f of REQUIRED_FIELDS) {
     if (mapping[f] === undefined) throw new Error(`import mapping is missing required field: ${f}`);
   }
@@ -413,29 +420,189 @@ export function dedupeImportRows(rows: readonly ParsedImportRow[], existingByPho
 // ------------------------------------------------------------------ workbook
 export interface WorkbookGrid { grid: Grid; sheetName: string }
 
-function normalizeExcelJsCell(raw: unknown): CellValue {
-  if (raw === null || raw === undefined) return null;
+const MAX_WORKBOOK_ROWS = 50_000;
+const MAX_WORKBOOK_COLS = 200;
+const MAX_XLSX_ENTRIES = 500;
+const MAX_XLSX_UNCOMPRESSED_BYTES = 32 * 1024 * 1024;
+const MAX_DATA_VALIDATION_CELLS = 50_000;
+const EXCEL_MAX_ROWS = 1_048_576;
+const EXCEL_MAX_COLS = 16_384;
+
+function colLettersToNumber(letters: string): number {
+  let n = 0;
+  for (let i = 0; i < letters.length; i++) {
+    n = n * 26 + (letters.charCodeAt(i) - 64);
+  }
+  return n;
+}
+
+function countSqrefCells(sqref: string, cap: number): number {
+  let total = 0;
+  for (const rawToken of sqref.trim().split(/\s+/)) {
+    if (!rawToken) continue;
+    const token = rawToken.replace(/\$/g, "").toUpperCase();
+    let m = /^([A-Z]{1,3})(\d+):([A-Z]{1,3})(\d+)$/.exec(token);
+    if (m) {
+      const cols = Math.abs(colLettersToNumber(m[3]!) - colLettersToNumber(m[1]!)) + 1;
+      const rows = Math.abs(Number(m[4]!) - Number(m[2]!)) + 1;
+      total += cols * rows;
+    } else if ((m = /^([A-Z]{1,3}):([A-Z]{1,3})$/.exec(token))) {
+      total += (Math.abs(colLettersToNumber(m[2]!) - colLettersToNumber(m[1]!)) + 1) * EXCEL_MAX_ROWS;
+    } else if ((m = /^(\d+):(\d+)$/.exec(token))) {
+      total += (Math.abs(Number(m[2]!) - Number(m[1]!)) + 1) * EXCEL_MAX_COLS;
+    } else if (/^[A-Z]{1,3}\d+$/.test(token)) {
+      total += 1;
+    }
+    if (total > cap) return total;
+  }
+  return total;
+}
+
+/**
+ * Pure-Node pre-validator for uploaded .xlsx ZIP archives before ExcelJS parses them.
+ * Mitigates ZIP bombs (entry count + actual uncompressed size cap) and CVE-2026-128341
+ * (ExcelJS <= 4.4.0 DoS via oversized worksheet dataValidations sqref spans).
+ */
+export function validateXlsxBuffer(data: Uint8Array): void {
+  const buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  if (buf.length < 22) throw new Error("invalid xlsx archive: file too small");
+
+  // Locate ZIP End of Central Directory (EOCD) signature 0x06054b50
+  const minOffset = Math.max(0, buf.length - 65_557);
+  let eocdOffset = -1;
+  for (let i = buf.length - 22; i >= minOffset; i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset === -1) throw new Error("invalid xlsx archive: missing ZIP end-of-central-directory");
+
+  const entryCount = buf.readUInt16LE(eocdOffset + 10);
+  const cdSize = buf.readUInt32LE(eocdOffset + 12);
+  const cdOffset = buf.readUInt32LE(eocdOffset + 16);
+
+  if (entryCount === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) {
+    throw new Error("invalid xlsx archive: ZIP64 archives are not supported");
+  }
+  if (entryCount === 0) throw new Error("invalid xlsx archive: archive is empty");
+  if (entryCount > MAX_XLSX_ENTRIES) {
+    throw new Error(`xlsx archive exceeds maximum entry count (${MAX_XLSX_ENTRIES})`);
+  }
+  const cdEnd = cdOffset + cdSize;
+  if (cdEnd > eocdOffset) throw new Error("invalid xlsx archive: corrupt central directory");
+
+  let pos = cdOffset;
+  let seenEntries = 0;
+  let declaredUncompressed = 0;
+  let actualUncompressed = 0;
+
+  while (pos < cdEnd) {
+    if (pos + 46 > cdEnd || buf.readUInt32LE(pos) !== 0x02014b50) {
+      throw new Error("invalid xlsx archive: corrupt central directory entry");
+    }
+    const compressionMethod = buf.readUInt16LE(pos + 10);
+    const compressedSize = buf.readUInt32LE(pos + 20);
+    const uncompressedSize = buf.readUInt32LE(pos + 24);
+    const nameLen = buf.readUInt16LE(pos + 28);
+    const extraLen = buf.readUInt16LE(pos + 30);
+    const commentLen = buf.readUInt16LE(pos + 32);
+    const localHeaderOffset = buf.readUInt32LE(pos + 42);
+    const nextPos = pos + 46 + nameLen + extraLen + commentLen;
+    if (nextPos > cdEnd) throw new Error("invalid xlsx archive: truncated central directory entry");
+
+    seenEntries++;
+    if (seenEntries > MAX_XLSX_ENTRIES) {
+      throw new Error(`xlsx archive exceeds maximum entry count (${MAX_XLSX_ENTRIES})`);
+    }
+    declaredUncompressed += uncompressedSize;
+    if (declaredUncompressed > MAX_XLSX_UNCOMPRESSED_BYTES) {
+      throw new Error("xlsx archive exceeds maximum uncompressed size (32 MB)");
+    }
+
+    const fileName = buf.subarray(pos + 46, pos + 46 + nameLen).toString("utf8");
+    if (localHeaderOffset + 30 > buf.length || buf.readUInt32LE(localHeaderOffset) !== 0x04034b50) {
+      throw new Error("invalid xlsx archive: corrupt local file header");
+    }
+    const lfNameLen = buf.readUInt16LE(localHeaderOffset + 26);
+    const lfExtraLen = buf.readUInt16LE(localHeaderOffset + 28);
+    const dataStart = localHeaderOffset + 30 + lfNameLen + lfExtraLen;
+    const dataEnd = dataStart + compressedSize;
+    if (dataEnd > buf.length) throw new Error("invalid xlsx archive: truncated entry payload");
+
+    const remainingBudget = MAX_XLSX_UNCOMPRESSED_BYTES - actualUncompressed;
+    let payload: Buffer;
+    if (compressionMethod === 0) {
+      if (compressedSize > remainingBudget) {
+        throw new Error("xlsx archive exceeds maximum uncompressed size (32 MB)");
+      }
+      payload = buf.subarray(dataStart, dataEnd);
+    } else if (compressionMethod === 8) {
+      try {
+        payload = inflateRawSync(buf.subarray(dataStart, dataEnd), { maxOutputLength: remainingBudget });
+      } catch (err) {
+        const code = (err as { code?: string })?.code;
+        if (code === "ERR_BUFFER_TOO_LARGE" || err instanceof RangeError) {
+          throw new Error("xlsx archive exceeds maximum uncompressed size (32 MB)");
+        }
+        throw new Error("invalid xlsx archive: corrupt compressed entry");
+      }
+    } else {
+      throw new Error(`invalid xlsx archive: unsupported compression method (${compressionMethod})`);
+    }
+
+    actualUncompressed += payload.length;
+    if (actualUncompressed > MAX_XLSX_UNCOMPRESSED_BYTES) {
+      throw new Error("xlsx archive exceeds maximum uncompressed size (32 MB)");
+    }
+
+    if (/^xl\/worksheets\/[^/]+\.xml$/i.test(fileName)) {
+      const xml = payload.toString("utf8");
+      if (xml.includes("dataValidation")) {
+        const re = /<(?:[A-Za-z0-9_-]+:)?dataValidation\b[^>]*\bsqref\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+        let sheetCells = 0;
+        let match: RegExpExecArray | null;
+        while ((match = re.exec(xml)) !== null) {
+          const sqref = match[1] ?? match[2] ?? "";
+          sheetCells += countSqrefCells(sqref, MAX_DATA_VALIDATION_CELLS - sheetCells);
+          if (sheetCells > MAX_DATA_VALIDATION_CELLS) {
+            throw new Error(
+              `xlsx worksheet "${fileName}" exceeds maximum dataValidation cell span (${MAX_DATA_VALIDATION_CELLS})`,
+            );
+          }
+        }
+      }
+    }
+
+    pos = nextPos;
+  }
+
+  if (seenEntries === 0) throw new Error("invalid xlsx archive: no entries found");
+}
+
+function normalizeExcelJsCell(raw: unknown, depth = 0): CellValue {
+  if (raw === null || raw === undefined || depth > 5) return null;
   if (typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean") return raw;
   if (raw instanceof Date) return Number.isNaN(raw.getTime()) ? null : raw.toISOString().slice(0, 10);
   if (typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
     if ("error" in obj) return null;
-    if ("result" in obj) return normalizeExcelJsCell(obj.result);
+    if ("result" in obj) return normalizeExcelJsCell(obj.result, depth + 1);
     if ("richText" in obj && Array.isArray(obj.richText)) {
       return obj.richText.map((part) => String((part as { text?: unknown }).text ?? "")).join("");
     }
-    if ("text" in obj) return normalizeExcelJsCell(obj.text);
+    if ("text" in obj) return normalizeExcelJsCell(obj.text, depth + 1);
   }
   return String(raw);
 }
 
 function worksheetToGrid(ws: ExcelJS.Worksheet): Grid {
-  const rowCount = ws.rowCount;
+  const rowCount = Math.min(ws.rowCount, MAX_WORKBOOK_ROWS);
   if (rowCount === 0) return [];
   const grid: Grid = [];
   for (let r = 1; r <= rowCount; r++) {
     const row = ws.getRow(r);
-    const colCount = Math.max(row.cellCount, ws.columnCount);
+    const colCount = Math.min(Math.max(row.cellCount, ws.columnCount), MAX_WORKBOOK_COLS);
     const arr: CellValue[] = [];
     let hasValue = false;
     for (let c = 1; c <= colCount; c++) {
@@ -452,6 +619,7 @@ function worksheetToGrid(ws: ExcelJS.Worksheet): Grid {
 
 /** Reads the best sheet of an .xlsx buffer to a grid, forward-filling merged-cell values (F2 edge case). */
 export async function readWorkbookGrid(data: Uint8Array): Promise<WorkbookGrid> {
+  validateXlsxBuffer(data);
   const wb = new ExcelJS.Workbook();
   // ExcelJS expects a Buffer or ArrayBuffer slice matching the Uint8Array view
   const buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
@@ -481,9 +649,12 @@ export async function readWorkbookGrid(data: Uint8Array): Promise<WorkbookGrid> 
 /** Decodes CSV text handling UTF-16LE, UTF-8, and Windows-1256 (standard Egyptian Excel CSV export). */
 export function decodeCsvBuffer(bytes: Uint8Array | Buffer): string {
   const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
-  // 1. Check for UTF-16 LE BOM (FF FE)
+  // 1. Check for UTF-16 LE (FF FE) or UTF-16 BE (FE FF) BOM
   if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
     return new TextDecoder("utf-16le").decode(buf);
+  }
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+    return new TextDecoder("utf-16be").decode(buf);
   }
   // 2. Try strict UTF-8
   try {
@@ -570,7 +741,7 @@ export function parseCsvText(text: string, customDelimiter?: string): Grid {
       if (ch === '"') {
         if (src[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
       } else field += ch;
-    } else if (ch === '"') inQuotes = true;
+    } else if (ch === '"' && field === "") inQuotes = true;
     else if (ch === delim) { row.push(field); field = ""; }
     else if (ch === "\n" || ch === "\r") {
       if (ch === "\r" && src[i + 1] === "\n") i++;

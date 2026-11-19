@@ -76,6 +76,11 @@ describe("PaymobProvider (Intention API, ADR-019)", () => {
     const provider = new PaymobProvider(CONFIG);
     await expect(provider.createPaymentLink({ reference: "r", amountMinor: 100n, currency: "EGP" })).rejects.toThrow(/404/);
   });
+
+  it("rejects non-HTTPS Paymob baseUrl before sending secret token", async () => {
+    const provider = new PaymobProvider({ ...CONFIG, baseUrl: "http://accept.paymob.com" });
+    await expect(provider.createPaymentLink({ reference: "r", amountMinor: 100n, currency: "EGP" })).rejects.toThrow(/HTTPS/i);
+  });
 });
 
 describe("FakePaymentProvider (dev/tests double for the same interface)", () => {

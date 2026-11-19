@@ -22,10 +22,25 @@ export const DEFAULT_POLICY: SchedulePolicy = {
  * RangeError on unknown zones — an unvalidated tenant timezone used to
  * brick every request that computed "today" with a 500.
  */
+const MAX_DTF_CACHE = 64;
+const dtfCache = new Map<string, Intl.DateTimeFormat>();
+
+function getCachedDtf(key: string, locale: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const cached = dtfCache.get(key);
+  if (cached) return cached;
+  const fmt = new Intl.DateTimeFormat(locale, options);
+  if (dtfCache.size >= MAX_DTF_CACHE) {
+    const oldest = dtfCache.keys().next().value;
+    if (oldest !== undefined) dtfCache.delete(oldest);
+  }
+  dtfCache.set(key, fmt);
+  return fmt;
+}
+
 export function isValidTimezone(tz: string): boolean {
   if (typeof tz !== "string" || tz.trim() === "") return false;
   try {
-    new Intl.DateTimeFormat("en-CA", { timeZone: tz });
+    getCachedDtf(`date:${tz}`, "en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
     return true;
   } catch {
     return false;
@@ -39,8 +54,9 @@ export function safeTimezone(tz: string | null | undefined, fallback = "Africa/C
 
 interface LocalParts { hour: number; minute: number; weekday: string }
 function localParts(at: Date, timezone: string): LocalParts {
-  const fmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone: safeTimezone(timezone), hour: "2-digit", minute: "2-digit", hourCycle: "h23", weekday: "short",
+  const tz = safeTimezone(timezone);
+  const fmt = getCachedDtf(`parts:${tz}`, "en-GB", {
+    timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23", weekday: "short",
   });
   const parts = fmt.formatToParts(at);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
@@ -48,15 +64,20 @@ function localParts(at: Date, timezone: string): LocalParts {
 }
 const toMinutes = (hhmm: string): number => {
   const [h, m] = hhmm.split(":");
-  return Number(h) * 60 + Number(m ?? 0);
+  const hours = Number(h);
+  const mins = Number(m ?? 0);
+  if (!Number.isFinite(hours) || !Number.isFinite(mins)) return Number.NaN;
+  return hours * 60 + mins;
 };
 
 export function isInQuietHours(at: Date, policy: SchedulePolicy): boolean {
+  if (Number.isNaN(at.getTime())) throw new Error("Invalid Date passed to isInQuietHours");
   const { hour, minute, weekday } = localParts(at, policy.timezone);
   const mins = hour * 60 + minute;
   if (policy.fridayMorningSkip && weekday === "Fri" && mins < 12 * 60) return true;
   const start = toMinutes(policy.quietStart);
   const end = toMinutes(policy.quietEnd);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) return false;
   if (start > end) return mins >= start || mins < end; // wraps midnight (default)
   return mins >= start && mins < end;
 }
@@ -67,8 +88,9 @@ export function zonedTimeToUtc(dateIso: string, hhmm: string, timezone: string):
   const [hh, mm] = hhmm.split(":").map(Number);
   const target = Date.UTC(y!, mo! - 1, d!, hh!, mm!, 0);
   if (Number.isNaN(target)) throw new Error(`Invalid date/time: ${dateIso} ${hhmm}`);
-  const fmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone: safeTimezone(timezone), year: "numeric", month: "2-digit", day: "2-digit",
+  const tz = safeTimezone(timezone);
+  const fmt = getCachedDtf(`zoned:${tz}`, "en-GB", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
   });
   let guess = target;
@@ -87,21 +109,29 @@ export function zonedTimeToUtc(dateIso: string, hhmm: string, timezone: string):
 /** Local calendar date (YYYY-MM-DD) of an instant in a timezone. */
 export function localDateOf(at: Date, timezone: string): string {
   if (Number.isNaN(at.getTime())) throw new Error("Invalid Date passed to localDateOf");
-  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: safeTimezone(timezone), year: "numeric", month: "2-digit", day: "2-digit" });
+  const tz = safeTimezone(timezone);
+  const fmt = getCachedDtf(`date:${tz}`, "en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
   return fmt.format(at);
 }
 
 /** Move an instant forward to the next allowed slot; allowed instants are returned unchanged. Never drops a reminder. */
 export function nextAllowedSlot(at: Date, policy: SchedulePolicy): Date {
-  let candidate = new Date(at);
-  // Quiet windows are < 24h and the Friday skip adds < 12h, so 5-minute steps
-  // converge in well under a day of iterations; cap defensively at 3 days.
+  if (Number.isNaN(at.getTime())) throw new Error("Invalid Date passed to nextAllowedSlot");
+  if (!isInQuietHours(at, policy)) return new Date(at);
+  // Step forward in 5-minute increments until allowed, then snap to exact
+  // minute boundary (zero seconds/ms) and rewind 1-minute steps to the exact
+  // start of the allowed window so e.g. 21:02 shifts to 09:00, not 09:02.
+  let candidate = new Date(Math.floor(at.getTime() / 60_000) * 60_000 + 60_000);
   for (let i = 0; i < 3 * 24 * 12; i++) {
-    if (!isInQuietHours(candidate, policy)) return candidate;
+    if (!isInQuietHours(candidate, policy)) {
+      for (let back = 0; back < 5; back++) {
+        const prev = new Date(candidate.getTime() - 60_000);
+        if (prev.getTime() <= at.getTime() || isInQuietHours(prev, policy)) break;
+        candidate = prev;
+      }
+      return candidate;
+    }
     candidate = new Date(candidate.getTime() + 5 * 60_000);
-    // Snap: once we land on an allowed minute, rewind to the exact boundary if
-    // the previous step crossed it (start-of-window precision matters for tests
-    // that begin mid-hour). Steps of 5 min from :00/:30 keep boundaries exact.
   }
   return candidate;
 }

@@ -71,6 +71,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -280,9 +281,10 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
     return () => clearTimeout(timer);
   }, [query]);
 
-  // Focus input and reset state on open
+  // Focus input and reset state on open; restore focus on close
   useEffect(() => {
     if (isOpen) {
+      previousFocusRef.current = document.activeElement as HTMLElement | null;
       setQuery("");
       setDebouncedQuery("");
       setSelectedIndex(0);
@@ -292,6 +294,9 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
       setHasError(false);
       const timer = setTimeout(() => inputRef.current?.focus(), 50);
       return () => clearTimeout(timer);
+    } else if (previousFocusRef.current) {
+      previousFocusRef.current.focus();
+      previousFocusRef.current = null;
     }
   }, [isOpen]);
 
@@ -427,19 +432,23 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
       {/* Palette Modal */}
       <div className="relative w-full max-w-xl overflow-hidden rounded-xl border border-border bg-surface transition-all">
         {/* Search Input Bar */}
-        <div className="flex items-center gap-3 border-b border-border/80 px-4 py-3 sm:px-5">
+        <div className="flex items-center gap-3 border-b border-border/80 px-4 py-3 transition-colors focus-within:border-primary/60 sm:px-5">
           <MagnifyingGlass size={20} strokeWidth={2.5} className="shrink-0 text-primary" aria-hidden />
           <input
             ref={inputRef}
             type="text"
+            role="combobox"
+            aria-expanded={true}
+            aria-controls="command-palette-list"
+            aria-activedescendant={totalItems > 0 ? `cmd-item-${selectedIndex}` : undefined}
+            aria-autocomplete="list"
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
               setSelectedIndex(0);
             }}
             placeholder={t("placeholder")}
-            style={{ outline: "none", boxShadow: "none", border: "none" }}
-            className={cn(inputVariants, "w-full sm:text-base")}
+            className={cn(inputVariants, "w-full border-0 bg-transparent shadow-none focus-visible:outline-none focus-visible:ring-0 sm:text-base")}
           />
           {query ? (
             <button
@@ -462,7 +471,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
         </div>
 
         {/* Results Body */}
-        <div ref={listRef} className="max-h-[380px] overflow-y-auto p-2">
+        <div id="command-palette-list" role="listbox" ref={listRef} className="max-h-[380px] overflow-y-auto p-2">
           {/* Quick Actions & AI Commands */}
           {filteredCommands.length > 0 && (
             <div className={hasQuery && (debtors.length > 0 || invoices.length > 0 || cheques.length > 0) ? "mb-2" : ""}>
@@ -480,11 +489,14 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                   return (
                     <li
                       key={cmd.id}
+                      id={`cmd-item-${idx}`}
+                      role="option"
+                      aria-selected={isSelected}
                       data-cmd-index={idx}
                       onMouseEnter={() => setSelectedIndex(idx)}
                       onClick={() => cmd.run()}
                       className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-xs transition-colors sm:text-sm ${
-                        isSelected ? "bg-primary text-primary-foreground" : "text-text hover:bg-callout"
+                        isSelected ? "bg-primary text-primary-foreground ring-1 ring-primary/30" : "text-text hover:bg-callout"
                       }`}
                     >
                       <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -509,8 +521,8 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
           )}
 
           {isLoading && (
-            <div className="py-6 text-center text-xs text-text-muted">
-              <span className="inline-block animate-pulse">...</span>
+            <div role="status" aria-live="polite" className="py-6 text-center text-xs text-text-muted">
+              <span className="inline-block animate-pulse motion-reduce:animate-none">...</span>
             </div>
           )}
 
@@ -521,8 +533,13 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
           )}
 
           {!isLoading && !hasError && hasQuery && totalItems === 0 && (
-            <div className="py-10 text-center">
+            <div className="px-4 py-10 text-center">
               <p className="text-sm font-semibold text-text-muted">{t("noResults", { query: debouncedQuery })}</p>
+              <p className="mt-1.5 text-xs text-text-subtle">
+                {isEn
+                  ? "Try searching by customer name, phone number, invoice reference, or cheque number."
+                  : "جرّب البحث باسم العميل أو رقم الهاتف أو مرجع الفاتورة أو رقم الشيك."}
+              </p>
             </div>
           )}
 
@@ -540,6 +557,9 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                   return (
                     <li
                       key={d.id}
+                      id={`cmd-item-${globalIdx}`}
+                      role="option"
+                      aria-selected={isSelected}
                       data-cmd-index={globalIdx}
                       onMouseEnter={() => setSelectedIndex(globalIdx)}
                       onClick={() => {
@@ -547,7 +567,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                         onClose();
                       }}
                       className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-sm transition-colors ${
-                        isSelected ? "bg-primary text-primary-foreground" : "text-text hover:bg-callout"
+                        isSelected ? "bg-primary text-primary-foreground ring-1 ring-primary/30" : "text-text hover:bg-callout"
                       }`}
                     >
                       <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -587,6 +607,9 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                   return (
                     <li
                       key={inv.id}
+                      id={`cmd-item-${globalIdx}`}
+                      role="option"
+                      aria-selected={isSelected}
                       data-cmd-index={globalIdx}
                       onMouseEnter={() => setSelectedIndex(globalIdx)}
                       onClick={() => {
@@ -594,7 +617,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                         onClose();
                       }}
                       className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-sm transition-colors ${
-                        isSelected ? "bg-primary text-primary-foreground" : "text-text hover:bg-callout"
+                        isSelected ? "bg-primary text-primary-foreground ring-1 ring-primary/30" : "text-text hover:bg-callout"
                       }`}
                     >
                       <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -643,6 +666,9 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                   return (
                     <li
                       key={chq.id}
+                      id={`cmd-item-${globalIdx}`}
+                      role="option"
+                      aria-selected={isSelected}
                       data-cmd-index={globalIdx}
                       onMouseEnter={() => setSelectedIndex(globalIdx)}
                       onClick={() => {
@@ -650,7 +676,7 @@ export function CommandPalette({ isOpen, onClose, locale }: CommandPaletteProps)
                         onClose();
                       }}
                       className={`flex cursor-pointer items-center justify-between rounded-xl px-3 py-2.5 text-sm transition-colors ${
-                        isSelected ? "bg-primary text-primary-foreground" : "text-text hover:bg-callout"
+                        isSelected ? "bg-primary text-primary-foreground ring-1 ring-primary/30" : "text-text hover:bg-callout"
                       }`}
                     >
                       <div className="flex min-w-0 flex-1 items-center gap-3">

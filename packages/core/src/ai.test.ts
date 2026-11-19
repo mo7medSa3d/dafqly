@@ -52,6 +52,7 @@ describe("Zod parsers (LLM output is untrusted)", () => {
     expect(parseReceiptExtraction({ is_receipt: "yes" })).toBeNull();
     expect(parseReplyClassification({ intent: "pay_everything_now", confidence: 0.99 })).toBeNull();
     expect(parseReplyClassification({ intent: "promise_to_pay", confidence: 1.4 })).toBeNull();
+    expect(parseReplyClassification({ intent: "promise_to_pay", confidence: 0.9, promised_date: "2026-02-31" })).toBeNull();
   });
 
   it("parses receipt + reply shapes", () => {
@@ -182,6 +183,7 @@ describe("resolveRelativeDate (deterministic, tenant-local today given)", () => 
     expect(resolveRelativeDate("هدفع 2026-11-20", "2026-11-09", "Africa/Cairo").date).toBe("2026-11-20");
     expect(resolveRelativeDate("31/02/2026", "2026-11-09", "Africa/Cairo")).toEqual({ date: null, ambiguous: false });
     expect(resolveRelativeDate("كلام عادي", "2026-11-09", "Africa/Cairo")).toEqual({ date: null, ambiguous: false });
+    expect(resolveRelativeDate("آخر الشهر", "not-a-date", "Africa/Cairo")).toEqual({ date: null, ambiguous: false });
   });
 });
 
@@ -211,6 +213,14 @@ describe("eval scorers", () => {
     expect(s.dateAccuracy).toBe(1);
     expect(s.optOutRecall).toBe(1);
     expect(s.injectionViolations).toBe(1); // injection row auto-acted as dispute
+  });
+  it("scoreReplySet fails closed: optOutRecall is 0 when no opt_out labels exist", () => {
+    const noOptOut = scoreReplySet([
+      { expectedIntent: "promise_to_pay", predictedIntent: "promise_to_pay", predictedConfidence: 0.9 },
+    ]);
+    expect(noOptOut.optOutTotal).toBe(0);
+    expect(noOptOut.optOutRecall).toBe(0);
+    expect(scoreReplySet([]).optOutRecall).toBe(0);
   });
   it("scoreReceiptSet: clean amount accuracy, false auto-confirms, duplicate catch rate", () => {
     const s = scoreReceiptSet([
@@ -255,6 +265,7 @@ describe("AI Workspace Engine", () => {
     expect(result.missingRequired).toContain("name");
     expect(result.missingRequired).toContain("amount");
     expect(result.unmappedHeaders).toContain("عمود_غير_معروف_xyz");
+    expect(smartHeaderMapper(["---", "###"]).mapping).toEqual({});
   });
 
   it("parseReceiptScreenshotAnalysis correctly gates auto_confirm vs merchant_review vs reject", () => {
@@ -550,5 +561,14 @@ describe("receiptExtractionSchema multi-currency and reference checks", () => {
     const dupRef = res.checks.find((c) => c.key === "duplicate_reference");
     expect(dupRef?.passed).toBe(false);
     expect(res.allPassed).toBe(false);
+
+    const blankRef = evaluateReceiptChecks({
+      extraction: { ...extraction, reference_no: "  ---  " },
+      sha256: "abc2",
+      seenHashes: new Set(),
+      seenReferences: new Set(),
+      now: new Date(),
+    });
+    expect(blankRef.checks.find((c) => c.key === "duplicate_reference")?.passed).toBe(false);
   });
 });

@@ -3,7 +3,10 @@
 // does not fail the build on a missing key, so this script is the guard;
 // it runs as part of `pnpm lint` (and therefore CI).
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const files = ["apps/web/src/messages/ar.json", "apps/web/src/messages/en.json"];
 
 function flatten(obj, prefix = "") {
@@ -18,7 +21,7 @@ function flatten(obj, prefix = "") {
   return out;
 }
 
-const [ar, en] = files.map((f) => JSON.parse(readFileSync(f, "utf8")));
+const [ar, en] = files.map((f) => JSON.parse(readFileSync(join(repoRoot, f), "utf8")));
 const arKeys = new Set(flatten(ar));
 const enKeys = new Set(flatten(en));
 const onlyAr = [...arKeys].filter((k) => !enKeys.has(k)).sort();

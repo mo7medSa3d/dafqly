@@ -1,23 +1,30 @@
 import { defineConfig } from "@playwright/test";
 import "./src/server/load-env";
 
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
+
 // E2E (BUILD_PLAN §9): Arabic RTL, mobile viewport. The root `pnpm test:e2e`
 // script runs db:migrate + db:seed before this, so the seeded demo user
 // exists. The web server is built and started by Playwright itself.
 export default defineConfig({
   testDir: "./e2e",
   timeout: 90_000,
+  expect: { timeout: 10_000 },
+  forbidOnly: Boolean(process.env.CI),
   workers: 1,
   retries: process.env.CI ? 1 : 0,
+  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL,
     viewport: { width: 390, height: 844 }, // mobile-first (BRAND §8)
     locale: "ar-EG",
+    trace: "on-first-retry",
+    screenshot: "only-on-failure",
     ...(process.env.CI ? {} : { channel: "chrome" }),
   },
   webServer: {
     command: "pnpm build && pnpm start",
-    url: "http://localhost:3000/healthz",
+    url: `${baseURL}/healthz`,
     timeout: 300_000,
     reuseExistingServer: !process.env.CI,
     env: {

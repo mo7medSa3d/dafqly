@@ -8,12 +8,13 @@
 // Run: CI=1 pnpm test:e2e (full suite) or: pnpm --filter @tahseel/web exec playwright test e2e/exploratory.spec.ts
 import { test, expect, type Browser, type Page } from "@playwright/test";
 import { execSync } from "node:child_process";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const RICH_EMAIL = "rich@tahseel.test";
 const RICH_PASSWORD = process.env.DEMO_PASSWORD ?? "demo-password-123";
-const RICH_TOKEN = "rich-statement-demo-2026";
-const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const RICH_TOKEN = "rich-statement-demo-2026-token-0001";
+const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const iso = (daysFromNow: number) => new Date(Date.now() + daysFromNow * 86_400_000).toISOString().slice(0, 10);
 
 test.beforeAll(() => {
@@ -72,12 +73,12 @@ test("rich dashboard (ar, desktop): KPIs, aging, forecast, funnel full series", 
     // itself is proven live: with 4 extra paid invoices the dashboard
     // renders the ForecastChart (aria-label + weekly-values button).
     await expect(page.getByTestId("forecast-not-enough")).toBeVisible();
-    await expect(page.getByTestId("forecast-not-enough")).toContainText(/١٠ فواتير مسددة|10 settled invoices/);
+    await expect(page.getByTestId("forecast-not-enough")).toContainText(/(?:١٠|10) فواتير مسددة|10 settled invoices/);
     // Aging bar: every bucket label renders (all buckets non-empty).
     for (const bucket of ["0-7", "8-30", "31-60", "60+"]) {
       await expect(page.getByText(bucket).first()).toBeVisible();
     }
-    await page.screenshot({ path: "e2e/screenshots/exploratory-dashboard-rich-ar-desktop.png" });
+    await page.screenshot({ path: join("e2e", "screenshots", "exploratory-dashboard-rich-ar-desktop.png") });
   } finally {
     await ctx.close();
   }
@@ -90,7 +91,7 @@ test("rich dashboard (en, mobile): LTR layout, same KPIs", async ({ page }) => {
   await expect(page.getByTestId("kpi-outstanding")).toContainText("159,880.00");
   await expect(page.getByTestId("perf-sent")).toContainText("12");
   await expect(page.getByTestId("perf-paid")).toContainText("4");
-  await page.screenshot({ path: "e2e/screenshots/exploratory-dashboard-rich-en-mobile.png" });
+  await page.screenshot({ path: join("e2e", "screenshots", "exploratory-dashboard-rich-en-mobile.png") });
 });
 
 test("debtors list: search + detail read-only", async ({ browser }) => {
@@ -118,6 +119,7 @@ test("debtors: record payment — invalid rejected, valid recorded (d2)", async 
     await richLogin(page, "ar");
     await page.goto("/ar/debtors");
     await page.getByTestId("debtor-search").fill("النخبة");
+    await expect(page.getByTestId("debtor-row")).toHaveCount(1);
     await page.getByTestId("debtor-view").first().click();
     await expect(page).toHaveURL(/\/ar\/debtors\/[0-9a-f-]+/);
     // The payment list is server-rendered, but count() does not wait for

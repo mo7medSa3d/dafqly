@@ -1,6 +1,7 @@
 "use client";
 
-import { cn, todayIso } from "@/lib/utils";
+import { cn, todayIso, toSafeLocalePath } from "@/lib/utils";
+import { formatDateTime } from "@/lib/format";
 import { buttonVariants } from "@/components/ui/button";
 import { inputVariants } from "@/components/ui/input";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -274,6 +275,10 @@ export function AiCopilotDrawer({
   const abortRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const lastPromptRef = useRef<string | undefined>(undefined);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
+  const questionInputRef = useRef<HTMLInputElement | null>(null);
+  const wasOpenRef = useRef(false);
   const [copilotAnswer, setCopilotAnswer] = useState<CopilotAnswer | null>(null);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [conversationList, setConversationList] = useState<{ id: string; title: string; updatedAt: string }[]>([]);
@@ -451,13 +456,40 @@ export function AiCopilotDrawer({
   }, [isOpen, overview, loadOverview]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      abortRef.current?.abort();
+      return;
+    }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
+      previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const frame = window.requestAnimationFrame(() => {
+        if (tab === "assistant" && questionInputRef.current) {
+          questionInputRef.current.focus();
+        } else {
+          closeBtnRef.current?.focus();
+        }
+      });
+      wasOpenRef.current = true;
+      return () => window.cancelAnimationFrame(frame);
+    }
+    if (!isOpen && wasOpenRef.current) {
+      wasOpenRef.current = false;
+      if (previousFocusRef.current?.isConnected) {
+        previousFocusRef.current.focus();
+      }
+      previousFocusRef.current = null;
+    }
+  }, [isOpen, tab]);
+
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   const activeDebtor = useMemo(
     () => overview?.debtorScores.find((d) => d.debtorId === selectedDebtorId) ?? null,
@@ -512,11 +544,11 @@ export function AiCopilotDrawer({
         }
         setDraftGenerationMode("rules");
         setSuggestedSendTime(
-          new Intl.DateTimeFormat(msgLocale === "en" ? "en-US" : "ar-EG-u-nu-latn", {
+          formatDateTime(new Date(), msgLocale === "en" ? "en-US" : "ar-EG-u-nu-latn", {
             hour: "2-digit",
             minute: "2-digit",
             timeZoneName: "short",
-          }).format(new Date()),
+          }),
         );
       } else {
         const res = await trpc.aiWorkspace.generateNotification.mutate({
@@ -648,6 +680,7 @@ export function AiCopilotDrawer({
     const shownPrompt = isEn ? promptEn : promptAr;
     if (customText) setQuestion("");
 
+    abortRef.current?.abort();
     const localAssistantId = `stream-${Date.now()}`;
     const controller = new AbortController();
     abortRef.current = controller;
@@ -731,9 +764,11 @@ export function AiCopilotDrawer({
         : (isEn ? "The assistant could not complete this request. No action was executed." : "تعذر إكمال طلب المساعد. لم يتم تنفيذ أي إجراء."));
       setPersistedMessages((prev) => prev.filter((message) => message.id !== localAssistantId));
     } finally {
-      setAsking(false);
-      setLivePhase(null);
-      abortRef.current = null;
+      if (abortRef.current === controller) {
+        setAsking(false);
+        setLivePhase(null);
+        abortRef.current = null;
+      }
     }
   };
 
@@ -796,6 +831,7 @@ export function AiCopilotDrawer({
     <div
       role="dialog"
       aria-modal="false"
+      aria-labelledby="ai-copilot-drawer-title"
       data-testid="ai-copilot-drawer"
       className={`fixed end-4 z-50 flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl transition-all duration-200 sm:end-5 ${
         isExpanded
@@ -809,7 +845,7 @@ export function AiCopilotDrawer({
           <DafqlyAiMascot size={38} mood={asking ? (livePhase === "writing" ? "writing" : "thinking") : copilotAnswer ? "happy" : "idle"} followPointer />
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <h2 className="truncate text-xs font-extrabold text-text sm:text-sm">
+              <h2 id="ai-copilot-drawer-title" className="truncate text-xs font-extrabold text-text sm:text-sm">
                 {isEn ? "DAFQLY AI Copilot" : "مساعد دفقلي الذكي"}
               </h2>
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 font-mono text-[10px] font-semibold text-foreground">
@@ -860,6 +896,7 @@ export function AiCopilotDrawer({
             )}
           </button>
           <button
+            ref={closeBtnRef}
             type="button"
             onClick={onClose}
             aria-label={isEn ? "Close" : "إغلاق"}
@@ -895,6 +932,7 @@ export function AiCopilotDrawer({
       {/* Global Dispatch Feedback Banner */}
       {dispatchFeedback && (
         <div
+          role={dispatchFeedback.ok ? "status" : "alert"}
           className={`mx-4 mt-2.5 flex shrink-0 items-start justify-between gap-2 rounded-xl border px-3 py-2 text-xs font-semibold ${
             dispatchFeedback.ok
               ? "border-status-paid-fg/30 bg-status-paid-bg text-status-paid-fg"
@@ -961,17 +999,17 @@ export function AiCopilotDrawer({
                   <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border/50 pt-2.5 text-center">
                     <div>
                       <p className="text-[10px] text-text-muted">{isEn ? "Collection" : "نسبة التحصيل"}</p>
-                      <p className="text-xs font-bold text-text sm:text-sm">{formatPct(overview.metrics.collectionRate)}</p>
+                      <p className="text-xs font-bold text-text tabular-nums sm:text-sm">{formatPct(overview.metrics.collectionRate)}</p>
                     </div>
                     <div>
                       <p className="text-[10px] text-text-muted">{isEn ? "DSO" : "متوسط التحصيل"}</p>
-                      <p className="text-xs font-bold text-text sm:text-sm">
+                      <p className="text-xs font-bold text-text tabular-nums sm:text-sm">
                         {formatDso(overview.metrics.dsoDays)} {isEn ? "d" : "ي"}
                       </p>
                     </div>
                     <div>
                       <p className="text-[10px] text-text-muted">{isEn ? "Overdue" : "المتأخرات"}</p>
-                      <p className="text-xs font-bold text-status-overdue-fg sm:text-sm">
+                      <p className="text-xs font-bold text-status-overdue-fg tabular-nums sm:text-sm" dir="ltr">
                         {formatAmountOnly(BigInt(overview.metrics.overdueMinor))}
                       </p>
                     </div>
@@ -1008,7 +1046,7 @@ export function AiCopilotDrawer({
                         <ChartLineUp size={14} className="text-primary" aria-hidden />
                         {isEn ? "Liquidity & Portfolio Risk" : "السيولة وتركز المحفظة"}
                       </span>
-                      <span className="rounded bg-callout px-2 py-0.5 text-[10px] font-bold text-primary">
+                      <span className="rounded bg-callout px-2 py-0.5 text-[10px] font-bold text-primary tabular-nums">
                         {isEn
                           ? `Velocity ${overview.portfolioRisk.velocityScore}/100`
                           : `السرعة ${overview.portfolioRisk.velocityScore}/100`}
@@ -1019,7 +1057,7 @@ export function AiCopilotDrawer({
                         <p className="text-[10px] text-text-muted">
                           {isEn ? "14-Day Expected Inflow" : "سيولة متوقعة (14 يوماً)"}
                         </p>
-                        <p className="mt-0.5 text-xs font-extrabold text-status-paid-fg" dir="ltr">
+                        <p className="mt-0.5 text-xs font-extrabold text-status-paid-fg tabular-nums" dir="ltr">
                           {formatAmountOnly(BigInt(overview.portfolioRisk.expectedNext14DaysMinor))} {currencySymbol}
                         </p>
                       </div>
@@ -1027,7 +1065,7 @@ export function AiCopilotDrawer({
                         <p className="text-[10px] text-text-muted">
                           {isEn ? "Top Debtor Share" : "تركز أعلى مدين"}
                         </p>
-                        <p className="mt-0.5 text-xs font-extrabold text-text">
+                        <p className="mt-0.5 text-xs font-extrabold text-text tabular-nums">
                           {overview.portfolioRisk.topDebtorSharePct}%
                         </p>
                       </div>
@@ -1042,7 +1080,7 @@ export function AiCopilotDrawer({
                       <UsersThree size={14} className="text-primary" aria-hidden />
                       {isEn ? "Recommended Customer Actions" : "اقتراحات متابعة العملاء"}
                     </h4>
-                    <span className="text-[10px] text-text-muted">
+                    <span className="text-[10px] text-text-muted tabular-nums">
                       {overview.topActions.length} {isEn ? "priority" : "أولوية"}
                     </span>
                   </div>
@@ -1069,14 +1107,14 @@ export function AiCopilotDrawer({
                               >
                                 {d.displayName}
                               </Link>
-                              <p className="mt-0.5 text-[11px] text-text-muted">
+                              <p className="mt-0.5 text-[11px] text-text-muted tabular-nums">
                                 {formatAmountOnly(BigInt(d.outstandingMinor))} {currencySymbol}
                                 {d.maxDaysOverdue > 0 &&
                                   ` · ${isEn ? `${d.maxDaysOverdue}d overdue` : `متأخر ${d.maxDaysOverdue} يوم`}`}
                               </p>
                             </div>
                             <span
-                              className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-bold ${tierBadgeClass(d.tier)}`}
+                              className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-bold tabular-nums ${tierBadgeClass(d.tier)}`}
                             >
                               {isEn ? `Health ${d.healthScore}` : `الصحة ${d.healthScore}/100`}
                             </span>
@@ -1331,11 +1369,11 @@ export function AiCopilotDrawer({
                 ) : (
                   <>
                 <div className="mb-1.5 flex items-center justify-between text-xs font-bold text-text">
-                  <span>
+                  <span className="tabular-nums">
                     {isEn ? "Installment Schedule" : "جدول الدفعات المقترح"} ({installmentPlan.formattedTotal}{" "}
                     {installmentPlan.currency})
                   </span>
-                  <span className="rounded bg-surface px-2 py-0.5 text-[10px] text-primary">
+                  <span className="rounded bg-surface px-2 py-0.5 text-[10px] text-primary tabular-nums">
                     {installmentPlan.installmentsCount} {isEn ? "tranches" : "أقساط"}
                   </span>
                 </div>
@@ -1346,10 +1384,10 @@ export function AiCopilotDrawer({
                         {isEn ? tr.labelEn : tr.labelAr}
                       </span>
                       <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-text-muted" dir="ltr">
+                        <span className="text-[11px] text-text-muted tabular-nums" dir="ltr">
                           {tr.dueDate}
                         </span>
-                        <span className="tnum font-bold text-primary" dir="ltr">
+                        <span className="tnum tabular-nums font-bold text-primary" dir="ltr">
                           {tr.formattedAmount}
                         </span>
                       </div>
@@ -1504,16 +1542,42 @@ export function AiCopilotDrawer({
             </div>
 
             {/* Middle Scrollable Q&A Chat Area (Questions + Answers + Tool Trace) */}
-            <div className="flex min-h-[220px] flex-1 flex-col gap-3 overflow-y-auto scroll-smooth rounded-2xl border border-border bg-background/60 p-3.5">
+            <div
+              role="log"
+              aria-live="polite"
+              aria-relevant="additions text"
+              aria-label={isEn ? "AI Copilot conversation" : "محادثة المساعد الذكي"}
+              className="flex min-h-[220px] flex-1 flex-col gap-3 overflow-y-auto scroll-smooth rounded-2xl border border-border bg-background/60 p-3.5"
+            >
               {!asking && !copilotAnswer && persistedMessages.length === 0 && (
-                <div className="my-auto flex flex-col items-center gap-2 py-6 text-center">
-                  <DafqlyAiMascot size={74} mood="idle" followPointer />
-                  <p className="text-xs font-bold text-foreground">
-                    {isEn ? "Hi! I am your DAFQLY AI assistant." : "أهلاً بك! أنا مساعد دفقلي الذكي."}
-                  </p>
-                  <p className="max-w-xs text-[11px] text-muted-foreground">
-                    {isEn ? "Ask me about any customer, overdue balance, or optimal reminder." : "اسألني عن أي عميل، المتأخرات، أو أفضل وقت للتذكير."}
-                  </p>
+                <div className="my-auto flex flex-col items-center gap-3 py-5 text-center">
+                  <DafqlyAiMascot size={68} mood="idle" followPointer />
+                  <div className="flex flex-col gap-1">
+                    <p className="text-xs font-bold text-foreground">
+                      {isEn ? "Hi! I am your DAFQLY AI assistant." : "أهلاً بك! أنا مساعد دفقلي الذكي."}
+                    </p>
+                    <p className="max-w-xs text-[11px] text-muted-foreground">
+                      {isEn ? "Ask me about any customer, overdue balance, or optimal reminder." : "اسألني عن أي عميل، المتأخرات، أو أفضل وقت للتذكير."}
+                    </p>
+                  </div>
+                  <div className="mt-1 flex w-full max-w-xs flex-col gap-1.5">
+                    {(
+                      [
+                        { id: "daily_summary", en: "Summarize today's collections & urgent items", ar: "لخّص تحصيلات اليوم والأمور العاجلة" },
+                        { id: "priority_customers", en: "Who are the top overdue customers to follow up?", ar: "من هم أهم العملاء المتأخرين للمتابعة؟" },
+                        { id: "forecast_and_risk", en: "Analyze 14-day cashflow & concentration risk", ar: "حلّل السيولة المتوقعة ومخاطر تركز المحفظة" },
+                      ] as const
+                    ).map((starter) => (
+                      <button
+                        key={starter.id}
+                        type="button"
+                        onClick={() => void runCopilotIntent(starter.id)}
+                        className="rounded-xl border border-border/80 bg-card px-3 py-2 text-start text-[11px] font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-callout/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      >
+                        {isEn ? starter.en : starter.ar}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -1650,9 +1714,8 @@ export function AiCopilotDrawer({
                   {copilotAnswer.quickLinks.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1.5" data-testid="copilot-action-buttons">
                       {copilotAnswer.quickLinks.map((lnk) => {
-                        const cleanPath = lnk.href.startsWith(`/${locale}/`)
-                          ? lnk.href
-                          : `/${locale}${lnk.href.startsWith("/") ? lnk.href : `/${lnk.href}`}`;
+                        const cleanPath = toSafeLocalePath(lnk.href, locale);
+                        if (!cleanPath) return null;
                         return (
                           <button
                             key={lnk.href}
@@ -1719,6 +1782,7 @@ export function AiCopilotDrawer({
                 className="flex items-center gap-2 rounded-2xl border border-border bg-background p-1.5 shadow-xs transition-all duration-200 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20"
               >
                 <input
+                  ref={questionInputRef}
                   type="text"
                   data-testid="copilot-question-input"
                   value={question}
@@ -1731,17 +1795,18 @@ export function AiCopilotDrawer({
                   <button
                     type="button"
                     onClick={stopAsking}
-                    aria-label={isEn ? "Stop" : "إيقاف"}
-                    className={cn(buttonVariants({ variant: "destructive", size: "xs" }), "h-8 shrink-0 rounded-full px-3")}
+                    aria-label={isEn ? "Stop generating" : "إيقاف التوليد"}
+                    className={cn(buttonVariants({ variant: "destructive", size: "sm" }), "min-h-9 shrink-0 gap-1.5 rounded-full px-3.5 text-xs font-bold shadow-xs focus-visible:ring-2 focus-visible:ring-destructive focus-visible:ring-offset-1")}
                   >
-                    {isEn ? "Stop" : "إيقاف"}
+                    <span className="size-2 rounded-[2px] bg-current" aria-hidden />
+                    <span>{isEn ? "Stop" : "إيقاف"}</span>
                   </button>
                 ) : (
                   <button
                     type="submit"
                     disabled={!question.trim()}
                     aria-label={isEn ? "Ask" : "إرسال"}
-                    className={cn(buttonVariants({ variant: "default", size: "icon" }), "size-8 shrink-0 rounded-full")}
+                    className={cn(buttonVariants({ variant: "default", size: "icon" }), "size-9 shrink-0 rounded-full")}
                   >
                     <PaperPlaneTilt size={15} aria-hidden />
                   </button>

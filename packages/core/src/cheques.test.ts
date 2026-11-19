@@ -67,6 +67,7 @@ describe("parseChequeExtraction (untrusted LLM output)", () => {
   it("accepts a valid extraction and rejects junk to null", () => {
     expect(parseChequeExtraction({ number: "123", bank: "CIB", amount_minor: 50000, issue_date: "2026-11-01", due_date: "2026-12-01", confidence: 0.9 })?.amount_minor).toBe(50000);
     expect(parseChequeExtraction({ number: "123", confidence: 2 })).toBeNull();
+    expect(parseChequeExtraction({ number: "123", bank: "CIB", amount_minor: 50000, issue_date: "2026-02-31", due_date: "2026-12-01", confidence: 0.9 })).toBeNull();
     expect(parseChequeExtraction("garbage")).toBeNull();
     expect(parseChequeExtraction(null)).toBeNull();
   });

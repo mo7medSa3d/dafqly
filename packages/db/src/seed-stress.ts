@@ -44,9 +44,6 @@ if (process.env.NODE_ENV === "production" && process.env.ALLOW_PROD_SEED !== "1"
 const phoneHash = (e164: string) => createHmac("sha256", pepper).update(e164).digest("hex");
 export const STRESS_EMAIL = "stress@tahseel.test";
 export const STRESS_PASSWORD = process.env.STRESS_PASSWORD ?? process.env.DEMO_PASSWORD ?? randomBytes(16).toString("hex");
-if (!process.env.STRESS_PASSWORD && !process.env.DEMO_PASSWORD) {
-  console.log(`seed-stress: no STRESS_PASSWORD/DEMO_PASSWORD — generated a random stress password (dev only): ${STRESS_PASSWORD}`);
-}
 export const STRESS_STATEMENT_TOKEN = "stress-statement-demo-2026";
 
 const { db, client } = createDb(url);
@@ -73,20 +70,26 @@ const DEBTOR_NAMES = [
 ];
 
 try {
+  await db.transaction(async (tx) => {
   if (process.env.RESET_STRESS_SEED === "1" || process.argv.includes("--reset")) {
-    const existingUsers = await db.select().from(user).where(eq(user.email, STRESS_EMAIL));
+    const existingUsers = await tx.select().from(user).where(eq(user.email, STRESS_EMAIL));
     for (const u of existingUsers) {
-      const ms = await db.select().from(memberships).where(eq(memberships.userId, u.id));
-      for (const m of ms) await db.delete(tenants).where(eq(tenants.id, m.tenantId));
-      await db.delete(user).where(eq(user.id, u.id));
+      const ms = await tx.select().from(memberships).where(eq(memberships.userId, u.id));
+      for (const m of ms) await tx.delete(tenants).where(eq(tenants.id, m.tenantId));
+      await tx.delete(user).where(eq(user.id, u.id));
     }
     console.log("seed-stress: previous stress tenant wiped (RESET_STRESS_SEED=1)");
   }
 
-  const existing = await db.select().from(user).where(eq(user.email, STRESS_EMAIL));
+  const existing = await tx.select().from(user).where(eq(user.email, STRESS_EMAIL));
   if (existing.length > 0) {
     console.log("seed-stress: stress user already exists, nothing to do");
-  } else {
+    return;
+  }
+  {
+    if (!process.env.STRESS_PASSWORD && !process.env.DEMO_PASSWORD) {
+      console.log(`seed-stress: no STRESS_PASSWORD/DEMO_PASSWORD — generated a random stress password (dev only): ${STRESS_PASSWORD}`);
+    }
     const tenantId = uuidv7();
     const userId = randomUUID().replace(/-/g, "");
     const settings: TenantSettings = {
@@ -95,16 +98,16 @@ try {
       defaultTermsDays: 14, easternDigits: false, currency: "EGP",
       businessNameEn: "Stress Test Trading Co.",
     };
-    await db.insert(tenants).values({
+    await tx.insert(tenants).values({
       id: tenantId, name: "شركة اختبار الضغط للتجارة", businessNameAr: "شركة اختبار الضغط للتجارة",
       timezone: "Africa/Cairo", plan: "trial", trialEndsAt: new Date(Date.now() + 14 * 86_400_000), settings,
     });
-    await db.insert(user).values({ id: userId, name: "مدير الحسابات", email: STRESS_EMAIL, emailVerified: true });
-    await db.insert(account).values({
+    await tx.insert(user).values({ id: userId, name: "مدير الحسابات", email: STRESS_EMAIL, emailVerified: true });
+    await tx.insert(account).values({
       id: randomUUID().replace(/-/g, ""), userId, accountId: userId, providerId: "credential",
       password: await argon2Hash(STRESS_PASSWORD, { type: argon2id }),
     });
-    await db.insert(memberships).values({ tenantId, userId, role: "owner" });
+    await tx.insert(memberships).values({ tenantId, userId, role: "owner" });
 
     // ------------------------------------------------------------ debtors (32)
     // optedOut: #3, #13, #23. riskFlag: #5, #15, #25, #29.
@@ -115,7 +118,7 @@ try {
       const phone = `+2010${(10000000 + i * 7919).toString().padStart(8, "0")}`;
       const idv = uuidv7();
       d.push(idv);
-      await db.insert(debtors).values({
+      await tx.insert(debtors).values({
         id: idv, tenantId, displayName: DEBTOR_NAMES[i]!, phoneE164: phone, phoneHash: phoneHash(phone),
         whatsappStatus: i % 5 === 4 ? "unreachable" : i % 3 === 0 ? "unknown" : "reachable",
         riskFlag: [5, 15, 25, 29].includes(i),
@@ -158,7 +161,7 @@ try {
       const idv = uuidv7();
       invIds.push(idv); invStatus.push(status);
       invDebtor.push(debtorIdx); invCurrency.push(currency);
-      await db.insert(invoices).values({
+      await tx.insert(invoices).values({
         id: idv, tenantId, debtorId: d[debtorIdx]!, reference: ref,
         description: "توريد بضاعة وخامات — بيانات اختبار ضغط",
         amountMinor: amount, currency, issuedOn: iso(due - 25), dueOn: iso(due),
@@ -175,14 +178,14 @@ try {
     const addPayment = async (debtorIdx: number, invoiceIdx: number, amount: bigint, status: "claimed" | "confirmed" | "rejected", method: "cash" | "instapay" | "bank" | "wallet" | "cheque" | "gateway" | "other", received: number, allocate: boolean, reversalOf?: string) => {
       const idv = uuidv7();
       payN++;
-      await db.insert(payments).values({
+      await tx.insert(payments).values({
         id: idv, tenantId, debtorId: d[debtorIdx]!, invoiceId: inv(invoiceIdx),
         amountMinor: amount, currency: invCurrency[invoiceIdx]!, idempotencyKey: `stress-pay-${payN}`,
         method, receivedOn: iso(received), status, source: "manual",
         reversalOf: reversalOf ?? null,
       });
       if (allocate && status === "confirmed") {
-        await db.insert(paymentAllocations).values({
+        await tx.insert(paymentAllocations).values({
           id: uuidv7(), tenantId, paymentId: idv, invoiceId: inv(invoiceIdx), amountMinor: amount,
         });
       }
@@ -193,7 +196,8 @@ try {
         const amount = invStatus[i] === "paid"
           ? BigInt(75_000 + ((i * 137_000) % 1_900_000))
           : BigInt(75_000 + ((i * 137_000) % 1_900_000)) / 2n;
-        await addPayment(invDebtor[i]!, i, amount, "confirmed", ["cash", "instapay", "bank", "wallet"][i % 4] as never, -3, true);
+        const methods = ["cash", "instapay", "bank", "wallet"] as const;
+        await addPayment(invDebtor[i]!, i, amount, "confirmed", methods[i % 4]!, -3, true);
       }
     }
     // Overpayments: pick debtor #30's first paid invoice (index 30 is paid?
@@ -216,11 +220,15 @@ try {
     const chequePayClaimed = await addPayment(4, 4, 150_000n, "claimed", "cheque", -1, false);
     const chequePayCleared = await addPayment(7, 7, 200_000n, "confirmed", "cheque", -5, true);
     const chequePayBounced = await addPayment(5, 5, 300_000n, "confirmed", "cheque", -10, true);
-    await db.insert(payments).values({
-      id: uuidv7(), tenantId, debtorId: d[5]!, invoiceId: inv(5),
+    const chequePayBounceReversal = uuidv7();
+    await tx.insert(payments).values({
+      id: chequePayBounceReversal, tenantId, debtorId: d[5]!, invoiceId: inv(5),
       amountMinor: -300_000n, currency: invCurrency[5]!, idempotencyKey: "stress-pay-bounce-reversal",
       method: "cheque", receivedOn: iso(-9), status: "confirmed", source: "manual",
       reversalOf: chequePayBounced,
+    });
+    await tx.insert(paymentAllocations).values({
+      id: uuidv7(), tenantId, paymentId: chequePayBounceReversal, invoiceId: inv(5), amountMinor: -300_000n,
     });
     type Chq = { debtor: number; invoice: number; number: string; bank: string; amount: bigint; issue: number; due: number; status: "held" | "deposited" | "cleared" | "bounced" | "returned" | "cancelled"; payment?: string };
     const chqDefs: Chq[] = [
@@ -234,7 +242,7 @@ try {
       { debtor: 10, invoice: 10, number: "0099008", bank: "البنك التجاري الدولي", amount: 470_000n, issue: -15, due: 12, status: "held" },
     ];
     for (const c of chqDefs) {
-      await db.insert(cheques).values({
+      await tx.insert(cheques).values({
         id: uuidv7(), tenantId, debtorId: d[c.debtor]!, direction: "receivable", invoiceId: inv(c.invoice),
         number: c.number, bank: c.bank, amountMinor: c.amount,
         issueDate: iso(c.issue), dueDate: iso(c.due), status: c.status,
@@ -255,7 +263,7 @@ try {
       { debtor: 6, invoice: 6, amount: 150_000n, on: -4, status: "cancelled" },
     ];
     for (const p of prmDefs) {
-      await db.insert(promisesToPay).values({
+      await tx.insert(promisesToPay).values({
         id: uuidv7(), tenantId, debtorId: d[p.debtor]!, invoiceId: p.invoice !== undefined ? inv(p.invoice) : null,
         amountMinor: p.amount, promisedOn: iso(p.on), status: p.status, source: p.source ?? "manual",
         note: null, fulfilledAt: p.fulfilled !== undefined ? ts(p.fulfilled) : null,
@@ -264,7 +272,7 @@ try {
 
     // ----------------------------------------------------------- disputes (4)
     const disputedIdx = invStatus.map((s, i) => (s === "disputed" ? i : -1)).filter((i) => i >= 0);
-    await db.insert(disputes).values([
+    await tx.insert(disputes).values([
       { id: uuidv7(), tenantId, debtorId: d[invDebtor[disputedIdx[0]!]!]!, invoiceId: inv(disputedIdx[0]!), raisedBy: "debtor", reason: "المبلغ غير صحيح — تم الاتفاق على خصم ولم يُطبَّق", status: "open" },
       { id: uuidv7(), tenantId, debtorId: d[invDebtor[disputedIdx[1]!]!]!, invoiceId: inv(disputedIdx[1]!), raisedBy: "debtor", reason: "البضاعة وصلت تالفة — نطلب الاستبدال", status: "open" },
       { id: uuidv7(), tenantId, debtorId: d[invDebtor[disputedIdx[2]!]!]!, invoiceId: inv(disputedIdx[2]!), raisedBy: "merchant", reason: "اختلاف على تاريخ الاستحقاق", status: "open" },
@@ -294,7 +302,7 @@ try {
     for (let i = 0; i < remSteps.length; i++) {
       const r = remSteps[i]!;
       const idx = openIdx[i % openIdx.length]!;
-      await db.insert(reminders).values({
+      await tx.insert(reminders).values({
         id: uuidv7(), tenantId, invoiceId: inv(idx), debtorId: d[invDebtor[idx]!]!,
         stepKey: r.step, channel: "whatsapp", templateKey: r.template, dueAt: ts(r.due),
         status: r.status, skipReason: null, attempts: 0,
@@ -321,7 +329,7 @@ try {
       const m = msgDefs[i]!;
       const idv = uuidv7();
       msgIds.push(idv);
-      await db.insert(messages).values({
+      await tx.insert(messages).values({
         id: idv, tenantId, debtorId: d[m.debtor]!, invoiceId: m.invoice !== undefined ? inv(m.invoice) : null,
         direction: m.dir, channel: "whatsapp", provider: "whatsapp",
         providerMessageId: `stress-wa-${m.dir}-${String(i + 1).padStart(3, "0")}`,
@@ -334,9 +342,9 @@ try {
       { msg: 9, intent: "opt_out", confidence: 0.99, resolvedBy: "auto", action: "opt_out" },
     ];
     for (const it of intentDefs) {
-      await db.insert(messageIntents).values({
+      await tx.insert(messageIntents).values({
         id: uuidv7(), tenantId, messageId: msgIds[it.msg]!, intent: it.intent,
-        extracted: { promised_date: null, amount_minor: null, model: "seed", promptVersion: "seed" } as never,
+        extracted: { promised_date: null, amount_minor: null, model: "seed", promptVersion: "seed" },
         confidence: it.confidence, resolvedBy: it.resolvedBy, actionTaken: it.action,
       });
     }
@@ -358,7 +366,7 @@ try {
       { debtor: 12, title: "مهمة ملغاة — عميل أغلق النشاط", priority: "normal", status: "cancelled", due: -7 },
     ];
     for (const t of taskDefs) {
-      await db.insert(collectionTasks).values({
+      await tx.insert(collectionTasks).values({
         id: uuidv7(), tenantId, debtorId: d[t.debtor]!, invoiceId: t.invoice !== undefined ? inv(t.invoice) : null,
         title: t.title, description: null, priority: t.priority, status: t.status,
         assignedToUserId: t.assignee ? userId : null, dueAt: ts(t.due), createdBy: userId,
@@ -379,7 +387,7 @@ try {
         ["مهمة متأخرة", "Task overdue"],
         ["إجراء ذكاء اصطناعي بانتظار الموافقة", "AI action awaiting approval"],
       ];
-      await db.insert(notifications).values({
+      await tx.insert(notifications).values({
         id: uuidv7(), tenantId, kind: kinds[i]!, severity: i % 3 === 0 ? "warning" : "info",
         titleAr: titles[i]![0], titleEn: titles[i]![1],
         bodyAr: "تنبيه اختبار ضغط — بيانات اصطناعية", bodyEn: "Stress-test alert — synthetic data",
@@ -399,23 +407,23 @@ try {
       { type: "create_collection_task", status: "rejected", title: "تصعيد قانوني مبكر", rationale: "رُفض: التصعيد القانوني سابق لأوانه لهذا العميل.", debtor: 3, invoice: 3 },
     ];
     for (const a of approvalDefs) {
-      await db.insert(aiActionApprovals).values({
+      await tx.insert(aiActionApprovals).values({
         id: uuidv7(), tenantId, requestedBy: userId, actionType: a.type, status: a.status,
         title: a.title, rationale: a.rationale,
-        payload: { debtorId: d[a.debtor]!, invoiceId: a.invoice !== undefined ? inv(a.invoice) : null } as never,
+        payload: { debtorId: d[a.debtor]!, invoiceId: a.invoice !== undefined ? inv(a.invoice) : null },
         approvedBy: a.status === "approved" ? userId : null,
         approvedAt: a.status === "approved" ? ts(-1) : null,
       });
     }
 
     // ------------------------------------------- public statement link (d0)
-    await db.insert(statementLinks).values({
+    await tx.insert(statementLinks).values({
       id: uuidv7(), tenantId, debtorId: d[0]!,
       tokenHash: createHash("sha256").update(STRESS_STATEMENT_TOKEN, "utf8").digest("hex"),
       expiresAt: ts(30), createdBy: userId,
     });
 
-    await db.insert(auditLog).values({
+    await tx.insert(auditLog).values({
       tenantId, actorUserId: userId, action: "tenant.seeded", entity: "tenant", entityId: tenantId,
       after: { synthetic: true, note: "stress dataset seed" },
     });
@@ -423,6 +431,7 @@ try {
     console.log("seed-stress: counts: debtors 32, invoices 64, cheques 8, promises 8, disputes 4, reminders 15, messages 11, intents 3, tasks 12, notifications 8, ai approvals 5, statement links 1");
     console.log(`seed-stress: public statement: /s/${STRESS_STATEMENT_TOKEN}`);
   }
+  });
 } finally {
   await client.end();
 }

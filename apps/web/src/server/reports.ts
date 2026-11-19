@@ -71,7 +71,7 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
           coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and (${todayIso}::date - due_on) between 8 and 30), 0)::bigint as aging_8_30,
           coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and (${todayIso}::date - due_on) between 31 and 60), 0)::bigint as aging_31_60,
           coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and (${todayIso}::date - due_on) > 60), 0)::bigint as aging_60p
-        from invoices where currency = ${currency}`) as unknown as Promise<[{
+        from invoices where tenant_id = ${tenantId} and currency = ${currency}`) as unknown as Promise<[{
           outstanding: string; overdue: string; invoiced90: string;
           aging_current: string; aging_0_7: string; aging_8_30: string; aging_31_60: string; aging_60p: string;
         }]>,
@@ -79,19 +79,19 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
         select i.debtor_id as "debtorId", d.display_name as "displayName", coalesce(sum(i.amount_minor - i.paid_minor), 0)::bigint as outstanding
         from invoices i
         join debtors d on d.id = i.debtor_id and d.deleted_at is null
-        where i.status in ('open','partially_paid') and i.amount_minor > i.paid_minor and i.currency = ${currency}
+        where i.tenant_id = ${tenantId} and i.status in ('open','partially_paid') and i.amount_minor > i.paid_minor and i.currency = ${currency}
         group by i.debtor_id, d.display_name order by outstanding desc, i.debtor_id asc limit 10`) as unknown as Promise<{ debtorId: string; displayName: string; outstanding: string }[]>,
       tx.execute(sql`
         select currency,
           coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor), 0)::bigint as outstanding,
           coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor and due_on < ${todayIso}::date), 0)::bigint as overdue
-        from invoices group by currency order by currency`) as unknown as Promise<{ currency: string; outstanding: string; overdue: string }[]>,
+        from invoices where tenant_id = ${tenantId} group by currency order by currency`) as unknown as Promise<{ currency: string; outstanding: string; overdue: string }[]>,
       tx.execute(sql`
         select currency,
           coalesce(sum(amount_minor) filter (where amount_minor > 0), 0)::bigint as collected,
           coalesce(-sum(amount_minor) filter (where amount_minor < 0), 0)::bigint as refunded
         from payments
-        where status = 'confirmed'
+        where tenant_id = ${tenantId} and status = 'confirmed'
           and received_on >= date_trunc('month', ${todayIso}::date)::date
           and received_on < (date_trunc('month', ${todayIso}::date) + interval '1 month')::date
         group by currency order by currency`) as unknown as Promise<{ currency: string; collected: string; refunded: string }[]>,
@@ -99,21 +99,21 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
         select
           out_agg.sent,
           out_agg.delivered,
-          (select count(distinct debtor_id)::int from messages where direction = 'in' and debtor_id in
-             (select distinct debtor_id from messages where direction = 'out' and status in ('sent','delivered','read'))) as replied,
+          (select count(distinct debtor_id)::int from messages where tenant_id = ${tenantId} and direction = 'in' and debtor_id in
+             (select distinct debtor_id from messages where tenant_id = ${tenantId} and direction = 'out' and status in ('sent','delivered','read'))) as replied,
           (select count(*)::int from (
              select i.last_reminded_at, max(p.received_on) as paid_on
              from invoices i
-             join payment_allocations a on a.invoice_id = i.id
-             join payments p on p.id = a.payment_id and p.status = 'confirmed'
-             where i.status = 'paid' and i.last_reminded_at is not null
+             join payment_allocations a on a.invoice_id = i.id and a.tenant_id = ${tenantId}
+             join payments p on p.id = a.payment_id and p.tenant_id = ${tenantId} and p.status = 'confirmed'
+             where i.tenant_id = ${tenantId} and i.status = 'paid' and i.last_reminded_at is not null
              group by i.id, i.last_reminded_at) x
            where (x.paid_on - (x.last_reminded_at at time zone ${timezone})::date) between 0 and 7) as paid_within_7d
         from (
           select
             count(*) filter (where status in ('sent','delivered','read'))::int as sent,
             count(*) filter (where status in ('delivered','read'))::int as delivered
-          from messages where direction = 'out'
+          from messages where tenant_id = ${tenantId} and direction = 'out'
         ) out_agg`) as unknown as Promise<[{ sent: number; delivered: number; replied: number; paid_within_7d: number }]>,
       tx.execute(sql`
         with weeks as (
@@ -122,7 +122,7 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
         select to_char(w.ws, 'MM-DD') as "weekStart",
           coalesce(sum(i.amount_minor) filter (where i.currency = ${currency} and i.status not in ('cancelled','written_off')), 0)::bigint as amount
         from weeks w
-        left join invoices i on i.issued_on >= w.ws and i.issued_on < (w.ws + interval '7 days')::date
+        left join invoices i on i.tenant_id = ${tenantId} and i.issued_on >= w.ws and i.issued_on < (w.ws + interval '7 days')::date
         group by w.ws order by w.ws`) as unknown as Promise<{ weekStart: string; amount: string }[]>,
       tx.execute(sql`
         with weeks as (
@@ -131,7 +131,7 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
         select to_char(w.ws, 'MM-DD') as "weekStart",
           coalesce(sum(p.amount_minor) filter (where p.currency = ${currency} and p.status = 'confirmed' and p.amount_minor > 0), 0)::bigint as amount
         from weeks w
-        left join payments p on p.received_on >= w.ws and p.received_on < (w.ws + interval '7 days')::date
+        left join payments p on p.tenant_id = ${tenantId} and p.received_on >= w.ws and p.received_on < (w.ws + interval '7 days')::date
         group by w.ws order by w.ws`) as unknown as Promise<{ weekStart: string; amount: string }[]>,
     ]);
     const collectedMap = new Map(collectedByCurrency.map((c) => [c.currency, toSafeMinor(BigInt(c.collected), `collected ${c.currency}`)]));
@@ -162,9 +162,13 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
     const refundedInMonthMinor = refundedMap.get(currency) ?? 0;
     const netCollected = Math.max(0, collectedInMonthMinor - refundedInMonthMinor);
     const invoiced90 = toSafeMinor(BigInt(agg!.invoiced90), "invoiced90");
+    const overdueAmountMinor = toSafeMinor(BigInt(agg!.overdue), "overdueAmount");
+    const ceiCollectible = netCollected + overdueAmountMinor;
+    const ceiPct = ceiCollectible > 0 ? Math.round(Math.min(100, Math.max(0, (netCollected / ceiCollectible) * 100)) * 100) / 100 : null;
     return {
       totalOutstandingMinor,
-      overdueAmountMinor: toSafeMinor(BigInt(agg!.overdue), "overdueAmount"),
+      overdueAmountMinor,
+      ceiPct,
       collectedInMonthMinor,
       refundedInMonthMinor,
       collectionRate: netCollected + totalOutstandingMinor > 0 ? netCollected / (netCollected + totalOutstandingMinor) : 0,
@@ -298,7 +302,7 @@ export async function getForecast(app: Db, tenantId: string, todayIso: string): 
         dueOn: invoices.dueOn,
       })
       .from(invoices)
-      .where(eq(invoices.currency, currency));
+      .where(and(eq(invoices.tenantId, tenantId), eq(invoices.currency, currency)));
     const allocs = await tx
       .select({
         invoiceId: paymentAllocations.invoiceId,
@@ -307,7 +311,7 @@ export async function getForecast(app: Db, tenantId: string, todayIso: string): 
       })
       .from(paymentAllocations)
       .innerJoin(payments, eq(payments.id, paymentAllocations.paymentId))
-      .where(and(eq(payments.status, "confirmed"), eq(payments.currency, currency)))
+      .where(and(eq(payments.tenantId, tenantId), eq(payments.status, "confirmed"), eq(payments.currency, currency)))
       .groupBy(paymentAllocations.invoiceId);
     const paidOn = new Map<string, string>();
     const collected = new Map<string, bigint>();
@@ -336,7 +340,7 @@ export async function exportInvoicesCsv(app: Db, tenantId: string): Promise<{ fi
   return withTenant(app, tenantId, async (tx) => {
     const [t] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
     const isAr = t?.settings?.exportLanguage === "ar";
-    const rows = await tx.select().from(invoices).orderBy(invoices.issuedOn, invoices.id);
+    const rows = await tx.select().from(invoices).where(eq(invoices.tenantId, tenantId)).orderBy(invoices.issuedOn, invoices.id);
     const headers = isAr
       ? ["المعرف", "معرف_العميل", "رقم_الفاتورة", "المبلغ_بالوحدة_الصغرى", "المدفوع_بالوحدة_الصغرى", "العملة", "تاريخ_الإصدار", "تاريخ_الاستحقاق", "الحالة"]
       : ["id", "debtor_id", "reference", "amount_minor", "paid_minor", "currency", "issued_on", "due_on", "status"];
@@ -352,7 +356,7 @@ export async function exportPaymentsCsv(app: Db, tenantId: string): Promise<{ fi
   return withTenant(app, tenantId, async (tx) => {
     const [t] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
     const isAr = t?.settings?.exportLanguage === "ar";
-    const rows = await tx.select().from(payments).orderBy(payments.receivedOn, payments.id);
+    const rows = await tx.select().from(payments).where(eq(payments.tenantId, tenantId)).orderBy(payments.receivedOn, payments.id);
     const headers = isAr
       ? ["المعرف", "معرف_العميل", "المبلغ_بالوحدة_الصغرى", "العملة", "طريقة_الدفع", "تاريخ_الاستلام", "الرقم_المرجعي", "الحالة", "المصدر"]
       : ["id", "debtor_id", "amount_minor", "currency", "method", "received_on", "reference_no", "status", "source"];
@@ -368,7 +372,7 @@ export async function exportDebtorsCsv(app: Db, tenantId: string): Promise<{ fil
   return withTenant(app, tenantId, async (tx) => {
     const [t] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
     const isAr = t?.settings?.exportLanguage === "ar";
-    const rows = await tx.select().from(debtors).where(and(isNull(debtors.deletedAt))).orderBy(debtors.createdAt, debtors.id);
+    const rows = await tx.select().from(debtors).where(and(eq(debtors.tenantId, tenantId), isNull(debtors.deletedAt))).orderBy(debtors.createdAt, debtors.id);
     const headers = isAr
       ? ["المعرف", "اسم_العميل", "الهاتف", "حالة_الواتساب", "مؤشر_المخاطر", "إلغاء_الاشتراك"]
       : ["id", "display_name", "phone_e164", "whatsapp_status", "risk_flag", "opted_out"];

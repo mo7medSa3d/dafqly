@@ -195,7 +195,7 @@ d("Prompt 03 journeys (service + HTTP layers)", () => {
     const params = { params: Promise.resolve({ token: link.token }) };
 
     // Pay route returns 410 (online debtor checkout disabled)
-    const payRes = await payPost();
+    const payRes = await payPost(new Request("http://localhost/api/public/statement/x/pay", { method: "POST" }));
     expect(payRes.status).toBe(410);
 
     // Dispute via HTTP: 201, dispute recorded, invoice disputed.

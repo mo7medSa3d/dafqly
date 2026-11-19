@@ -300,7 +300,7 @@ export function SettingsClient({ locale }: { locale: string }) {
                   <label className={labelCls}>
                     <span>{isAr ? "السجل التجاري / الرقم الضريبي (اختياري)" : "Tax / Commercial Reg ID"}</span>
                     <input
-                      className={inputCls}
+                      className={cn(inputCls, "tabular-nums")}
                       dir="ltr"
                       value={taxId}
                       onChange={(e) => setTaxId(e.target.value)}
@@ -428,7 +428,7 @@ export function SettingsClient({ locale }: { locale: string }) {
                       <input
                         type="time"
                         dir="ltr"
-                        className={inputCls}
+                        className={cn(inputCls, "tabular-nums")}
                         value={quietStart}
                         onChange={(e) => setQuietStart(e.target.value)}
                       />
@@ -438,7 +438,7 @@ export function SettingsClient({ locale }: { locale: string }) {
                       <input
                         type="time"
                         dir="ltr"
-                        className={inputCls}
+                        className={cn(inputCls, "tabular-nums")}
                         value={quietEnd}
                         onChange={(e) => setQuietEnd(e.target.value)}
                       />
@@ -526,7 +526,8 @@ export function SettingsClient({ locale }: { locale: string }) {
                       <input
                         data-testid="wa-phone-number-id"
                         dir="ltr"
-                        className={inputCls}
+                        inputMode="numeric"
+                        className={cn(inputCls, "tabular-nums")}
                         value={waPhoneNumberId}
                         onChange={(e) => setWaPhoneNumberId(e.target.value)}
                         placeholder="123456789012345"
@@ -537,7 +538,8 @@ export function SettingsClient({ locale }: { locale: string }) {
                       <input
                         data-testid="wa-waba-id"
                         dir="ltr"
-                        className={inputCls}
+                        inputMode="numeric"
+                        className={cn(inputCls, "tabular-nums")}
                         value={waWabaId}
                         onChange={(e) => setWaWabaId(e.target.value)}
                         placeholder="987654321098765"

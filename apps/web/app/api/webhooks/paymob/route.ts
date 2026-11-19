@@ -4,6 +4,8 @@ import { gatewayDeps, handlePaymobCallback } from "@/server/gateway";
 import { clientIp, rateLimit, rateLimitPeek } from "@/server/rate-limit";
 import { readRequestBodyLimited, RequestBodyTooLargeError } from "@/server/request-body";
 
+export const dynamic = "force-dynamic";
+
 /**
  * Paymob webhook (BUILD_PLAN F5, ADR-019): the HMAC-verified POST callback
  * is the ONLY fulfilment path. The `hmac` arrives as a query parameter and
@@ -26,7 +28,7 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), { status: 429, headers: { ...NO_STORE, "Retry-After": String(badHmac.retryAfterSeconds) } });
   }
   if (!env().PAYMOB_HMAC_SECRET) {
-    return Response.json(toApiErrorBody(new AppError("WEBHOOK_NOT_CONFIGURED", "PAYMOB_HMAC_SECRET is not set", 503)), { status: 503, headers: NO_STORE });
+    return Response.json(toApiErrorBody(new AppError("WEBHOOK_NOT_CONFIGURED", "Webhook not configured", 503)), { status: 503, headers: NO_STORE });
   }
   const hmac = new URL(req.url).searchParams.get("hmac")?.trim();
   if (!hmac) {
@@ -59,7 +61,15 @@ export async function POST(req: Request): Promise<Response> {
   }
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(req: Request): Promise<Response> {
+  const ip = clientIp(req.headers);
+  const limit = rateLimit(`webhook:paymob:get:${ip}`, { limit: 60, windowSeconds: 60 });
+  if (!limit.allowed) {
+    return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), {
+      status: 429,
+      headers: { ...NO_STORE, "Retry-After": String(limit.retryAfterSeconds) },
+    });
+  }
   // Redirection params are not authenticated; they change no state.
   return Response.json(
     { received: true, note: "redirect callbacks never fulfil payments; the verified POST webhook is the source of truth" },

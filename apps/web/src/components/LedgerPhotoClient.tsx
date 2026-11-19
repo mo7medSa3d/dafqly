@@ -73,6 +73,8 @@ export function LedgerPhotoClient() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadJobs = useCallback(async () => {
     try {
@@ -109,6 +111,7 @@ export function LedgerPhotoClient() {
   }, [loadJobs, loadJob]);
 
   async function onDeleteJob(id: string) {
+    if (busy) return;
     setBusy(true); setMsg(null);
     try {
       await trpc.ledgerAi.delete.mutate({ jobId: id });
@@ -122,7 +125,8 @@ export function LedgerPhotoClient() {
     }
   }
 
-  async function onFiles(files: FileList) {
+  async function onFiles(files: File[]) {
+    if (busy) return;
     setMsg(null);
     const list = Array.from(files);
     if (list.length > 10) {
@@ -132,7 +136,7 @@ export function LedgerPhotoClient() {
       });
       return;
     }
-    const uploads = [];
+    const validated: { file: File; mime: string }[] = [];
     for (const file of list) {
       const mime = resolveImageMime(file);
       if (!mime) {
@@ -153,10 +157,14 @@ export function LedgerPhotoClient() {
         });
         return;
       }
-      uploads.push({ fileName: file.name, mime, contentBase64: await fileToBase64(file) });
+      validated.push({ file, mime });
     }
     setBusy(true); setProgress(t("uploading"));
     try {
+      const uploads = [];
+      for (const { file, mime } of validated) {
+        uploads.push({ fileName: file.name, mime, contentBase64: await fileToBase64(file) });
+      }
       const created = await trpc.ledgerAi.create.mutate({ uploads });
       setProgress(t("extracting"));
       const view = await trpc.ledgerAi.runExtraction.mutate({ jobId: created.jobId });
@@ -233,8 +241,23 @@ export function LedgerPhotoClient() {
   return (
     <section className="flex flex-col gap-6">
       <div className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-12">
-        {/* Dropzone Column (7 cols) */}
-        <label className="panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border border-border/80 bg-surface/90 p-8 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/30 lg:col-span-7">
+        {/* Dropzone Column (7 cols) — WCAG 2.2 SC 2.5.7: keyboard + single-click + drag-and-drop */}
+        <label
+          aria-busy={busy}
+          onDragOver={(e) => { e.preventDefault(); if (!busy) setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDragging(false);
+            if (busy) return;
+            if (e.dataTransfer.files?.length) void onFiles(Array.from(e.dataTransfer.files));
+          }}
+          className={cn(
+            "panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border border-border/80 bg-surface/90 p-8 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/30 focus-within:border-primary focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 lg:col-span-7",
+            isDragging && "border-primary bg-primary/5 ring-2 ring-primary/30",
+            busy && "cursor-not-allowed opacity-70",
+          )}
+        >
           <div className="flex size-14 items-center justify-center rounded-xl bg-callout text-primary">
             <Camera size={32} aria-hidden />
           </div>
@@ -247,13 +270,14 @@ export function LedgerPhotoClient() {
             </p>
           </div>
           <input
+            ref={fileInputRef}
             data-testid="ledger-file"
             type="file"
             accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
             multiple
             disabled={busy}
             className="sr-only"
-            onChange={(e) => { const files = e.target.files; e.target.value = ""; if (files?.length) void onFiles(files); }}
+            onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ""; if (files.length) void onFiles(files); }}
           />
         </label>
 
@@ -301,23 +325,41 @@ export function LedgerPhotoClient() {
         </div>
       </div>
 
-      {progress && <p data-testid="ledger-progress" className="font-semibold text-primary">{progress}</p>}
+      {progress && (
+        <p data-testid="ledger-progress" role="status" aria-live="polite" className="flex items-center gap-2.5 rounded-xl border border-primary/25 bg-callout/60 px-4 py-3 text-sm font-semibold text-primary">
+          <span className="size-2 animate-pulse rounded-full bg-primary" aria-hidden />
+          <span>{progress}</span>
+        </p>
+      )}
       {job?.stats && (
-        <p className="text-text-muted">
+        <p className="tabular-nums text-sm text-text-muted">
           {t("progress", { done: job.stats.pagesDone ?? 0, total: job.stats.pagesTotal ?? 0, rows: job.stats.rowsFound ?? 0 })}
         </p>
       )}
       {msg && (
-        <p
+        <div
           role={msg.isError ? "alert" : "status"}
-          className={`rounded-xl border px-4 py-3 text-sm font-bold ${
+          className={`flex flex-wrap items-center justify-between gap-2.5 rounded-xl border px-4 py-3 text-sm font-bold ${
             msg.isError
               ? "border-danger/30 bg-danger-bg text-danger"
               : "border-status-paid-fg/25 bg-status-paid-bg text-status-paid-fg"
           }`}
         >
-          {msg.text}
-        </p>
+          <span>{msg.text}</span>
+          {msg.isError && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setMsg(null);
+                fileInputRef.current?.click();
+              }}
+              className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "underline")}
+            >
+              {isAr ? "إعادة المحاولة" : "Try again"}
+            </button>
+          )}
+        </div>
       )}
 
       {job && job.rows.length === 0 && (
@@ -331,6 +373,14 @@ export function LedgerPhotoClient() {
               ? "تأكد من وضوح الصورة والإضاءة وتجنب الظلال أو الانعكاسات القوية، ثم أعد المحاولة."
               : "Ensure the photo is clear, well-lit, and legible without heavy shadows or reflections, then try again."}
           </p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => fileInputRef.current?.click()}
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            {isAr ? "رفع صورة أخرى" : "Upload another photo"}
+          </button>
         </div>
       )}
 
@@ -340,12 +390,12 @@ export function LedgerPhotoClient() {
             <table className="w-full min-w-[720px] border-collapse text-sm">
               <thead className="sticky top-0">
                 <tr className="bg-surface-muted">
-                  <th className="px-3 py-2.5 text-start font-bold">{t("name")}</th>
-                  <th className="px-3 py-2.5 text-start font-bold">{t("phone")}</th>
-                  <th className="px-3 py-2.5 text-start font-bold">{t("amount")}</th>
-                  <th className="px-3 py-2.5 text-start font-bold">{t("date")}</th>
-                  <th className="px-3 py-2.5 text-start font-bold">{t("suggestion")}</th>
-                  <th className="px-3 py-2.5"></th>
+                  <th scope="col" className="px-3 py-2.5 text-start font-bold">{t("name")}</th>
+                  <th scope="col" className="px-3 py-2.5 text-start font-bold">{t("phone")}</th>
+                  <th scope="col" className="px-3 py-2.5 text-start font-bold">{t("amount")}</th>
+                  <th scope="col" className="px-3 py-2.5 text-start font-bold">{t("date")}</th>
+                  <th scope="col" className="px-3 py-2.5 text-start font-bold">{t("suggestion")}</th>
+                  <th scope="col" className="px-3 py-2.5"><span className="sr-only">{isAr ? "إجراء" : "Action"}</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -357,12 +407,12 @@ export function LedgerPhotoClient() {
                       {row.cellConfidence && row.cellConfidence.name < LOW && lowNote}
                     </td>
                     <td className="px-2 py-1.5">
-                      <input aria-label={t("phone")} className={cellInput} value={val(row, "phone")}
+                      <input aria-label={t("phone")} dir="ltr" className={cn(cellInput, "tabular-nums")} value={val(row, "phone")}
                         onChange={(e) => edit(row, { phone: e.target.value })} />
                       {row.errors.map((er) => <span key={er.field} className="block text-xs font-semibold text-status-overdue-fg">{er.reason}</span>)}
                     </td>
                     <td className={`px-2 py-1.5 ${row.cellConfidence && row.cellConfidence.amount < LOW ? lowCell : ""}`}>
-                      <input aria-label={t("amount")} className={cellInput}
+                      <input aria-label={t("amount")} dir="ltr" inputMode="decimal" className={cn(cellInput, "tabular-nums font-semibold")}
                         value={edits[row.id]?.amount !== undefined ? edits[row.id]!.amount! : row.data ? formatCurrencyMinor(BigInt(row.data.amountMinor), currency) : ""}
                         onChange={(e) => edit(row, { amount: e.target.value })}
                         onBlur={(e) => {
@@ -376,13 +426,13 @@ export function LedgerPhotoClient() {
                       {row.cellConfidence && row.cellConfidence.amount < LOW && lowNote}
                     </td>
                     <td className="px-2 py-1.5">
-                      <input aria-label={t("date")} className={cellInput} value={val(row, "date")}
+                      <input aria-label={t("date")} dir="ltr" className={cn(cellInput, "tabular-nums")} value={val(row, "date")}
                         onChange={(e) => edit(row, { date: e.target.value || null })} />
                     </td>
                     <td className="px-2 py-1.5 text-xs">
                       {row.suggestedDebtorId
                         ? (
-                          <button type="button" className={cn(buttonVariants({ variant: "outline", size: "default" }))}
+                          <button type="button" className={cn(buttonVariants({ variant: "outline", size: "default" }), "tabular-nums")}
                             onClick={() => edit(row, { debtorId: row.suggestedDebtorId })}>
                             {t("useSuggestion", { score: Math.round((row.suggestionScore ?? 0) * 100) })}
                           </button>
@@ -391,7 +441,7 @@ export function LedgerPhotoClient() {
                       {val(row, "debtorId") && <span className="mt-1 block font-bold text-status-paid-fg dark:text-status-paid-fg">{t("suggestionAccepted")}</span>}
                     </td>
                     <td className="px-2 py-1.5">
-                      <button type="button" disabled={busy} className={btnGhost}
+                      <button type="button" disabled={busy} aria-busy={busy} className={btnGhost}
                         onClick={() => void onSaveRow(row)}>{t("saveRow")}</button>
                     </td>
                   </tr>
@@ -401,7 +451,7 @@ export function LedgerPhotoClient() {
           </div>
           {job.status === "pending_review" && (
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border p-4 sm:px-6">
-              <button data-testid="ledger-commit" type="button" disabled={busy} onClick={() => void onCommit()} className={btnPrimary}>
+              <button data-testid="ledger-commit" type="button" disabled={busy} aria-busy={busy} onClick={() => void onCommit()} className={btnPrimary}>
                 <CheckCircle size={17} />
                 <span>{t("commit")}</span>
               </button>
@@ -448,6 +498,7 @@ export function LedgerPhotoClient() {
                   <div className="flex items-center gap-2 ms-auto">
                     <button
                       type="button"
+                      disabled={busy}
                       className={isPending ? btnPrimary : btnGhost}
                       onClick={() => void loadJob(j.id)}
                     >

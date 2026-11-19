@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { useLocale, useTranslations } from "next-intl";
@@ -14,19 +15,23 @@ export function LogoutButton({
 }) {
   const t = useTranslations("auth");
   const locale = useLocale();
+  const [busy, setBusy] = useState(false);
   return (
     <button
       type="button"
+      disabled={busy}
       title={t("logout")}
       aria-label={t("logout")}
       data-testid="logout-btn"
       className={cn(
         buttonVariants({ variant: "secondary", size: compact ? "icon" : "sm" }),
         "text-text-muted hover:bg-danger-bg hover:text-danger",
-        compact ? "size-9" : "min-h-[38px] px-4 text-text",
+        compact ? "size-9" : "min-h-[40px] px-4 text-text",
         !compact && wide && "w-full min-h-[40px] text-sm",
       )}
       onClick={async () => {
+        if (busy) return;
+        setBusy(true);
         try {
           await signOut();
         } catch {

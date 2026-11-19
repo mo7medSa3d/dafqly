@@ -67,10 +67,10 @@ export async function processInboundReply(
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
     if (!tenant) throw new AppError("NOT_FOUND", "Tenant not found", 404);
     const [debtor] = await tx.select().from(debtors)
-      .where(and(eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
+      .where(and(eq(debtors.tenantId, tenantId), eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
     if (!debtor) throw new AppError("NOT_FOUND", "Debtor not found", 404);
     const open = await tx.select().from(invoices)
-      .where(and(eq(invoices.debtorId, input.debtorId), inArray(invoices.status, ["open", "partially_paid"])))
+      .where(and(eq(invoices.tenantId, tenantId), eq(invoices.debtorId, input.debtorId), inArray(invoices.status, ["open", "partially_paid"])))
       .orderBy(asc(invoices.dueOn));
     return { tenant, debtor, openInvoices: open };
   });
@@ -143,6 +143,7 @@ export async function processInboundReply(
         await tx.update(reminders).set({ dueAt: target, updatedAt: now }).where(eq(reminders.id, future[0]!.id));
       }
     }
+    let receiptAskBody: string | null = null;
     if (action === "request_receipt") {
       // Flag for the merchant AND ask the debtor for the receipt — the
       // registry's invoice_overdue body is the approved text that asks for
@@ -150,7 +151,7 @@ export async function processInboundReply(
       await audit(tx, tenantId, "reply.receipt_requested", "debtor", debtor.id, { messageId: input.messageId });
       const first = setup.openInvoices[0];
       if (first) {
-        const body = renderTemplate("invoice_overdue", "ar", {
+        receiptAskBody = renderTemplate("invoice_overdue", "ar", {
           business: setup.tenant.businessNameAr,
           amount: formatMoney(first.amountMinor - first.paidMinor > 0n ? first.amountMinor - first.paidMinor : 0n, normalizeCurrencyCode(setup.tenant.settings?.currency), { locale: "ar" }),
           due_date: first.dueOn,
@@ -158,7 +159,7 @@ export async function processInboundReply(
         await tx.insert(messages).values({
           tenantId, debtorId: debtor.id, invoiceId: first.id, direction: "out",
           channel: "whatsapp", provider: "whatsapp", templateKey: "invoice_overdue",
-          bodyText: body, status: "queued",
+          bodyText: receiptAskBody, status: "queued",
         });
       }
     }
@@ -187,13 +188,6 @@ export async function processInboundReply(
     const needPlanInvoices = action === "replan_after_promise" && promisedDate
       ? (await tx.select({ id: reminders.id }).from(reminders).where(and(eq(reminders.debtorId, debtor.id), eq(reminders.status, "scheduled"))).limit(1)).length === 0
       : false;
-    const receiptAskBody = action === "request_receipt" && setup.openInvoices[0]
-      ? renderTemplate("invoice_overdue", "ar", {
-          business: setup.tenant.businessNameAr,
-          amount: formatMoney(setup.openInvoices[0].amountMinor - setup.openInvoices[0].paidMinor > 0n ? setup.openInvoices[0].amountMinor - setup.openInvoices[0].paidMinor : 0n, normalizeCurrencyCode(setup.tenant.settings?.currency), { locale: "ar" }),
-          due_date: setup.openInvoices[0].dueOn,
-        })
-      : null;
     return {
       outcome: {
         intent: classification.intent, confidence: classification.confidence,

@@ -21,6 +21,9 @@ function loadRootEnv(): void {
     if (value.startsWith('"')) {
       const end = value.indexOf('"', 1);
       value = end > 0 ? value.slice(1, end) : value.replace(/^"|"$/g, "");
+    } else if (value.startsWith("'")) {
+      const end = value.indexOf("'", 1);
+      value = end > 0 ? value.slice(1, end) : value.replace(/^'|'$/g, "");
     } else {
       value = value.split(" #")[0]?.trim() ?? "";
     }

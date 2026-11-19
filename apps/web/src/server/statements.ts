@@ -77,17 +77,17 @@ export async function createStatementLink(
 export async function listStatementLinks(app: Db, tenantId: string, debtorId: string, now: Date): Promise<StatementLinkView[]> {
   return withTenant(app, tenantId, async (tx) => {
     const rows = await tx.select().from(statementLinks)
-      .where(eq(statementLinks.debtorId, debtorId)).orderBy(desc(statementLinks.createdAt));
+      .where(and(eq(statementLinks.tenantId, tenantId), eq(statementLinks.debtorId, debtorId))).orderBy(desc(statementLinks.createdAt));
     return rows.map((r) => toLinkView(r, now));
   });
 }
 
 export async function revokeStatementLink(app: Db, tenantId: string, actor: string, linkId: string, now: Date): Promise<void> {
   await withTenant(app, tenantId, async (tx) => {
-    const [row] = await tx.select().from(statementLinks).where(eq(statementLinks.id, linkId));
+    const [row] = await tx.select().from(statementLinks).where(and(eq(statementLinks.tenantId, tenantId), eq(statementLinks.id, linkId)));
     if (!row) throw new AppError("NOT_FOUND", "Statement link not found", 404);
     if (row.revokedAt) return; // idempotent
-    await tx.update(statementLinks).set({ revokedAt: now, updatedAt: now }).where(eq(statementLinks.id, linkId));
+    await tx.update(statementLinks).set({ revokedAt: now, updatedAt: now }).where(and(eq(statementLinks.tenantId, tenantId), eq(statementLinks.id, linkId)));
     await audit(tx, tenantId, actor, "statement_link.revoked", "statement_link", linkId, { debtorId: row.debtorId });
   });
 }
@@ -287,7 +287,7 @@ export async function raiseStatementDispute(
 export async function listDisputes(app: Db, tenantId: string, debtorId: string) {
   return withTenant(app, tenantId, async (tx) => {
     const rows = await tx.select().from(disputes)
-      .where(eq(disputes.debtorId, debtorId)).orderBy(desc(disputes.createdAt));
+      .where(and(eq(disputes.tenantId, tenantId), eq(disputes.debtorId, debtorId))).orderBy(desc(disputes.createdAt));
     return rows.map((r) => ({
       id: r.id, invoiceId: r.invoiceId, raisedBy: r.raisedBy, reason: r.reason,
       status: r.status, createdAt: r.createdAt.toISOString(),
@@ -323,7 +323,7 @@ export async function resolveStatementDispute(
     const [disp] = await tx
       .select()
       .from(disputes)
-      .where(eq(disputes.id, input.disputeId))
+      .where(and(eq(disputes.tenantId, tenantId), eq(disputes.id, input.disputeId)))
       .for("update");
     if (!disp) throw new AppError("NOT_FOUND", "Dispute not found", 404);
 
@@ -399,6 +399,9 @@ export async function createPublicPromiseRequest(
   const { state, link } = await resolveStatement(owner, token, now);
   if (state !== "valid" || !link) throw new AppError("NOT_FOUND", "Not found", 404);
   if (!/^\d{1,18}$/.test(input.amountMinor) || BigInt(input.amountMinor) <= 0n) throw new AppError("BAD_AMOUNT", "Invalid amount", 400);
+  if (input.invoiceId !== undefined && !z.string().uuid().safeParse(input.invoiceId).success) {
+    throw new AppError("BAD_REQUEST", "Invalid invoice id", 400);
+  }
   return withTenant(app, link.tenantId, async (tx) => {
     const [tenant] = await tx.select({ timezone: tenants.timezone }).from(tenants).where(eq(tenants.id, link.tenantId));
     const todayIso = todayInTimezone(tenant?.timezone ?? "Africa/Cairo", now);
@@ -414,11 +417,13 @@ export async function createPublicPromiseRequest(
     const debtor = await lockDebtor(tx, link.debtorId);
     if (!debtor || debtor.deletedAt) throw new AppError("NOT_FOUND", "Not found", 404);
     let balance = 0n;
+    let promiseCurrency: string | undefined;
     if (input.invoiceId) {
       const [invoice] = await tx.select().from(invoices)
-        .where(and(eq(invoices.id, input.invoiceId), eq(invoices.debtorId, link.debtorId)));
+        .where(and(eq(invoices.tenantId, link.tenantId), eq(invoices.id, input.invoiceId), eq(invoices.debtorId, link.debtorId)));
       if (!invoice || !["open", "partially_paid"].includes(invoice.status)) throw new AppError("INVOICE_NOT_ACTIONABLE", "Invoice is not available", 400);
       balance = invoice.amountMinor - invoice.paidMinor;
+      promiseCurrency = invoice.currency;
     } else {
       const rows = await tx.select({ amountMinor: invoices.amountMinor, paidMinor: invoices.paidMinor, currency: invoices.currency })
         .from(invoices).where(and(eq(invoices.debtorId, link.debtorId), sql`${invoices.status} in ('open','partially_paid')`));
@@ -446,7 +451,7 @@ export async function createPublicPromiseRequest(
     await audit(tx, link.tenantId, `statement:${link.id}`, "promise.requested_from_portal", "promise_to_pay", row!.id, {
       invoiceId: input.invoiceId ?? null, amountMinor: amount.toString(), promisedOn: input.promisedOn,
     });
-    const portalCurrency = normalizeCurrencyCode((await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, link.tenantId)))[0]?.settings?.currency);
+    const portalCurrency = normalizeCurrencyCode(promiseCurrency ?? (await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, link.tenantId)))[0]?.settings?.currency);
     await upsertNotificationInTx(tx, link.tenantId, {
       kind: "promise_due",
       severity: "info",

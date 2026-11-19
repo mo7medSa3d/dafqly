@@ -87,7 +87,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
             <span className="size-2 rounded-full bg-[var(--chart-2)]" aria-hidden />
-            <time dir="ltr">{today}</time>
+            <time className="tabular-nums" dir="ltr">{today}</time>
             <span>·</span>
             <span>{tenant.timezone}</span>
           </div>
@@ -118,9 +118,9 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             testId="kpi-outstanding"
             extra={
               <span>
-                <span data-testid="kpi-open" className="tnum font-bold text-foreground" dir="ltr">{formatCount(summary.openInvoices, locale)}</span> {t("openInvoices")}
+                <span data-testid="kpi-open" className="tnum tabular-nums font-bold text-foreground" dir="ltr">{formatCount(summary.openInvoices, locale)}</span> {t("openInvoices")}
                 {" · "}
-                <span data-testid="kpi-debtors" className="tnum font-bold text-foreground" dir="ltr">{formatCount(summary.debtors, locale)}</span> {t("debtors")}
+                <span data-testid="kpi-debtors" className="tnum tabular-nums font-bold text-foreground" dir="ltr">{formatCount(summary.debtors, locale)}</span> {t("debtors")}
               </span>
             }
           />
@@ -142,7 +142,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             testId="kpi-collected"
             extra={
               BigInt(summary.refundedThisMonthMinor) > 0n ? (
-                <span data-testid="kpi-refunded">
+                <span data-testid="kpi-refunded" className="tabular-nums">
                   {isAr ? `مسترد: ${fmt(summary.refundedThisMonthMinor)} ${currencySymbol}` : `Refunded: ${fmt(summary.refundedThisMonthMinor)} ${currencySymbol}`}
                 </span>
               ) : (
@@ -187,18 +187,18 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
               <div key={b.currency} className="flex flex-col gap-1 rounded-lg bg-muted/50 px-3.5 py-2.5 text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-mono font-extrabold text-foreground">{b.currency}</span>
-                  <span className="tnum font-extrabold text-foreground" dir="ltr">
+                  <span className="tnum tabular-nums font-extrabold text-foreground" dir="ltr">
                     {formatCurrency(b.outstandingMinor, b.currency, locale)}
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
                   <span>
                     {isAr ? "متأخر:" : "Overdue:"}{" "}
-                    <span className="tnum font-semibold" dir="ltr">{formatCurrency(b.overdueMinor, b.currency, locale)}</span>
+                    <span className="tnum tabular-nums font-semibold" dir="ltr">{formatCurrency(b.overdueMinor, b.currency, locale)}</span>
                   </span>
                   <span>
                     {isAr ? "تحصيل الشهر:" : "Month:"}{" "}
-                    <span className="tnum font-semibold" dir="ltr">{formatCurrency(b.collectedInMonthMinor, b.currency, locale)}</span>
+                    <span className="tnum tabular-nums font-semibold" dir="ltr">{formatCurrency(b.collectedInMonthMinor, b.currency, locale)}</span>
                   </span>
                 </div>
               </div>
@@ -219,6 +219,9 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
                   : "Add your first invoices to populate cashflow charts and aging analytics."}
               </p>
             </div>
+            <Link href={`/${locale}/invoices`} className={`${btnPrimary} shrink-0 sm:ms-auto`}>
+              + {ti("add")}
+            </Link>
           </div>
         </section>
       )}
@@ -235,6 +238,9 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
                 <p className="max-w-md text-xs text-muted-foreground">
                   {isAr ? "أضف فواتير ومدفوعات لتفعيل منحنى التدفقات النقدية لـ 8 أسابيع." : "Log invoices and payments to unlock the 8-week cashflow projection."}
                 </p>
+                <Link href={`/${locale}/invoices`} className={`${btnPrimary} mt-1`}>
+                  + {ti("add")}
+                </Link>
               </div>
             ) : (
               <ForecastArea
@@ -259,13 +265,13 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
               <div className="grid grid-cols-2 gap-3 border-t border-border pt-4 text-center">
                 <div className="rounded-lg bg-muted/60 p-3">
                   <p className="text-[11px] font-bold text-muted-foreground">{tr("collectionRate")}</p>
-                  <p data-testid="kpi-collection-rate" className="tnum mt-1 text-lg font-extrabold text-foreground" dir="ltr">
+                  <p data-testid="kpi-collection-rate" className="tnum tabular-nums mt-1 text-lg font-extrabold text-foreground" dir="ltr">
                     {formatPercent(kpisFull.collectionRate, locale)}
                   </p>
                 </div>
                 <div className="rounded-lg bg-muted/60 p-3">
                   <p className="text-[11px] font-bold text-muted-foreground">{tr("dso")}</p>
-                  <p data-testid="kpi-dso" className="tnum mt-1 text-lg font-extrabold text-foreground" dir="ltr">
+                  <p data-testid="kpi-dso" className="tnum tabular-nums mt-1 text-lg font-extrabold text-foreground" dir="ltr">
                     {formatDso(kpisFull.dsoDays)} {isAr ? "يوم" : "d"}
                   </p>
                 </div>

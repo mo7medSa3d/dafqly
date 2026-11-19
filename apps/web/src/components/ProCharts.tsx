@@ -3,6 +3,7 @@ import { useId, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useLocale } from "next-intl";
 import { formatPct } from "@tahseel/core";
+import { getDateTimeFormatter } from "@/lib/format";
 import { useCurrency } from "./CurrencyContext";
 import { InitialAvatar } from "./ui";
 import { axisLabel } from "./charts";
@@ -104,13 +105,13 @@ export function MosaicSparkCard({
             {subtitle && <p className="mt-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{subtitle}</p>}
           </div>
           {badge && (
-            <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 font-mono text-[11px] font-bold ${badgeCls}`}>
+            <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 font-mono tabular-nums text-[11px] font-bold ${badgeCls}`}>
               {badge}
             </span>
           )}
         </div>
         <div className="mt-2 flex items-baseline gap-1.5">
-          <span data-testid={testId} className="tnum text-[30px] font-extrabold leading-none tracking-tight text-card-foreground" dir="ltr">
+          <span data-testid={testId} className="tnum tabular-nums text-[30px] font-extrabold leading-none tracking-tight text-card-foreground" dir="ltr">
             {value}
           </span>
           {unit && <span className="text-xs font-bold text-muted-foreground">{unit}</span>}
@@ -125,11 +126,11 @@ export function MosaicSparkCard({
               {hoverIdx !== null && seriesLabels?.[hoverIdx] ? seriesLabels[hoverIdx] : (sourceLabel ?? ratioBar?.label)}
             </span>
             {hoverIdx !== null && pts[hoverIdx] !== undefined ? (
-              <span className="tnum font-bold text-foreground" dir="ltr">
+              <span className="tnum tabular-nums font-bold text-foreground" dir="ltr">
                 {(pts[hoverIdx]! / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             ) : ratioBar ? (
-              <span className="tnum font-bold text-foreground" dir="ltr">{Math.round(Math.max(0, Math.min(100, ratioBar.pct)))}%</span>
+              <span className="tnum tabular-nums font-bold text-foreground" dir="ltr">{Math.round(Math.max(0, Math.min(100, ratioBar.pct)))}%</span>
             ) : null}
           </div>
         )}
@@ -137,7 +138,8 @@ export function MosaicSparkCard({
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="none"
           className="h-full w-full touch-none overflow-visible"
-          aria-hidden="true"
+          role="img"
+          aria-label={sourceLabel ? `${title} — ${sourceLabel}` : title}
           onPointerLeave={() => setHoverIdx(null)}
           onPointerMove={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
@@ -145,6 +147,7 @@ export function MosaicSparkCard({
             setHoverIdx(Math.round(ratio * (coords.length - 1)));
           }}
         >
+          <title>{sourceLabel ? `${title} — ${sourceLabel}` : title}</title>
           <defs>
             <linearGradient id={`${uid}g`} x1="0" x2="0" y1="0" y2="1">
               <stop offset="0%" stopColor={color} stopOpacity="0.22" />
@@ -152,7 +155,7 @@ export function MosaicSparkCard({
             </linearGradient>
           </defs>
           <path d={area} fill={`url(#${uid}g)`} />
-          <path d={line} fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" />
+          <path d={line} fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeDasharray={allZero ? "4 4" : undefined} strokeOpacity={allZero ? 0.4 : 1} />
           {hoverIdx !== null && coords[hoverIdx] && (
             <g>
               <line x1={coords[hoverIdx]![0]} x2={coords[hoverIdx]![0]} y1={0} y2={H} stroke={color} strokeOpacity="0.3" strokeDasharray="3 3" />
@@ -189,7 +192,13 @@ export function ForecastArea({
   const uid = useId().replace(/:/g, "");
   const [hover, setHover] = useState<number | null>(null);
   const [mode, setMode] = useState<"area" | "bars">("area");
-  if (!weeks.length) return null;
+  if (!weeks.length) {
+    return (
+      <div role="status" className="flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+        {isAr ? "لا توجد بيانات توقعات متاحة بعد." : "No forecast data available yet."}
+      </div>
+    );
+  }
   const W = 760;
   const H = 248;
   const L = 54;
@@ -207,7 +216,7 @@ export function ForecastArea({
   const total = weeks.reduce((s, w) => s + w.expectedMinor, 0);
   const totalCon = weeks.reduce((s, w) => s + w.conservativeMinor, 0);
   const peak = weeks.reduce((b, w, i) => (w.expectedMinor > weeks[b]!.expectedMinor ? i : b), 0);
-  const dateFmt = new Intl.DateTimeFormat(isAr ? "ar-EG-u-nu-latn" : "en-GB", { day: "numeric", month: "short" });
+  const dateFmt = getDateTimeFormatter(isAr ? "ar-EG-u-nu-latn" : "en-GB", { day: "numeric", month: "short" });
   const day = (iso: string) => dateFmt.format(new Date(`${iso}T00:00:00`));
   const h = hover ?? null;
   const hasBeyond = Boolean(beyondHorizon && (beyondHorizon.expectedMinor > 0 || beyondHorizon.conservativeMinor > 0));
@@ -222,21 +231,21 @@ export function ForecastArea({
         <div className="flex flex-wrap items-center gap-5">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{expectedLabel}</p>
-            <p className="tnum text-xl font-extrabold text-card-foreground" dir="ltr">
+            <p className="tnum tabular-nums text-xl font-extrabold text-card-foreground" dir="ltr">
               {fmt(total)} <span className="text-xs font-semibold text-muted-foreground">{symbol}</span>
             </p>
           </div>
           <div className="h-7 w-px bg-border" aria-hidden />
           <div>
             <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{conservativeLabel}</p>
-            <p className="tnum text-xl font-extrabold text-muted-foreground" dir="ltr">
+            <p className="tnum tabular-nums text-xl font-extrabold text-muted-foreground" dir="ltr">
               {fmt(totalCon)} <span className="text-xs font-semibold">{symbol}</span>
             </p>
           </div>
           <div className="h-7 w-px bg-border" aria-hidden />
           <div>
             <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{isAr ? "أعلى أسبوع" : "Peak week"}</p>
-            <p className="tnum text-base font-extrabold text-card-foreground">{day(weeks[peak]!.weekStart)}</p>
+            <p className="tnum tabular-nums text-base font-extrabold text-card-foreground">{day(weeks[peak]!.weekStart)}</p>
           </div>
         </div>
 
@@ -282,6 +291,7 @@ export function ForecastArea({
             setHover(Math.max(0, Math.min(weeks.length - 1, Math.round(((px - L) / (W - L - R)) * (weeks.length - 1)))));
           }}
         >
+          <title>{isAr ? "رسم توقع التدفقات النقدية خلال ثمانية أسابيع" : "Eight-week cash flow projection"}</title>
           <defs>
             <linearGradient id={`${uid}a`} x1="0" x2="0" y1="0" y2="1">
               <stop offset="0" stopColor="var(--chart-2)" stopOpacity=".28" />
@@ -296,7 +306,7 @@ export function ForecastArea({
             return (
               <g key={i}>
                 <line x1={L} x2={W - R} y1={y(v)} y2={y(v)} stroke="currentColor" opacity=".09" />
-                <text x={L - 8} y={y(v) + 3} textAnchor="end" fontSize="10" fill="currentColor" opacity=".5" style={{ direction: "ltr" }}>
+                <text x={L - 8} y={y(v) + 3} textAnchor="end" fontSize="10" fill="currentColor" opacity=".5" className="tabular-nums" style={{ direction: "ltr" }}>
                   {axisLabel(v, isAr, currency)}
                 </text>
               </g>
@@ -328,7 +338,7 @@ export function ForecastArea({
           )}
 
           {weeks.map((w, i) => (
-            <text key={w.weekStart} x={x(i)} y={H - 10} textAnchor="middle" fontSize="10" fill="currentColor" opacity=".55">
+            <text key={w.weekStart} x={x(i)} y={H - 10} textAnchor="middle" fontSize="10" fill="currentColor" opacity=".55" className="tabular-nums">
               {day(w.weekStart)}
             </text>
           ))}
@@ -354,14 +364,14 @@ export function ForecastArea({
                 <i className="size-2 rounded-full" style={{ background: "var(--chart-2)" }} />
                 {expectedLabel}
               </span>
-              <b className="tnum" dir="ltr">{fmt(weeks[h]!.expectedMinor)} {symbol}</b>
+              <b className="tnum tabular-nums" dir="ltr">{fmt(weeks[h]!.expectedMinor)} {symbol}</b>
             </p>
             <p className="flex items-center justify-between gap-3 text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <i className="size-2 rounded-full" style={{ background: "var(--chart-1)" }} />
                 {conservativeLabel}
               </span>
-              <b className="tnum" dir="ltr">{fmt(weeks[h]!.conservativeMinor)} {symbol}</b>
+              <b className="tnum tabular-nums" dir="ltr">{fmt(weeks[h]!.conservativeMinor)} {symbol}</b>
             </p>
           </div>
         )}
@@ -370,7 +380,7 @@ export function ForecastArea({
       {hasBeyond && beyondHorizon && (
         <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
           {isAr ? "مستحقات بعد أفق 8 أسابيع:" : "Due beyond 8-week horizon:"}{" "}
-          <span className="tnum font-bold text-foreground" dir="ltr">
+          <span className="tnum tabular-nums font-bold text-foreground" dir="ltr">
             {fmt(beyondHorizon.expectedMinor)} {symbol}
           </span>
         </p>
@@ -384,17 +394,17 @@ export function ForecastArea({
           <table className="w-full text-start">
             <thead className="bg-muted text-muted-foreground">
               <tr>
-                <th className="p-2.5 text-start">{isAr ? "الأسبوع" : "Week"}</th>
-                <th className="p-2.5 text-start">{expectedLabel}</th>
-                <th className="p-2.5 text-start">{conservativeLabel}</th>
+                <th scope="col" className="p-2.5 text-start">{isAr ? "الأسبوع" : "Week"}</th>
+                <th scope="col" className="p-2.5 text-start">{expectedLabel}</th>
+                <th scope="col" className="p-2.5 text-start">{conservativeLabel}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {weeks.map((w) => (
                 <tr key={w.weekStart}>
-                  <td className="p-2.5" dir="ltr">{w.weekStart}</td>
-                  <td className="p-2.5 font-bold" dir="ltr">{fmt(w.expectedMinor)} {symbol}</td>
-                  <td className="p-2.5 text-muted-foreground" dir="ltr">{fmt(w.conservativeMinor)} {symbol}</td>
+                  <td className="p-2.5 tabular-nums" dir="ltr">{w.weekStart}</td>
+                  <td className="p-2.5 font-bold tabular-nums" dir="ltr">{fmt(w.expectedMinor)} {symbol}</td>
+                  <td className="p-2.5 text-muted-foreground tabular-nums" dir="ltr">{fmt(w.conservativeMinor)} {symbol}</td>
                 </tr>
               ))}
             </tbody>
@@ -426,10 +436,19 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
   const sevRatio = total > 0 ? severe / total : 0;
   const shown = active ? buckets.find((b) => b.key === active) : null;
 
+  if (total <= 0) {
+    return (
+      <div role="status" className="flex min-h-[176px] items-center justify-center rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+        {isAr ? "لا توجد أرصدة مفتوحة للعرض." : "No open receivables to display."}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center">
       <div className="relative size-[176px] shrink-0">
         <svg viewBox="0 0 160 160" className="size-full -rotate-90" role="img" aria-label={isAr ? "توزيع أعمار المستحقات" : "Receivables aging distribution"}>
+          <title>{isAr ? "توزيع أعمار المستحقات" : "Receivables aging distribution"}</title>
           <circle cx="80" cy="80" r={R} fill="none" stroke="var(--muted)" strokeWidth="18" />
           {buckets.map((b, i) => {
             const len = total ? (b.amountMinor / total) * C : 0;
@@ -458,10 +477,10 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
           <p className="text-[11px] font-bold text-muted-foreground">{shown ? shown.label : isAr ? "الإجمالي" : "Total"}</p>
-          <p className="tnum text-base font-extrabold text-card-foreground" dir="ltr">
+          <p className="tnum tabular-nums text-base font-extrabold text-card-foreground" dir="ltr">
             {formatAmountOnly(BigInt(Math.round(shown ? shown.amountMinor : total)), { digits: "latin" })}
           </p>
-          <p className="tnum text-[10px] font-semibold text-muted-foreground" dir="ltr">
+          <p className="tnum tabular-nums text-[10px] font-semibold text-muted-foreground" dir="ltr">
             {shown && total ? formatPct(shown.amountMinor / total) : symbol}
           </p>
         </div>
@@ -479,13 +498,13 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
               <i className="size-2.5 rounded-full" style={{ background: AGING_COLOR[b.key] ?? SERIES[i % SERIES.length] }} />
               {b.label}
             </span>
-            <span className="tnum font-bold text-muted-foreground" dir="ltr">
+            <span className="tnum tabular-nums font-bold text-muted-foreground" dir="ltr">
               {total ? formatPct(b.amountMinor / total) : formatPct(0)}
             </span>
           </li>
         ))}
         {severe > 0 && (
-          <li className="mt-1 rounded-lg bg-danger-bg px-2.5 py-1.5 font-bold text-danger">
+          <li className="mt-1 rounded-lg bg-danger-bg px-2.5 py-1.5 font-bold tabular-nums text-danger">
             {isAr ? `${formatPct(sevRatio)} من الرصيد تجاوز 30 يوماً` : `${formatPct(sevRatio)} over 30 days`}
           </li>
         )}
@@ -506,6 +525,7 @@ export function Gauge({ value, label, caption }: { value: number; label: string;
   return (
     <div className="flex flex-col items-center gap-1.5 text-center">
       <svg viewBox="0 0 180 104" className="w-full max-w-[230px]" role="img" aria-label={`${label}: ${pctLabel}`}>
+        <title>{`${label}: ${pctLabel}`}</title>
         <path d="M20 90 A70 70 0 0 1 160 90" fill="none" stroke="var(--muted)" strokeWidth="14" strokeLinecap="round" />
         <path
           d="M20 90 A70 70 0 0 1 160 90"
@@ -516,12 +536,12 @@ export function Gauge({ value, label, caption }: { value: number; label: string;
           strokeDasharray={`${(pct / 100) * arc} ${arc}`}
           className="pc-gauge"
         />
-        <text x="90" y="80" textAnchor="middle" fontSize="24" fontWeight="800" fill="currentColor" className="tnum">
+        <text x="90" y="80" textAnchor="middle" fontSize="24" fontWeight="800" fill="currentColor" className="tnum tabular-nums">
           {pctLabel}
         </text>
       </svg>
       <p className="text-sm font-bold">{label}</p>
-      {caption && <p className="text-xs text-muted-foreground">{caption}</p>}
+      {caption && <p className="tabular-nums text-xs text-muted-foreground">{caption}</p>}
     </div>
   );
 }
@@ -536,8 +556,16 @@ export interface RankedItem {
 }
 
 export function RankedBars({ items }: { items: RankedItem[] }) {
+  const isAr = useLocale() === "ar";
   const { symbol, formatAmountOnly } = useCurrency();
   const topItems = items.slice(0, 4);
+  if (topItems.length === 0) {
+    return (
+      <div role="status" className="flex min-h-[140px] items-center justify-center rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+        {isAr ? "لا توجد بيانات للعرض." : "No data to display."}
+      </div>
+    );
+  }
   const max = Math.max(1, ...topItems.map((i) => i.amountMinor));
   return (
     <ol className="flex flex-col gap-2.5">
@@ -545,12 +573,12 @@ export function RankedBars({ items }: { items: RankedItem[] }) {
         <li key={d.id}>
           <Link href={d.href} className="group flex flex-col gap-1.5 rounded-xl px-2.5 py-2 transition-colors hover:bg-accent">
             <span className="flex items-center gap-2.5">
-              <span className="tnum flex size-5 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[10px] font-extrabold text-muted-foreground" dir="ltr">
+              <span className="tnum tabular-nums flex size-5 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[10px] font-extrabold text-muted-foreground" dir="ltr">
                 {i + 1}
               </span>
               <InitialAvatar name={d.name} size={28} />
               <span className="min-w-0 flex-1 truncate text-sm font-bold">{d.name}</span>
-              <span className="tnum text-sm font-extrabold text-foreground" dir="ltr">
+              <span className="tnum tabular-nums text-sm font-extrabold text-foreground" dir="ltr">
                 {formatAmountOnly(BigInt(Math.round(d.amountMinor)), { digits: "latin" })} <span className="text-[11px] font-normal text-muted-foreground">{symbol}</span>
               </span>
             </span>

@@ -71,7 +71,7 @@ export function ThemeToggle({
     ? (isEn ? "Switch to light mode" : "تفعيل الوضع النهاري")
     : (isEn ? "Switch to dark mode" : "تفعيل الوضع الليلي");
 
-  const sizeCls = size === "sm" ? "size-8" : "size-9";
+  const sizeCls = size === "sm" ? "size-9" : "size-10";
   const iconSize = size === "sm" ? 15 : 17;
 
   return (

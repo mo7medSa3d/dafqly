@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import {
   AppError, resolveDueOn,
@@ -175,8 +175,11 @@ export async function getImportJob(app: Db, tenantId: string, jobId: string): Pr
 
 export async function listImportJobs(app: Db, tenantId: string) {
   return withTenant(app, tenantId, async (tx) => {
-    const rows = await tx.select().from(importJobs).where(eq(importJobs.tenantId, tenantId)).orderBy(asc(importJobs.id));
-    return rows.slice(-25).reverse().map((j) => ({
+    const rows = await tx.select({
+      id: importJobs.id, fileName: importJobs.fileName, status: importJobs.status, stats: importJobs.stats,
+      committedAt: importJobs.committedAt, undoExpiresAt: importJobs.undoExpiresAt,
+    }).from(importJobs).where(eq(importJobs.tenantId, tenantId)).orderBy(desc(importJobs.id)).limit(25);
+    return rows.map((j) => ({
       id: j.id, fileName: j.fileName, status: j.status, stats: j.stats,
       committedAt: j.committedAt?.toISOString() ?? null, undoExpiresAt: j.undoExpiresAt?.toISOString() ?? null,
     }));
@@ -184,7 +187,9 @@ export async function listImportJobs(app: Db, tenantId: string) {
 }
 
 export async function commitImport(app: Db, tenantId: string, actor: string, jobId: string, today: string) {
-  const result = await withTenant(app, tenantId, async (tx) => {
+  let result: { jobId: string; createdDebtors: number; createdInvoices: number; undoExpiresAt: string };
+  try {
+  result = await withTenant(app, tenantId, async (tx) => {
     const [job] = await tx.select().from(importJobs).where(and(eq(importJobs.id, jobId), eq(importJobs.tenantId, tenantId))).for("update");
     if (!job) throw new AppError("NOT_FOUND", "Import job not found", 404);
     if (job.status !== "pending_review") throw new AppError("ALREADY_COMMITTED", "This import was already committed", 409);
@@ -257,6 +262,13 @@ export async function commitImport(app: Db, tenantId: string, actor: string, job
     });
     return { jobId, createdDebtors, createdInvoices, undoExpiresAt: undoExpiresAt.toISOString() };
   });
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
+    if (code === "23505") {
+      throw new AppError("DUPLICATE_REFERENCE", "An invoice reference in this import already exists for this tenant", 409);
+    }
+    throw err;
+  }
   replanTenantLater(tenantId); // F4: imported invoices get reminder plans too
   return result;
 }

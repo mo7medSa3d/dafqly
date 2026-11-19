@@ -12,8 +12,10 @@ describe("template registry", () => {
     const text = renderTemplate("payment_received", "ar", { amount: "100", remaining: "50" });
     expect(text).not.toContain(OPT_OUT_LINE.ar);
   });
-  it("rejects missing or extra-shaped variables (Zod schema per template)", () => {
+  it("rejects missing, whitespace-only, or prototype-key lookups", () => {
     expect(() => renderTemplate("invoice_due_today", "en", { business: "Shop" })).toThrow();
+    expect(() => renderTemplate("invoice_due_today", "en", { business: "   ", amount: "100" })).toThrow();
+    expect(() => renderTemplate("toString" as TemplateKey, "en", {})).toThrow(/Unknown template/);
   });
   it("every registered template renders in both locales with its schema's minimal variables", () => {
     const samples: Record<TemplateKey, Record<string, string>> = {

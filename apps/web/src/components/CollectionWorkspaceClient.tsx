@@ -60,15 +60,11 @@ export function CollectionWorkspaceClient({
   const [debtorId, setDebtorId] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [dueAt, setDueAt] = useState(() => {
-    const d = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    return d.toISOString().slice(0, 16);
-  });
+  const [dueAt, setDueAt] = useState(() => `${todayIso(1)}T09:00`);
   const [assignee, setAssignee] = useState("");
   const [priority, setPriority] = useState<"normal" | "high" | "urgent" | "low">("normal");
   const [promiseAmount, setPromiseAmount] = useState("");
-  const [promiseDate, setPromiseDate] = useState(todayIso(1));
+  const [promiseDate, setPromiseDate] = useState(() => todayIso(1));
   const [promiseInvoiceId, setPromiseInvoiceId] = useState("");
   const [promiseNote, setPromiseNote] = useState("");
   const [selectedPromiseDebtor, setSelectedPromiseDebtor] = useState("");
@@ -323,7 +319,7 @@ export function CollectionWorkspaceClient({
             <Lightning size={16} className="text-[var(--chart-1)]" />
             {isAr ? "جدولة التذكيرات الذكية" : "Optimize reminders"}
           </button>
-          <button onClick={() => void refresh()} disabled={loading} className={btnGhost}>
+          <button type="button" onClick={() => void refresh()} disabled={loading} aria-busy={loading} className={btnGhost}>
             {isAr ? "تحديث البيانات" : "Refresh data"}
           </button>
         </div>
@@ -372,13 +368,13 @@ export function CollectionWorkspaceClient({
                       <p className="truncate text-sm font-extrabold">{member.name}</p>
                       <p className="truncate text-xs text-text-muted">{member.role}</p>
                     </div>
-                    <span className="rounded-lg bg-primary/10 px-2 py-1 text-xs font-extrabold text-primary" dir="ltr">
+                    <span className="tabular-nums rounded-lg bg-primary/10 px-2 py-1 text-xs font-extrabold text-primary" dir="ltr">
                       {open}
                     </span>
                   </div>
                   <div className="mt-3 flex items-center justify-between text-xs">
                     <span className="text-text-muted">{isAr ? "إنجاز التذاكر" : "Ticket completion"}</span>
-                    <strong dir="ltr">{completion}%</strong>
+                    <strong className="tabular-nums" dir="ltr">{completion}%</strong>
                   </div>
                   <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-surface-muted">
                     <div className="h-full rounded-full bg-primary" style={{ width: `${completion}%` }} />
@@ -397,7 +393,7 @@ export function CollectionWorkspaceClient({
             })}
             <article className="flex flex-col justify-center rounded-xl border border-dashed border-border p-3.5">
               <p className="text-xs font-bold text-text-muted">{isAr ? "تذاكر غير مسندة" : "Unassigned tickets"}</p>
-              <p className="mt-1 text-2xl font-extrabold" dir="ltr">
+              <p className="mt-1 tabular-nums text-2xl font-extrabold" dir="ltr">
                 {tasks.filter((task) => !task.assignedToUserId && (task.status === "open" || task.status === "in_progress")).length}
               </p>
               <p className="mt-1 text-xs text-text-muted">{isAr ? "تحتاج تعيين مسؤول" : "Need an owner"}</p>
@@ -414,6 +410,7 @@ export function CollectionWorkspaceClient({
           <button
             key={id}
             type="button"
+            aria-pressed={tab === id}
             onClick={() => setTab(id)}
             className={cn(
               buttonVariants({ variant: tab === id ? "default" : "ghost", size: "default" }),
@@ -423,7 +420,7 @@ export function CollectionWorkspaceClient({
             <Icon size={18} />
             {label}
             {typeof count === "number" && (
-              <span className={`rounded-md px-2 py-0.5 text-xs ${tab === id ? "bg-primary-foreground/15" : "bg-muted"}`}>
+              <span className={`tabular-nums rounded-md px-2 py-0.5 text-xs ${tab === id ? "bg-primary-foreground/15" : "bg-muted"}`}>
                 {count}
               </span>
             )}
@@ -433,7 +430,7 @@ export function CollectionWorkspaceClient({
 
       {(error || success) && (
         <p
-          role="status"
+          role={error ? "alert" : "status"}
           className={`rounded-xl border p-3.5 text-sm font-semibold ${
             error
               ? "border-danger/30 bg-danger-bg text-danger"
@@ -470,7 +467,7 @@ export function CollectionWorkspaceClient({
                     )}
                   >
                     <span>{f.label}</span>
-                    <span className="font-mono text-[10px] opacity-80">{f.count}</span>
+                    <span className="font-mono tabular-nums text-[10px] opacity-80">{f.count}</span>
                   </button>
                 ))}
               </div>
@@ -515,7 +512,7 @@ export function CollectionWorkspaceClient({
                         <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-text-muted">
                           <span>{task.assignedToName || (isAr ? "غير مسندة" : "Unassigned")}</span>
                           <span>·</span>
-                          <span className="inline-flex items-center gap-1" dir="ltr">
+                          <span className="inline-flex items-center gap-1 tabular-nums" dir="ltr">
                             <Clock size={12} />
                             {new Date(task.dueAt).toLocaleString(isAr ? "ar-EG-u-nu-latn" : "en-GB")}
                           </span>
@@ -527,24 +524,27 @@ export function CollectionWorkspaceClient({
                             <button
                               type="button"
                               disabled={busy}
+                              aria-busy={busy}
                               onClick={() => void rescheduleTask(task, 1)}
                               title={isAr ? "تأجيل يوم واحد" : "Postpone 1 day"}
-                              className="rounded-lg border border-border bg-card px-2 py-1 font-mono text-[11px] font-bold text-text-muted hover:border-foreground/40 hover:text-text"
+                              className="rounded-lg border border-border bg-card px-2 py-1 font-mono tabular-nums text-[11px] font-bold text-text-muted hover:border-foreground/40 hover:text-text disabled:opacity-50"
                             >
                               +1d
                             </button>
                             <button
                               type="button"
                               disabled={busy}
+                              aria-busy={busy}
                               onClick={() => void rescheduleTask(task, 3)}
                               title={isAr ? "تأجيل 3 أيام" : "Postpone 3 days"}
-                              className="rounded-lg border border-border bg-card px-2 py-1 font-mono text-[11px] font-bold text-text-muted hover:border-foreground/40 hover:text-text"
+                              className="rounded-lg border border-border bg-card px-2 py-1 font-mono tabular-nums text-[11px] font-bold text-text-muted hover:border-foreground/40 hover:text-text disabled:opacity-50"
                             >
                               +3d
                             </button>
                             <button
                               type="button"
                               disabled={busy}
+                              aria-busy={busy}
                               onClick={() =>
                                 void mutateAction(
                                   () =>
@@ -565,6 +565,7 @@ export function CollectionWorkspaceClient({
                           <button
                             type="button"
                             disabled={busy}
+                            aria-busy={busy}
                             onClick={() =>
                               void mutateAction(
                                 () => trpc.collections.updateTask.mutate({ id: task.id, status: "open" }),
@@ -646,14 +647,17 @@ export function CollectionWorkspaceClient({
                 <Field label={isAr ? "موعد المتابعة" : "Scheduled at"}>
                   <input
                     type="datetime-local"
-                    className={inputCls}
+                    dir="ltr"
+                    className={cn(inputCls, "tabular-nums")}
                     value={dueAt}
                     onChange={(e) => setDueAt(e.target.value)}
                   />
                 </Field>
               </div>
               <button
+                type="button"
                 disabled={busy || !debtorId || title.trim().length < 3}
+                aria-busy={busy}
                 onClick={() => void createTask()}
                 className={btnPrimary}
               >
@@ -742,7 +746,7 @@ export function CollectionWorkspaceClient({
                       {isAr ? reminderResult.windowLabelAr : reminderResult.windowLabelEn}
                     </p>
                   </div>
-                  <span className="rounded-lg bg-primary px-2.5 py-1 font-mono text-xs font-bold text-primary-foreground" dir="ltr">
+                  <span className="rounded-lg bg-primary px-2.5 py-1 font-mono tabular-nums text-xs font-bold text-primary-foreground" dir="ltr">
                     {reminderResult.localDateFormatted} · {reminderResult.localTimeFormatted}
                   </span>
                 </div>
@@ -835,11 +839,11 @@ export function CollectionWorkspaceClient({
                   <table className="w-full min-w-[680px] text-start text-sm">
                     <thead>
                       <tr className="border-b border-border text-xs text-text-muted">
-                        <th className="py-2 text-start font-bold">{isAr ? "العميل" : "Customer"}</th>
-                        <th className="py-2 text-start font-bold">{isAr ? "الفاتورة / المبلغ" : "Invoice / Amount"}</th>
-                        <th className="py-2 text-start font-bold">{isAr ? "الموعد" : "Due"}</th>
-                        <th className="py-2 text-start font-bold">{isAr ? "الحالة" : "Status"}</th>
-                        <th className="py-2 text-end font-bold">{isAr ? "إجراء" : "Action"}</th>
+                        <th scope="col" className="py-2 text-start font-bold">{isAr ? "العميل" : "Customer"}</th>
+                        <th scope="col" className="py-2 text-start font-bold">{isAr ? "الفاتورة / المبلغ" : "Invoice / Amount"}</th>
+                        <th scope="col" className="py-2 text-start font-bold">{isAr ? "الموعد" : "Due"}</th>
+                        <th scope="col" className="py-2 text-start font-bold">{isAr ? "الحالة" : "Status"}</th>
+                        <th scope="col" className="py-2 text-end font-bold">{isAr ? "إجراء" : "Action"}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -851,9 +855,9 @@ export function CollectionWorkspaceClient({
                             </Link>
                           </td>
                           <td className="py-2.5 text-xs text-text-muted">
-                            <span className="font-mono">{r.invoiceRef ?? "—"}</span> · {format(r.amountMinor, { currency: r.currency })}
+                            <span className="font-mono tabular-nums" dir="ltr">{r.invoiceRef ?? "—"}</span> · <span className="tabular-nums font-semibold text-text" dir="ltr">{format(r.amountMinor, { currency: r.currency })}</span>
                           </td>
-                          <td className="py-2.5 font-mono text-xs" dir="ltr">
+                          <td className="py-2.5 font-mono tabular-nums text-xs" dir="ltr">
                             {r.dueAt.slice(0, 16).replace("T", " ")}
                           </td>
                           <td className="py-2.5 text-xs">
@@ -867,8 +871,9 @@ export function CollectionWorkspaceClient({
                               <button
                                 type="button"
                                 disabled={busy}
+                                aria-busy={busy}
                                 onClick={() => void onCancelReminder(r.id)}
-                                className="rounded-md border border-border px-2.5 py-1 text-xs font-bold text-danger hover:bg-danger-bg"
+                                className="rounded-md border border-border px-2.5 py-1 text-xs font-bold text-danger hover:bg-danger-bg disabled:opacity-50"
                               >
                                 {isAr ? "إلغاء" : "Cancel"}
                               </button>
@@ -904,11 +909,11 @@ export function CollectionWorkspaceClient({
                 <table className="w-full min-w-[650px] text-start text-sm">
                   <thead className="sticky top-0 bg-surface text-xs text-text-muted">
                     <tr>
-                      <th className="pb-3">{isAr ? "العميل" : "Customer"}</th>
-                      <th className="pb-3">{isAr ? "المبلغ" : "Amount"}</th>
-                      <th className="pb-3">{isAr ? "موعد السداد" : "Promised date"}</th>
-                      <th className="pb-3">{isAr ? "الحالة" : "Status"}</th>
-                      <th className="pb-3">{isAr ? "إجراء" : "Action"}</th>
+                      <th scope="col" className="pb-3">{isAr ? "العميل" : "Customer"}</th>
+                      <th scope="col" className="pb-3">{isAr ? "المبلغ" : "Amount"}</th>
+                      <th scope="col" className="pb-3">{isAr ? "موعد السداد" : "Promised date"}</th>
+                      <th scope="col" className="pb-3">{isAr ? "الحالة" : "Status"}</th>
+                      <th scope="col" className="pb-3">{isAr ? "إجراء" : "Action"}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -929,10 +934,10 @@ export function CollectionWorkspaceClient({
                                   : "Merchant recorded")}
                           </p>
                         </td>
-                        <td className="py-3 font-extrabold" dir="ltr">
+                        <td className="py-3 tabular-nums font-extrabold" dir="ltr">
                           {fmt(p.amountMinor, p.currency)}
                         </td>
-                        <td className="py-3" dir="ltr">
+                        <td className="py-3 tabular-nums" dir="ltr">
                           {p.promisedOn}
                         </td>
                         <td className="py-3">
@@ -950,7 +955,9 @@ export function CollectionWorkspaceClient({
                             {p.status === "pending" && (
                               <>
                                 <button
+                                  type="button"
                                   disabled={busy || role !== "owner"}
+                                  aria-busy={busy}
                                   title={role !== "owner" ? (isAr ? "تغيير حالة التعهد يتطلب موافقة المالك" : "Owner approval required to change promise status") : undefined}
                                   onClick={() =>
                                     void mutateAction(
@@ -963,7 +970,9 @@ export function CollectionWorkspaceClient({
                                   {isAr ? "قبول" : "Accept"}
                                 </button>
                                 <button
+                                  type="button"
                                   disabled={busy || role !== "owner"}
+                                  aria-busy={busy}
                                   title={role !== "owner" ? (isAr ? "تغيير حالة التعهد يتطلب موافقة المالك" : "Owner approval required to change promise status") : undefined}
                                   onClick={() =>
                                     void mutateAction(
@@ -981,7 +990,9 @@ export function CollectionWorkspaceClient({
                               <>
                                 {p.overdue && (
                                   <button
+                                    type="button"
                                     disabled={busy || role !== "owner"}
+                                    aria-busy={busy}
                                     title={
                                       role !== "owner"
                                         ? isAr
@@ -1031,8 +1042,9 @@ export function CollectionWorkspaceClient({
               </Field>
               <Field label={isAr ? `المبلغ (${currency})` : `Amount (${currency})`}>
                 <input
+                  dir="ltr"
                   inputMode="decimal"
-                  className={inputCls}
+                  className={cn(inputCls, "tabular-nums")}
                   value={promiseAmount}
                   onChange={(e) => setPromiseAmount(e.target.value)}
                   placeholder="1250.00"
@@ -1041,7 +1053,8 @@ export function CollectionWorkspaceClient({
               <Field label={isAr ? "تاريخ السداد" : "Promised date"}>
                 <input
                   type="date"
-                  className={inputCls}
+                  dir="ltr"
+                  className={cn(inputCls, "tabular-nums")}
                   value={promiseDate}
                   onChange={(e) => setPromiseDate(e.target.value)}
                 />
@@ -1055,7 +1068,9 @@ export function CollectionWorkspaceClient({
                 />
               </Field>
               <button
+                type="button"
                 disabled={busy || !selectedPromiseDebtor || !promiseAmountValid}
+                aria-busy={busy}
                 onClick={() => void createPromise()}
                 className={btnPrimary}
               >
@@ -1112,7 +1127,9 @@ export function CollectionWorkspaceClient({
                   </div>
                   <div className="flex shrink-0 gap-2">
                     <button
+                      type="button"
                       disabled={busy || role !== "owner"}
+                      aria-busy={busy}
                       title={
                         role !== "owner"
                           ? isAr
@@ -1134,7 +1151,9 @@ export function CollectionWorkspaceClient({
                       {isAr ? "موافقة" : "Approve"}
                     </button>
                     <button
+                      type="button"
                       disabled={busy || role !== "owner"}
+                      aria-busy={busy}
                       onClick={() =>
                         void mutateAction(
                           () => trpc.aiActions.decide.mutate({ id: item.id, decision: "reject" }),
@@ -1168,7 +1187,7 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
   return (
     <div className="rounded-xl border border-border bg-surface p-4">
       <p className="text-xs font-bold text-text-muted">{label}</p>
-      <p className="mt-2 text-3xl font-extrabold tracking-tight text-text" dir="ltr">
+      <p className="mt-2 tabular-nums text-3xl font-extrabold tracking-tight text-text" dir="ltr">
         {value}
       </p>
       <p className="mt-1 text-xs text-text-muted">{detail}</p>

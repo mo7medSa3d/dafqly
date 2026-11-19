@@ -124,7 +124,7 @@ export async function deleteTenantData(
     const rowCounts: Record<string, number> = {};
     for (const spec of TENANT_DATA_TABLES) {
       const rows = await tx.execute(sql`select count(*)::int as n from ${sql.identifier(spec.name)} where tenant_id = ${tenantId}`);
-      rowCounts[spec.name] = (rows[0] as { n: number }).n;
+      rowCounts[spec.name] = Number((rows[0] as { n?: number } | undefined)?.n ?? 0);
       await spec.remove(tx as unknown as Db, tenantId);
     }
     await tx.insert(tenantDeletions).values({

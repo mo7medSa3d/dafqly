@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
+import { buttonVariants } from "@/components/ui/button";
 import { ConnectionErrorIllustration } from "@/components/illustrations";
 
 /** Shared 404 panel in the Quiet Ledger system: same panel + illustration
@@ -16,14 +17,18 @@ export async function NotFoundContent({ locale }: { locale: string }) {
   const tc = await getTranslations({ locale, namespace: "common" });
   const tn = await getTranslations({ locale, namespace: "nav" });
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-xl flex-col items-center justify-center p-6">
+    <main
+      id="main-content"
+      tabIndex={-1}
+      className="mx-auto flex min-h-dvh w-full max-w-xl flex-col items-center justify-center p-6 focus:outline-none"
+    >
       <div className="flex w-full flex-col items-center gap-4 rounded-xl border border-border bg-surface px-6 py-10 text-center">
         <ConnectionErrorIllustration size={150} />
-        <p className="text-lg font-bold">{tc("notFoundTitle")}</p>
-        <p className="text-sm text-text-muted">{tc("notFoundBody")}</p>
+        <h1 className="text-lg font-bold text-foreground">{tc("notFoundTitle")}</h1>
+        <p className="max-w-sm text-sm leading-relaxed text-text-muted">{tc("notFoundBody")}</p>
         <Link
           href={`/${locale}/dashboard`}
-          className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-fg transition-colors hover:bg-primary-hover"
+          className={buttonVariants({ variant: "default", size: "default" })}
         >
           {tn("dashboard")}
         </Link>

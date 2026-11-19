@@ -7,6 +7,10 @@ import { StatementClient } from "@/components/StatementClient";
 import arMessages from "@/messages/ar.json";
 import enMessages from "@/messages/en.json";
 
+export const dynamic = "force-dynamic";
+
+const TOKEN_RE = /^[A-Za-z0-9_-]{32,128}$/;
+
 /**
  * Public statement page (F10): /s/{token}. Every invalid state — unknown,
  * expired, revoked — renders the SAME generic not-found, and lookups are
@@ -46,7 +50,9 @@ export default async function StatementPage({
       </div>
     );
   }
-  const data = await getStatementData(appDb(), ownerDb(), token, new Date());
+  const data = TOKEN_RE.test(token)
+    ? await getStatementData(appDb(), ownerDb(), token, new Date())
+    : null;
   if (!data) {
     return (
       <div lang={errorLocale} dir={errorLocale === "ar" ? "rtl" : "ltr"}>

@@ -1,10 +1,13 @@
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import postgres from "postgres";
 import { v7 as uuidv7 } from "uuid";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { eq } from "drizzle-orm";
-import { createDb, createAppDb, withTenant } from "./client";
+import { assertAppRole, createDb, createAppDb, withTenant } from "./client";
 import { TENANT_TABLES, debtors } from "./schema";
+
+const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
 
 /**
  * Generic cross-tenant isolation test (BUILD_PLAN F0): iterates EVERY table in
@@ -32,8 +35,11 @@ d("M10 platform-table revokes (migration 0016)", () => {
 
   beforeAll(async () => {
     const mig = createDb(ownerUrl!);
-    await migrate(mig.db, { migrationsFolder: new URL("../drizzle", import.meta.url).pathname });
-    await mig.client.end();
+    try {
+      await migrate(mig.db, { migrationsFolder });
+    } finally {
+      await mig.client.end();
+    }
     appClient = postgres(appUrl!);
   });
   afterAll(async () => {
@@ -43,6 +49,10 @@ d("M10 platform-table revokes (migration 0016)", () => {
   const denied = async (sql: string) => {
     await expect(appClient.unsafe(sql)).rejects.toMatchObject({ code: "42501" });
   };
+
+  it("assertAppRole accepts tahseel_app without SUPERUSER/BYPASSRLS", async () => {
+    await expect(assertAppRole(appClient)).resolves.toBeUndefined();
+  });
 
   it("denies the app role on every platform table", async () => {
     await denied(`select * from webhook_events limit 1`);
@@ -122,8 +132,11 @@ d("RLS cross-tenant isolation (generic, every tenant table)", () => {
 
   beforeAll(async () => {
     const mig = createDb(ownerUrl!);
-    await migrate(mig.db, { migrationsFolder: new URL("../drizzle", import.meta.url).pathname });
-    await mig.client.end();
+    try {
+      await migrate(mig.db, { migrationsFolder });
+    } finally {
+      await mig.client.end();
+    }
     owner = postgres(ownerUrl!);
     app = postgres(appUrl!);
     await owner`insert into tenants (id, name, business_name_ar, settings) values (${tenantA}, 'Tenant A', 'شركة أ', ${settings}), (${tenantB}, 'Tenant B', 'شركة ب', ${settings})`;
@@ -198,13 +211,18 @@ d("RLS cross-tenant isolation (generic, every tenant table)", () => {
     expect(seen.length).toBe(0);
   });
 
-  it("withTenant (drizzle) scopes reads and writes to the tenant", async () => {
-    const { db } = createAppDb(appUrl!);
-    const rowsA = await withTenant(db, tenantA, (tx) => tx.select().from(debtors));
-    expect(rowsA.length).toBeGreaterThanOrEqual(1);
-    expect(rowsA.every((r) => r.tenantId === tenantA)).toBe(true);
-    const aDebtor = rowsA[0]!;
-    const rowsB = await withTenant(db, tenantB, (tx) => tx.select().from(debtors).where(eq(debtors.id, aDebtor.id)));
-    expect(rowsB.length).toBe(0);
+  it("withTenant (drizzle) scopes reads and writes to the tenant and rejects invalid UUIDs", async () => {
+    const { db, client } = createAppDb(appUrl!);
+    try {
+      await expect(withTenant(db, "not-a-uuid", (tx) => tx.select().from(debtors))).rejects.toThrow(/UUID/);
+      const rowsA = await withTenant(db, tenantA, (tx) => tx.select().from(debtors));
+      expect(rowsA.length).toBeGreaterThanOrEqual(1);
+      expect(rowsA.every((r) => r.tenantId === tenantA)).toBe(true);
+      const aDebtor = rowsA[0]!;
+      const rowsB = await withTenant(db, tenantB, (tx) => tx.select().from(debtors).where(eq(debtors.id, aDebtor.id)));
+      expect(rowsB.length).toBe(0);
+    } finally {
+      await client.end();
+    }
   });
 });

@@ -58,7 +58,7 @@ export async function listCollectionTasks(app: Db, tenantId: string, filters: { 
         eq(collectionTasks.tenantId, tenantId),
         filters.status ? eq(collectionTasks.status, filters.status) : sql`true`,
         filters.assignedToUserId ? eq(collectionTasks.assignedToUserId, filters.assignedToUserId) : sql`true`,
-      )).orderBy(asc(collectionTasks.dueAt), sql`case ${collectionTasks.priority} when 'urgent' then 0 when 'high' then 1 when 'normal' then 2 else 3 end`);
+      )).orderBy(asc(collectionTasks.dueAt), sql`case ${collectionTasks.priority} when 'urgent' then 0 when 'high' then 1 when 'normal' then 2 else 3 end`).limit(500);
     return rows.map((r) => ({ ...r, dueAt: r.dueAt.toISOString(), createdAt: r.createdAt.toISOString(), completedAt: r.completedAt?.toISOString() ?? null }));
   });
 }
@@ -131,7 +131,7 @@ export async function updateCollectionTask(
     if (input.priority) set.priority = input.priority;
     if (input.assignedToUserId !== undefined) set.assignedToUserId = input.assignedToUserId;
     if (input.dueAt) set.dueAt = new Date(input.dueAt);
-    const [updated] = await tx.update(collectionTasks).set(set as never).where(eq(collectionTasks.id, input.id)).returning();
+    const [updated] = await tx.update(collectionTasks).set(set as never).where(and(eq(collectionTasks.tenantId, tenantId), eq(collectionTasks.id, input.id))).returning();
     if (input.assignedToUserId && input.assignedToUserId !== existing.assignedToUserId) {
       const [debtor] = await tx.select({ displayName: debtors.displayName }).from(debtors)
         .where(eq(debtors.id, updated!.debtorId));
@@ -258,7 +258,7 @@ export async function decidePromiseToPay(
     const [updated] = await tx.update(promisesToPay).set({
       status, reviewedBy: actor, reviewedAt: now,
       updatedAt: now,
-    }).where(and(eq(promisesToPay.id, id), eq(promisesToPay.status, row.status))).returning();
+    }).where(and(eq(promisesToPay.tenantId, tenantId), eq(promisesToPay.id, id), eq(promisesToPay.status, row.status))).returning();
     if (!updated) throw new AppError("CONCURRENT_UPDATE", "Promise changed; refresh and retry", 409);
     return serializePromiseRow(updated);
   });
@@ -340,7 +340,7 @@ export async function decideAiActionApproval(
     const now = new Date();
     if (decision === "reject") {
       const [updated] = await tx.update(aiActionApprovals).set({ status: "rejected", approvedBy: actor, approvedAt: now, updatedAt: now })
-        .where(and(eq(aiActionApprovals.id, approvalId), eq(aiActionApprovals.status, "pending"))).returning();
+        .where(and(eq(aiActionApprovals.tenantId, tenantId), eq(aiActionApprovals.id, approvalId), eq(aiActionApprovals.status, "pending"))).returning();
       if (!updated) throw new AppError("CONCURRENT_UPDATE", "Approval changed; refresh and retry", 409);
       await tx.update(notifications).set({
         dismissedAt: now,
@@ -408,7 +408,7 @@ export async function decideAiActionApproval(
 
     const [updated] = await tx.update(aiActionApprovals).set({
       status: "executed", approvedBy: actor, approvedAt: now, executedAt: now, result: result as never, updatedAt: now,
-    }).where(and(eq(aiActionApprovals.id, approvalId), eq(aiActionApprovals.status, "pending"))).returning();
+    }).where(and(eq(aiActionApprovals.tenantId, tenantId), eq(aiActionApprovals.id, approvalId), eq(aiActionApprovals.status, "pending"))).returning();
     if (!updated) throw new AppError("CONCURRENT_UPDATE", "Approval changed; refresh and retry", 409);
     await tx.update(notifications).set({
       dismissedAt: now,

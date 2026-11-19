@@ -2,7 +2,7 @@
 import { cn, todayIso } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { inputVariants } from "@/components/ui/input";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { canTransition, formatCurrencyMinor, getCurrencySymbol, type InvoiceStatus } from "@tahseel/core";
@@ -229,7 +229,7 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
                   <Sparkle size={14} aria-hidden />
                   <span>{isAr ? "رقم الفاتورة يُنشأ تلقائيًا بدون إدخال يدوي" : "Invoice ID is generated automatically"}</span>
                 </span>
-                <span className="rounded bg-surface px-2.5 py-0.5 font-extrabold text-primary" dir="ltr">
+                <span className="tabular-nums rounded bg-surface px-2.5 py-0.5 font-extrabold text-primary" dir="ltr">
                   {reference.trim() || nextAutoReference}
                 </span>
               </div>
@@ -287,9 +287,9 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
               </div>
               {createError && <p role="alert" className="text-sm font-semibold text-status-overdue-fg">{createError}</p>}
               <div>
-                <button data-testid="inv-create" disabled={busy || !debtorId || amount.trim() === ""} className={btnPrimary}>
+                <button type="submit" data-testid="inv-create" disabled={busy || !debtorId || amount.trim() === ""} aria-busy={busy} className={btnPrimary}>
                   <Plus size={18} aria-hidden />
-                  {t("add")}
+                  {busy ? (isAr ? "جارٍ الإنشاء..." : "Creating...") : t("add")}
                 </button>
               </div>
             </form>
@@ -321,9 +321,9 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
         const { rows, total } = agingSummary;
         const tones = ["bg-status-paid-fg", "bg-[var(--chart-2)]", "bg-status-due-fg", "bg-[var(--chart-1)]", "bg-status-overdue-fg"];
         return <section data-testid="inv-aging-analysis" className="panel-shadow flex flex-col gap-4 rounded-xl border border-border bg-surface p-4 sm:p-5">
-          <div className="flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-sm font-extrabold">{isAr ? "أعمار الأرصدة المفتوحة" : "Open receivables aging"}</h2><p className="mt-1 text-xs text-text-muted">{isAr ? "قيمة المتبقي حسب مدة التأخير ضمن النتائج الحالية" : "Outstanding balance by age in the current filtered results"}{truncated && (isAr ? ` — عرض ${items.length} من أصل ${totalCount} فاتورة` : ` — showing ${items.length} of ${totalCount} invoices`)}</p></div><strong className="tnum text-base" dir="ltr">{formatAmountOnly(total)} {currencySymbol}</strong></div>
+          <div className="flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-sm font-extrabold">{isAr ? "أعمار الأرصدة المفتوحة" : "Open receivables aging"}</h2><p className="mt-1 text-xs text-text-muted">{isAr ? "قيمة المتبقي حسب مدة التأخير ضمن النتائج الحالية" : "Outstanding balance by age in the current filtered results"}{truncated && (isAr ? ` — عرض ${items.length} من أصل ${totalCount} فاتورة` : ` — showing ${items.length} of ${totalCount} invoices`)}</p></div><strong className="tnum tabular-nums text-base" dir="ltr">{formatAmountOnly(total)} {currencySymbol}</strong></div>
           <div className="flex h-3 w-full overflow-hidden rounded bg-surface-muted">{rows.map((row, i) => row.amount > 0n && <div key={row.key} className={`${tones[i]} h-full`} style={{ width: `${Number((row.amount * 10000n) / (total || 1n)) / 100}%` }} />)}</div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">{rows.map((row, i) => <div key={row.key} className="min-w-0 text-start"><div className="flex items-center gap-2 text-xs font-semibold text-text-muted"><span className={`size-2.5 shrink-0 rounded-sm ${tones[i]}`} /><span className="truncate">{row.label}</span></div><p className="mt-1 truncate text-sm font-extrabold"><span className="tnum inline-block" dir="ltr">{formatAmountOnly(row.amount)} {currencySymbol}</span></p><p className="tnum mt-0.5 text-[11px] text-text-muted"><span className="inline-block" dir="ltr">{total > 0n ? `${Number((row.amount * 10000n) / total) / 100}%` : "0%"}</span></p></div>)}</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">{rows.map((row, i) => <div key={row.key} className="min-w-0 text-start"><div className="flex items-center gap-2 text-xs font-semibold text-text-muted"><span className={`size-2.5 shrink-0 rounded-sm ${tones[i]}`} /><span className="truncate">{row.label}</span></div><p className="mt-1 truncate text-sm font-extrabold"><span className="tnum tabular-nums inline-block" dir="ltr">{formatAmountOnly(row.amount)} {currencySymbol}</span></p><p className="tnum tabular-nums mt-0.5 text-[11px] text-text-muted"><span className="inline-block" dir="ltr">{total > 0n ? `${Number((row.amount * 10000n) / total) / 100}%` : "0%"}</span></p></div>)}</div>
         </section>;
       })()}
 
@@ -367,128 +367,200 @@ export function InvoicesClient({ businessName, initialOverdueOnly = false }: { b
         <select data-testid="inv-bulk-to" aria-label={t("bulkTargetStatus")} className={cn(inputVariants, "w-auto sm:min-w-[160px]")} value={bulkTo} onChange={(e) => setBulkTo(e.target.value)}>
           {STATUSES.map((s) => <option key={s} value={s}>{t(`statuses.${s}`)}</option>)}
         </select>
-        <button type="button" data-testid="inv-bulk-apply" disabled={busy || selected.size === 0} onClick={() => void onBulk()} className={btnGhost}>{selected.size > 0 ? `${t("bulkApply")} (${selected.size})` : t("bulkApply")}</button>
+        <button type="button" data-testid="inv-bulk-apply" disabled={busy || selected.size === 0} aria-busy={busy} onClick={() => void onBulk()} className={btnGhost}>{selected.size > 0 ? `${t("bulkApply")} (${selected.size})` : t("bulkApply")}</button>
         <span className="ms-auto inline-flex items-center gap-2 rounded bg-callout px-3.5 py-1.5 text-xs font-medium text-text-subtle">
           <span>{t("title")}:</span>
-          <span data-testid="inv-count" className="tnum font-bold text-primary" dir="ltr">{items.length}</span>
+          <span data-testid="inv-count" className="tnum tabular-nums font-bold text-primary" dir="ltr">{items.length}</span>
         </span>
       </div>
 
       {loading ? (
         <LoadingState isAr={isAr} />
       ) : items.length === 0 && !loadError ? (
-        <EmptyState illustration={<EmptyInvoicesIllustration size={190} />} testId="invoices-empty" title={t("empty")} body={isAr ? "أنشئ فاتورة أو استورد ملفاً لبدء متابعة الاستحقاقات والتحصيل." : "Create an invoice or import a file to start tracking due dates and collections."} />
+        <EmptyState
+          illustration={<EmptyInvoicesIllustration size={190} />}
+          testId="invoices-empty"
+          title={
+            search.trim() || status || overdueOnly || bucket
+              ? (isAr ? "لا توجد فواتير مطابقة للفلاتر الحالية" : "No invoices match the active filters")
+              : t("empty")
+          }
+          body={
+            search.trim() || status || overdueOnly || bucket
+              ? (isAr ? "أعد تعيين الفلاتر أو البحث لعرض جميع الفواتير." : "Reset your search or filters to view all invoices.")
+              : (isAr ? "أنشئ فاتورة أو استورد ملفاً لبدء متابعة الاستحقاقات والتحصيل." : "Create an invoice or import a file to start tracking due dates and collections.")
+          }
+        >
+          {search.trim() || status || overdueOnly || bucket ? (
+            <button
+              type="button"
+              onClick={() => { setSearch(""); setDebouncedSearch(""); setStatus(""); setOverdueOnly(false); setBucket(""); }}
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-1")}
+            >
+              {isAr ? "إعادة تعيين الفلاتر" : "Reset filters"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => document.querySelector<HTMLInputElement>('[data-testid="inv-amount"]')?.focus()}
+              className={`${btnPrimary} mt-1`}
+            >
+              <Plus size={16} aria-hidden />
+              {t("add")}
+            </button>
+          )}
+        </EmptyState>
       ) : items.length === 0 ? null : (
-        <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
-          <ul className="flex flex-col divide-y divide-border">
-            {items.map((i, idx) => (
-              <li key={i.id} data-testid="invoice-row" className="flex flex-col gap-3 p-4 transition-colors hover:bg-callout/40 sm:p-5">
-                {/* Header row: Checkbox, Reference, Customer, Status, Edit */}
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2.5">
-                    <label className="flex cursor-pointer items-center gap-2.5">
-                      <input
-                        type="checkbox"
-                        data-testid="inv-select"
-                        className="size-4.5 rounded border border-border bg-surface accent-[var(--primary)] focus:ring-1 focus:ring-primary focus:ring-offset-0 cursor-pointer"
-                        checked={selected.has(i.id)}
-                        onChange={(e) => setSelected((s) => { const n = new Set(s); if (e.target.checked) n.add(i.id); else n.delete(i.id); return n; })}
-                      />
-                      <span className="text-base font-extrabold text-primary" dir="ltr">
-                        {i.reference ?? `INV-${i.issuedOn.slice(0, 4)}-${1001 + idx}`}
-                      </span>
-                    </label>
-                    <span className="max-w-full truncate rounded bg-surface-muted px-2.5 py-0.5 text-xs font-bold text-text">
-                      {debtorName(i.debtorId)}
-                    </span>
-                    {i.description && (
-                      <span className="hidden truncate text-xs text-text-muted md:inline-block max-w-sm">
-                        {i.description}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    {i.overdue && (
-                      <span data-testid="invoice-overdue" className="inline-flex items-center gap-1 rounded bg-status-overdue-bg px-2.5 py-0.5 text-xs font-bold text-status-overdue-fg">
-                        <WarningCircle size={14} aria-hidden />
-                        {t("overdueOnly")}
-                      </span>
-                    )}
-                    <StatusPill status={i.status} label={t(`statuses.${i.status}`)} testId="invoice-status" />
-                    <WhatsAppShareButton
-                      phone={debtorPhone(i.debtorId)}
-                      message={invoiceShareMessage({
-                        businessName: effectiveBusinessName,
-                        amount: `${fmt(i.outstandingMinor, i.currency)} ${getCurrencySymbol(i.currency, locale)}`,
-                        dueDate: i.dueOn,
-                        locale,
-                      })}
-                      size="sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => editingId === i.id ? setEditingId(null) : startEdit(i)}
-                      className={cn(buttonVariants({ variant: "outline", size: "icon" }), "size-8")}
-                      title={tc.has("edit") ? tc("edit") : (isAr ? "تعديل" : "Edit")}
-                    >
-                      <PencilSimple size={15} aria-hidden />
-                    </button>
-                  </div>
-                </div>
-
-                {editingId === i.id && (
-                  <div className="grid grid-cols-1 gap-3 rounded-xl border border-primary/30 bg-callout p-3.5 sm:grid-cols-2 lg:grid-cols-4">
-                    <input className={cn(inputCls, "min-w-0")} placeholder={t("reference")} value={editForm.reference} onChange={(e) => setEditForm((f) => ({ ...f, reference: e.target.value }))} />
-                    <input className={cn(inputCls, "min-w-0")} placeholder={t("description")} value={editForm.description} onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))} />
-                    <input className={cn(inputCls, "min-w-0")} dir="ltr" inputMode="decimal" placeholder={t("amount")} value={editForm.amount} onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))} />
-                    <div className="flex min-w-0 flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-1">
-                      <input type="date" className={cn(inputCls, "min-w-[130px] flex-1")} dir="ltr" value={editForm.dueOn} onChange={(e) => setEditForm((f) => ({ ...f, dueOn: e.target.value }))} />
-                      <div className="flex shrink-0 items-center gap-2">
-                        <button type="button" disabled={busy || editForm.amount.trim() === ""} onClick={() => void onSaveEdit(i.id)} className={btnSmall}>
-                          <Check size={14} strokeWidth={2.5} aria-hidden /> {tc("save")}
-                        </button>
-                        <button type="button" onClick={() => setEditingId(null)} className={btnSmall}>
-                          <X size={14} strokeWidth={2.5} aria-hidden />
-                        </button>
+        <div className="panel-shadow overflow-x-auto rounded-xl border border-border bg-surface">
+          <table className="w-full min-w-[740px] border-collapse text-start">
+            <thead className="border-b border-border bg-surface-muted/60 text-xs font-bold text-text-muted">
+              <tr>
+                <th scope="col" className="px-4 py-3 text-start">{t("reference")}</th>
+                <th scope="col" className="px-4 py-3 text-start">{t("amount")}</th>
+                <th scope="col" className="px-4 py-3 text-start">{t("dueOn")}</th>
+                <th scope="col" className="px-4 py-3 text-start">{t("status")}</th>
+                <th scope="col" className="px-4 py-3 text-end">{isAr ? "الإجراءات" : "Actions"}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {items.map((i, idx) => (
+                <Fragment key={i.id}>
+                  <tr data-testid="invoice-row" className="align-top transition-colors hover:bg-callout/40">
+                    {/* Reference & Customer */}
+                    <td className="px-4 py-4">
+                      <div className="flex min-w-0 flex-col gap-1">
+                        <label className="flex cursor-pointer items-center gap-2.5">
+                          <input
+                            type="checkbox"
+                            data-testid="inv-select"
+                            className="size-4.5 rounded border border-border bg-surface accent-[var(--primary)] focus:ring-1 focus:ring-primary focus:ring-offset-0 cursor-pointer"
+                            checked={selected.has(i.id)}
+                            onChange={(e) => setSelected((s) => { const n = new Set(s); if (e.target.checked) n.add(i.id); else n.delete(i.id); return n; })}
+                          />
+                          <span className="tabular-nums text-sm font-extrabold text-primary sm:text-base" dir="ltr">
+                            {i.reference ?? `INV-${i.issuedOn.slice(0, 4)}-${1001 + idx}`}
+                          </span>
+                        </label>
+                        <div className="flex flex-wrap items-center gap-2 ps-7">
+                          <span className="max-w-full truncate rounded bg-surface-muted px-2 py-0.5 text-xs font-bold text-text">
+                            {debtorName(i.debtorId)}
+                          </span>
+                          {i.description && (
+                            <span className="max-w-xs truncate text-xs text-text-muted">
+                              {i.description}
+                            </span>
+                          )}
+                        </div>
+                        {i.currencyWarning && <p className="ps-7 text-xs font-semibold text-status-due-fg">{t("currencyWarning")}</p>}
                       </div>
-                    </div>
-                  </div>
-                )}
+                    </td>
 
-                {/* Sub row: Amount breakdown & Transition Actions */}
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/50 pt-2.5 text-xs sm:text-sm text-text-muted">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span>{t("amount")}: <b className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor, i.currency)}</b> <span className="text-[11px] font-bold text-text-muted">{getCurrencySymbol(i.currency, locale)}</span></span>
-                    <span>·</span>
-                    <span>{t("paid")}: <b className="tnum font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor, i.currency)}</b> <span className="text-[11px] font-bold text-text-muted">{getCurrencySymbol(i.currency, locale)}</span></span>
-                    <span>·</span>
-                    <span>{t("remaining")}: <b className="tnum font-bold text-primary" dir="ltr">{fmt(i.outstandingMinor, i.currency)}</b> <span className="text-[11px] font-bold text-text-muted">{getCurrencySymbol(i.currency, locale)}</span></span>
-                    <span>·</span>
-                    <span>{t("dueOn")}: <span className="font-semibold text-text" dir="ltr">{i.dueOn}</span></span>
-                  </div>
+                    {/* Amount breakdown */}
+                    <td className="px-4 py-4">
+                      <div className="flex flex-col gap-0.5 text-xs text-text-muted">
+                        <span className="whitespace-nowrap">
+                          {t("amount")}: <b className="tnum tabular-nums font-bold text-text" dir="ltr">{fmt(i.amountMinor, i.currency)}</b>{" "}
+                          <span className="text-[11px] font-bold text-text-muted">{getCurrencySymbol(i.currency, locale)}</span>
+                        </span>
+                        <span className="whitespace-nowrap">
+                          {t("paid")}: <b className="tnum tabular-nums font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor, i.currency)}</b>{" "}
+                          <span className="text-[11px] font-bold text-text-muted">{getCurrencySymbol(i.currency, locale)}</span>
+                        </span>
+                        <span className="whitespace-nowrap">
+                          {t("remaining")}: <b className="tnum tabular-nums font-bold text-primary" dir="ltr">{fmt(i.outstandingMinor, i.currency)}</b>{" "}
+                          <span className="text-[11px] font-bold text-text-muted">{getCurrencySymbol(i.currency, locale)}</span>
+                        </span>
+                      </div>
+                    </td>
 
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {(["disputed", "written_off", "cancelled", "open"] as const)
-                      .filter((to) => to !== i.status && canTransition(i.status as InvoiceStatus, to))
-                      .map((to) => (
-                        <button
-                          key={to}
-                          type="button"
-                          data-testid={`inv-transition-${to}`}
-                          disabled={busy}
-                          onClick={() => void onTransition(i.id, to)}
-                          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-                        >
-                          {t(`statuses.${to}`)}
-                        </button>
-                      ))}
-                  </div>
-                </div>
-                {i.currencyWarning && <p className="text-sm font-semibold text-status-due-fg">{t("currencyWarning")}</p>}
-              </li>
-            ))}
-          </ul>
+                    {/* Due Date */}
+                    <td className="px-4 py-4 whitespace-nowrap text-xs sm:text-sm">
+                      <span className="tabular-nums font-semibold text-text" dir="ltr">{i.dueOn}</span>
+                    </td>
+
+                    {/* Status */}
+                    <td className="px-4 py-4">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {i.overdue && (
+                          <span data-testid="invoice-overdue" className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-status-overdue-bg px-2.5 py-0.5 text-xs font-bold text-status-overdue-fg">
+                            <WarningCircle size={14} aria-hidden />
+                            {t("overdueOnly")}
+                          </span>
+                        )}
+                        <StatusPill status={i.status} label={t(`statuses.${i.status}`)} testId="invoice-status" />
+                      </div>
+                    </td>
+
+                    {/* Actions */}
+                    <td className="px-4 py-4">
+                      <div className="flex flex-col items-end gap-2">
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                          <WhatsAppShareButton
+                            phone={debtorPhone(i.debtorId)}
+                            message={invoiceShareMessage({
+                              businessName: effectiveBusinessName,
+                              amount: `${fmt(i.outstandingMinor, i.currency)} ${getCurrencySymbol(i.currency, locale)}`,
+                              dueDate: i.dueOn,
+                              locale,
+                            })}
+                            size="sm"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => editingId === i.id ? setEditingId(null) : startEdit(i)}
+                            className={cn(buttonVariants({ variant: "outline", size: "icon" }), "size-8")}
+                            title={tc.has("edit") ? tc("edit") : (isAr ? "تعديل" : "Edit")}
+                          >
+                            <PencilSimple size={15} aria-hidden />
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                          {(["disputed", "written_off", "cancelled", "open"] as const)
+                            .filter((to) => to !== i.status && canTransition(i.status as InvoiceStatus, to))
+                            .map((to) => (
+                              <button
+                                key={to}
+                                type="button"
+                                data-testid={`inv-transition-${to}`}
+                                disabled={busy}
+                                aria-busy={busy}
+                                onClick={() => void onTransition(i.id, to)}
+                                className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                              >
+                                {t(`statuses.${to}`)}
+                              </button>
+                            ))}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+
+                  {editingId === i.id && (
+                    <tr className="bg-callout/60">
+                      <td colSpan={5} className="p-3.5">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          <input className={cn(inputCls, "min-w-0")} placeholder={t("reference")} value={editForm.reference} onChange={(e) => setEditForm((f) => ({ ...f, reference: e.target.value }))} />
+                          <input className={cn(inputCls, "min-w-0")} placeholder={t("description")} value={editForm.description} onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))} />
+                          <input className={cn(inputCls, "min-w-0")} dir="ltr" inputMode="decimal" placeholder={t("amount")} value={editForm.amount} onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))} />
+                          <div className="flex min-w-0 flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-1">
+                            <input type="date" className={cn(inputCls, "min-w-[130px] flex-1")} dir="ltr" value={editForm.dueOn} onChange={(e) => setEditForm((f) => ({ ...f, dueOn: e.target.value }))} />
+                            <div className="flex shrink-0 items-center gap-2">
+                              <button type="button" disabled={busy || editForm.amount.trim() === ""} aria-busy={busy} onClick={() => void onSaveEdit(i.id)} className={btnSmall}>
+                                <Check size={14} strokeWidth={2.5} aria-hidden /> {tc("save")}
+                              </button>
+                              <button type="button" onClick={() => setEditingId(null)} className={btnSmall}>
+                                <X size={14} strokeWidth={2.5} aria-hidden />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>

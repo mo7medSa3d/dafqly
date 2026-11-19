@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { appRouter } from "./routers";
 
 /**
@@ -13,7 +14,7 @@ import { appRouter } from "./routers";
  * access (ctx carries no db handles in this test, so a pass proves the
  * auth middleware runs first).
  */
-const APP_DIR = new URL("../../app", import.meta.url).pathname;
+const APP_DIR = fileURLToPath(new URL("../../app", import.meta.url));
 
 type RouteClass = "public" | "session";
 const CLASSIFICATION: Record<string, RouteClass> = {
@@ -57,7 +58,7 @@ function walk(dir: string, base: string): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) out.push(...walk(p, base));
-    else if (name === "route.ts" || name === "page.tsx") out.push(relative(base, p));
+    else if (name === "route.ts" || name === "page.tsx") out.push(relative(base, p).replace(/\\/g, "/"));
   }
   return out;
 }

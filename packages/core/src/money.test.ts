@@ -43,6 +43,13 @@ describe("per-currency minor units (KWD 3 decimals, JPY 0 decimals)", () => {
     expect(parseMoney("0.001", "KWD")).toBe(1n);
     expect(formatMoney(1234n, "KWD")).toBe("1.234 د.ك");
   });
+  it("KWD treats thousands-grouped commas as thousands, not decimals, and trims currency codes", () => {
+    expect(parseMoney("1,250", "KWD")).toBe(1_250_000n);
+    expect(parseMoney("١٬٢٥٠", "KWD")).toBe(1_250_000n);
+    expect(parseMoney("0,250", "KWD")).toBe(250n);
+    expect(parseMoney("1.250,500", "KWD")).toBe(1_250_500n);
+    expect(currencyMinorExponent(" KWD ")).toBe(3);
+  });
   it("KWD rejects more than 3 decimal places", () => {
     expect(() => parseMoney("1.2345", "KWD")).toThrow(MoneyParseError);
   });

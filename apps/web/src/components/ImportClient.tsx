@@ -39,6 +39,9 @@ export function ImportClient() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const initialLoadedRef = useRef(false);
 
   const loadJobs = useCallback(async () => {
@@ -82,6 +85,7 @@ export function ImportClient() {
   }, [loadJobs, loadJob]);
 
   async function onFile(file: File) {
+    if (busy) return;
     setMsg(null);
     if (file.size === 0) {
       setMsg({ text: isAr ? "الملف المرفوع فارغ." : "The uploaded file is empty.", isError: true });
@@ -92,6 +96,7 @@ export function ImportClient() {
       return;
     }
     setBusy(true);
+    setProgress(isAr ? `جارٍ رفع وفحص «${file.name}»…` : `Uploading and validating "${file.name}"…`);
     try {
       const contentBase64 = await fileToBase64(file);
       const preview = await trpc.imports.preview.mutate({ fileName: file.name, contentBase64 });
@@ -102,11 +107,12 @@ export function ImportClient() {
       setMsg({ text: (err instanceof Error && err.message ? err.message : null) || t("failed"), isError: true });
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
   async function onRemap() {
-    if (!jobId || job?.status !== "pending_review") return;
+    if (busy || !jobId || job?.status !== "pending_review") return;
     setBusy(true); setMsg(null);
     try {
       const clean = Object.fromEntries(Object.entries(mapping).filter(([, v]) => v !== undefined && v >= 0));
@@ -120,7 +126,7 @@ export function ImportClient() {
   }
 
   async function onCommit() {
-    if (!jobId || job?.status !== "pending_review") return;
+    if (busy || !jobId || job?.status !== "pending_review") return;
     setBusy(true); setMsg(null);
     try {
       await trpc.imports.commit.mutate({ jobId });
@@ -135,6 +141,7 @@ export function ImportClient() {
   }
 
   async function onDelete(id: string) {
+    if (busy) return;
     setBusy(true); setMsg(null);
     try {
       await trpc.imports.delete.mutate({ jobId: id });
@@ -171,6 +178,7 @@ export function ImportClient() {
   }
 
   async function onUndo(id: string) {
+    if (busy) return;
     setBusy(true); setMsg(null);
     try {
       await trpc.imports.undo.mutate({ jobId: id });
@@ -187,8 +195,24 @@ export function ImportClient() {
   return (
     <section className="flex flex-col gap-6">
       <div className="grid gap-6 lg:grid-cols-12">
-        {/* Upload Dropzone */}
-        <label className="panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border border-border/80 bg-surface/90 p-8 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/30 lg:col-span-7">
+        {/* Upload Dropzone — WCAG 2.2 SC 2.5.7: keyboard + single-click + drag-and-drop */}
+        <label
+          aria-busy={busy}
+          onDragOver={(e) => { e.preventDefault(); if (!busy) setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDragging(false);
+            if (busy) return;
+            const f = e.dataTransfer.files?.[0];
+            if (f) void onFile(f);
+          }}
+          className={cn(
+            "panel-shadow relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border border-border/80 bg-surface/90 p-8 text-center transition-all hover:border-primary/60 hover:bg-surface-muted/30 focus-within:border-primary focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 lg:col-span-7",
+            isDragging && "border-primary bg-primary/5 ring-2 ring-primary/30",
+            busy && "cursor-not-allowed opacity-70",
+          )}
+        >
           <ImportIllustration size={104} />
           <div className="flex flex-col items-center gap-1">
             <span className="flex items-center gap-2 text-lg font-extrabold text-text">
@@ -209,6 +233,7 @@ export function ImportClient() {
           </div>
 
           <input
+            ref={fileInputRef}
             data-testid="import-file"
             type="file"
             accept=".xlsx,.xls,.csv"
@@ -295,22 +320,43 @@ export function ImportClient() {
           </button>
         </div>
       )}
+      {progress && (
+        <div role="status" aria-live="polite" className="flex items-center gap-2.5 rounded-xl border border-primary/25 bg-callout/60 px-4 py-3 text-sm font-semibold text-primary">
+          <span className="size-2 animate-pulse rounded-full bg-primary" aria-hidden />
+          <span>{progress}</span>
+        </div>
+      )}
       {msg && (
         <div
           role={isErrorMsg ? "alert" : "status"}
           data-testid="import-msg"
-          className={`flex items-center gap-2.5 rounded-xl border px-4 py-3 text-sm font-bold ${
+          className={`flex flex-wrap items-center justify-between gap-2.5 rounded-xl border px-4 py-3 text-sm font-bold ${
             isErrorMsg
               ? "border-danger/30 bg-danger-bg text-danger"
               : "border-status-paid-fg/30 bg-status-paid-bg text-status-paid-fg"
           }`}
         >
-          {isErrorMsg ? (
-            <WarningCircle size={18} aria-hidden />
-          ) : (
-            <CheckCircle size={18} aria-hidden />
+          <div className="flex items-center gap-2.5">
+            {isErrorMsg ? (
+              <WarningCircle size={18} aria-hidden />
+            ) : (
+              <CheckCircle size={18} aria-hidden />
+            )}
+            <span>{msg.text}</span>
+          </div>
+          {isErrorMsg && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setMsg(null);
+                fileInputRef.current?.click();
+              }}
+              className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "underline")}
+            >
+              {isAr ? "اختيار ملف آخر" : "Try another file"}
+            </button>
           )}
-          <span>{msg.text}</span>
         </div>
       )}
 
@@ -319,11 +365,11 @@ export function ImportClient() {
           <div className="flex flex-col gap-5">
             {job.stats && (
               <p data-testid="import-stats" className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
-                <span>{t("total")}: <b className="tnum" dir="ltr">{job.stats.total}</b></span>
-                <span>{t("valid")}: <b className="tnum" dir="ltr">{job.stats.valid}</b></span>
-                <span>{t("invalid")}: <b className="tnum" dir="ltr">{job.stats.invalid}</b></span>
-                <span>{t("duplicate")}: <b className="tnum" dir="ltr">{job.stats.duplicate}</b></span>
-                <span>{t("emptyRows")}: <b className="tnum" dir="ltr">{job.stats.empty}</b></span>
+                <span>{t("total")}: <b className="tnum tabular-nums" dir="ltr">{job.stats.total}</b></span>
+                <span>{t("valid")}: <b className="tnum tabular-nums" dir="ltr">{job.stats.valid}</b></span>
+                <span>{t("invalid")}: <b className="tnum tabular-nums" dir="ltr">{job.stats.invalid}</b></span>
+                <span>{t("duplicate")}: <b className="tnum tabular-nums" dir="ltr">{job.stats.duplicate}</b></span>
+                <span>{t("emptyRows")}: <b className="tnum tabular-nums" dir="ltr">{job.stats.empty}</b></span>
               </p>
             )}
             <fieldset disabled={busy || job.status !== "pending_review"} className="flex flex-col gap-3">
@@ -370,20 +416,20 @@ export function ImportClient() {
               <table className="w-full min-w-[640px] text-sm">
                 <thead className="sticky top-0">
                   <tr className="bg-surface-muted text-start">
-                    <th className="px-3 py-2.5 text-start font-bold">{t("row")}</th>
-                    <th className="px-3 py-2.5 text-start font-bold">{t("fields.name")}</th>
-                    <th className="px-3 py-2.5 text-start font-bold">{t("fields.phone")}</th>
-                    <th className="px-3 py-2.5 text-start font-bold">{t("fields.amount")}</th>
-                    <th className="px-3 py-2.5 text-start font-bold">{t("errors")}</th>
+                    <th scope="col" className="px-3 py-2.5 text-start font-bold">{t("row")}</th>
+                    <th scope="col" className="px-3 py-2.5 text-start font-bold">{t("fields.name")}</th>
+                    <th scope="col" className="px-3 py-2.5 text-start font-bold">{t("fields.phone")}</th>
+                    <th scope="col" className="px-3 py-2.5 text-start font-bold">{t("fields.amount")}</th>
+                    <th scope="col" className="px-3 py-2.5 text-start font-bold">{t("errors")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {job.rows.slice(0, 100).map((r) => (
                     <tr key={r.rowNumber} data-testid="import-row" data-status={r.status} className="border-t border-border">
-                      <td className="px-3 py-2" dir="ltr">{r.rowNumber}</td>
+                      <td className="px-3 py-2 tabular-nums" dir="ltr">{r.rowNumber}</td>
                       <td className="px-3 py-2 font-semibold">{r.data?.name ?? "—"}</td>
-                      <td className="px-3 py-2" dir="ltr">{r.data?.phoneE164 ?? "—"}</td>
-                      <td className="tnum px-3 py-2" dir="ltr">{r.data ? formatAmountOnly(BigInt(r.data.amountMinor)) : "—"}</td>
+                      <td className="px-3 py-2 tabular-nums" dir="ltr">{r.data?.phoneE164 ?? "—"}</td>
+                      <td className="tnum tabular-nums px-3 py-2 font-semibold" dir="ltr">{r.data ? formatAmountOnly(BigInt(r.data.amountMinor)) : "—"}</td>
                       <td className="px-3 py-2">
                         <span className="me-2"><StatusPill status={r.status === "valid" ? "paid" : r.status === "duplicate" ? "disputed" : "open"} label={r.status} /></span>
                         {r.errors.length > 0 ? r.errors.map((e) => `${e.field}: ${e.reason}`).join("; ") : ""}
@@ -500,7 +546,7 @@ export function ImportClient() {
                             </span>
                           )}
                           {j.stats && (
-                            <span className="tnum" dir="ltr">
+                            <span className="tnum tabular-nums" dir="ltr">
                               ({j.stats.valid ?? 0}/{j.stats.total ?? 0})
                             </span>
                           )}

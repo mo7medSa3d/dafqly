@@ -52,9 +52,8 @@ d("tRPC tenant isolation + onboarding rules", () => {
     await owner.delete(userTable).where(eq(userTable.id, userB.id));
     await owner.delete(userTable).where(eq(userTable.id, staffA.id));
     // tenants cascade via memberships' tenant FK is on memberships; delete tenants explicitly:
-    const { tenants } = await import("@tahseel/db/schema");
-    await owner.delete(tenants).where(eq(tenants.id, tenantA));
-    await owner.delete(tenants).where(eq(tenants.id, tenantB));
+    if (tenantA) await owner.delete(tenants).where(eq(tenants.id, tenantA));
+    if (tenantB) await owner.delete(tenants).where(eq(tenants.id, tenantB));
   });
 
   it("rejects unauthenticated calls", async () => {

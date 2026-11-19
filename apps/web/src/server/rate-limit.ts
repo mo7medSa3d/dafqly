@@ -29,8 +29,11 @@ export function tokenBucketKey(token: string): string {
 export interface RateLimitResult { allowed: boolean; remaining: number; retryAfterSeconds: number }
 
 interface Bucket { tokens: number; updatedAt: number; windowMs: number }
+// shortcut: in-memory per-instance buckets only, upgrade to shared Redis store when running multiple web replicas
 const buckets = new Map<string, Bucket>();
 export const MAX_RATE_LIMIT_BUCKETS = 10_000;
+const SWEEP_INTERVAL_MS = 10_000;
+let lastSweepAt = Number.NEGATIVE_INFINITY;
 
 /** Number of proxies between the client and this app that append to XFF. */
 function trustedProxyCount(explicit?: number): number {
@@ -63,6 +66,7 @@ export function clientIp(headers: Headers, explicitTrustedProxies?: number): str
 
 /** Remove buckets whose window has fully elapsed. Returns how many were removed. */
 export function sweepRateLimitBuckets(now = Date.now()): number {
+  lastSweepAt = now;
   let removed = 0;
   for (const [key, bucket] of buckets) {
     if (now - bucket.updatedAt > bucket.windowMs) {
@@ -75,6 +79,9 @@ export function sweepRateLimitBuckets(now = Date.now()): number {
 
 /** Whether the next `rateLimit` call for this key would be allowed, without consuming a token. */
 export function rateLimitPeek(key: string, opts: { limit: number; windowSeconds: number }, now = Date.now()): RateLimitResult {
+  if (!Number.isFinite(opts.limit) || opts.limit <= 0 || !Number.isFinite(opts.windowSeconds) || opts.windowSeconds <= 0) {
+    return { allowed: false, remaining: 0, retryAfterSeconds: 1 };
+  }
   const windowMs = opts.windowSeconds * 1000;
   const refillPerMs = opts.limit / windowMs;
   const bucket = buckets.get(key);
@@ -86,6 +93,9 @@ export function rateLimitPeek(key: string, opts: { limit: number; windowSeconds:
 }
 
 export function rateLimit(key: string, opts: { limit: number; windowSeconds: number }, now = Date.now()): RateLimitResult {
+  if (!Number.isFinite(opts.limit) || opts.limit <= 0 || !Number.isFinite(opts.windowSeconds) || opts.windowSeconds <= 0) {
+    return { allowed: false, remaining: 0, retryAfterSeconds: 1 };
+  }
   const windowMs = opts.windowSeconds * 1000;
   const refillPerMs = opts.limit / windowMs;
   let bucket = buckets.get(key);
@@ -95,15 +105,21 @@ export function rateLimit(key: string, opts: { limit: number; windowSeconds: num
     bucket = undefined;
   }
   if (!bucket) {
-    // Bound memory: sweep expired buckets first, then drop the oldest key.
+    // Bound memory in amortized O(1): sweep expired buckets at most once per
+    // SWEEP_INTERVAL_MS, otherwise evict the least-recently-used Map head.
     if (buckets.size >= MAX_RATE_LIMIT_BUCKETS) {
-      sweepRateLimitBuckets(now);
+      if (now - lastSweepAt >= SWEEP_INTERVAL_MS) {
+        sweepRateLimitBuckets(now);
+      }
       if (buckets.size >= MAX_RATE_LIMIT_BUCKETS) {
         const oldest = buckets.keys().next().value;
         if (oldest !== undefined) buckets.delete(oldest);
       }
     }
     bucket = { tokens: opts.limit, updatedAt: now, windowMs };
+  } else {
+    // Refresh Map insertion order so active keys stay at the tail (LRU).
+    buckets.delete(key);
   }
   const elapsed = Math.max(0, now - bucket.updatedAt);
   bucket.tokens = Math.min(opts.limit, bucket.tokens + elapsed * refillPerMs);
@@ -118,7 +134,10 @@ export function rateLimit(key: string, opts: { limit: number; windowSeconds: num
 }
 
 /** Test hook: reset all buckets. */
-export function resetRateLimits(): void { buckets.clear(); }
+export function resetRateLimits(): void {
+  buckets.clear();
+  lastSweepAt = Number.NEGATIVE_INFINITY;
+}
 
 /** Test hook: how many buckets are currently tracked. */
 export function rateLimitBucketCount(): number { return buckets.size; }

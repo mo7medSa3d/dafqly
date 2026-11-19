@@ -1,6 +1,6 @@
 # DAFQLY Known Limitations
 
-Updated 2026-11-12. Items here are NOT silently fixed or hidden; each names
+Updated 2026-11-19. Items here are NOT silently fixed or hidden; each names
 the evidence and the condition that would clear it.
 
 ## External integrations — BLOCKED (no credentials, never PASS)
@@ -26,11 +26,23 @@ the evidence and the condition that would clear it.
 - No Docker, no system Postgres/Redis. Postgres 16.5 was built from source
   and runs locally on 127.0.0.1:5433 for tests only. Redis is absent: the
   worker and queue paths have not been exercised.
-- `pnpm build` (production build) has never been run in this run.
-- Playwright E2E (`pnpm test:e2e`) has never been run in this run.
+- `pnpm build` (production build) and Playwright E2E (`pnpm test:e2e`) were not run in the initial 2026-11-12 pass, and were subsequently verified in ADR-041 (see `docs/DECISIONS.md` and `engineering/FEATURE_INVENTORY.md`).
 - No real Windows machine, no real printer, no real debtor phone: WhatsApp
   delivery, Paymob settlement and PDF/receipt rendering against real
   providers are unverified.
+
+## Dependency CVE Audit & Online Follow-Up Checklist (2026-11-19)
+
+Verified against `pnpm-lock.yaml` (full details in `docs/SECURITY.md`):
+- `next@15.5.29` & `react@19.3.1`: patched past CVE-2025-66478 / CVE-2025-55182.
+- `better-auth@1.7.18`: patched past CVE-2025-61928, CVE-2025-71402, and CVE-2026-109346.
+- `exceljs@4.4.0`: affected by CVE-2026-128341; mitigated in `packages/core/src/import.ts` via ZIP bomb + `dataValidations` `sqref` pre-validation until an upstream patch or library replacement lands.
+
+Online follow-up checklist (requires internet / Docker / `pnpm`):
+1. Run `pnpm audit --prod --audit-level=high` in CI or on an online host (and handle `exceljs@4.4.0` CVE-2026-128341 if still unpatched upstream).
+2. Pin `:latest` Docker images in `docker-compose.yml` (`pgsty/minio:latest`, `pgsty/mc:latest`, `axllent/mailpit:latest`) to explicit version tags or digests.
+3. Align workspace `package.json` specifiers for `zod` (`^3.25.76` → `4.6.7`) and `drizzle-orm` (`^0.44.7` → `^0.45.4`) on the next lockfile refresh (currently enforced via root `pnpm.overrides`).
+4. Add missing FK indexes via `pnpm --filter @tahseel/db generate` and verify migration drift check in CI.
 
 ## Product limitations (by design or pending decision)
 

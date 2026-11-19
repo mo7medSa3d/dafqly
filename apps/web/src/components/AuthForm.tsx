@@ -46,6 +46,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -129,8 +130,8 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
                 className="absolute inset-y-1 w-[calc(50%-4px)] rounded-full bg-card shadow-xs transition-transform duration-500 [transition-timing-function:var(--ease-spring)]"
                 style={{ insetInlineStart: 4, transform: `translateX(${mode === "login" ? "0%" : (ar ? "-100%" : "100%")})` }}
               />
-              <Link href={`/${locale}/login`} className={`relative z-10 flex min-h-[40px] items-center justify-center rounded-full ${mode === "login" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>{t("loginTitle")}</Link>
-              <Link href={`/${locale}/signup`} className={`relative z-10 flex min-h-[40px] items-center justify-center rounded-full ${mode === "signup" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>{t("signupTitle")}</Link>
+              <Link href={`/${locale}/login`} aria-current={mode === "login" ? "page" : undefined} className={`relative z-10 flex min-h-11 items-center justify-center rounded-full ${mode === "login" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>{t("loginTitle")}</Link>
+              <Link href={`/${locale}/signup`} aria-current={mode === "signup" ? "page" : undefined} className={`relative z-10 flex min-h-11 items-center justify-center rounded-full ${mode === "signup" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>{t("signupTitle")}</Link>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-[32px] font-extrabold leading-tight">{mode === "signup" ? t("signupTitle") : t("loginTitle")}</h1>
@@ -152,7 +153,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
             )}
             <label className={labelCls}>
               <span>{t("email")}</span>
-              <input data-testid="auth-email" autoComplete="email" className={inputCls} type="email" placeholder="name@example.com" dir="ltr" value={email} onChange={(e) => setEmail(e.target.value)} required />
+              <input data-testid="auth-email" autoComplete="email" className={`${inputCls} text-start`} type="email" placeholder="name@example.com" dir="ltr" value={email} onChange={(e) => setEmail(e.target.value)} required />
             </label>
             <label className={labelCls}>
               <span>{t("password")}</span>
@@ -160,8 +161,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
                 <input
                   data-testid="auth-password"
                   autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                  className={`${inputCls} text-left`}
-                  style={{ paddingRight: "48px", paddingLeft: "14px" }}
+                  className={`${inputCls} pe-12 ps-3.5 text-start`}
                   type={showPass ? "text" : "password"}
                   dir="ltr"
                   value={password}
@@ -172,9 +172,9 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
                 <button
                   type="button"
                   onClick={() => setShowPass((v) => !v)}
-                  aria-label={showPass ? "Hide password" : "Show password"}
-                  style={{ right: "10px", left: "auto" }}
-                  className={cn(buttonVariants({ variant: "ghost", size: "iconSm" }), "absolute top-1/2 size-8 -translate-y-1/2 text-muted-foreground hover:bg-accent hover:text-foreground")}
+                  aria-pressed={showPass}
+                  aria-label={ar ? (showPass ? "إخفاء كلمة المرور" : "إظهار كلمة المرور") : (showPass ? "Hide password" : "Show password")}
+                  className={cn(buttonVariants({ variant: "ghost", size: "iconSm" }), "absolute end-2.5 top-1/2 size-9 -translate-y-1/2 text-muted-foreground hover:bg-accent hover:text-foreground")}
                 >
                   {showPass ? <EyeSlash size={18} aria-hidden /> : <Eye size={18} aria-hidden />}
                 </button>
@@ -189,7 +189,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
               )}
             </label>
             {error && <p role="alert" className="ai-rise rounded-xl bg-danger-bg px-3.5 py-2.5 text-sm font-semibold text-danger">{error}</p>}
-            <button data-testid="auth-submit" type="submit" disabled={busy} className={`${btnPrimary} w-full rounded-full`}>
+            <button data-testid="auth-submit" type="submit" disabled={busy} aria-busy={busy} className={`${btnPrimary} min-h-11 w-full rounded-full`}>
               {busy ? <SpinnerGap size={18} className="animate-spin" aria-hidden /> : <LockKey size={18} aria-hidden />}
               {mode === "signup" ? t("signupCta") : t("loginCta")}
             </button>

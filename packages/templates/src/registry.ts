@@ -14,10 +14,11 @@ export const OPT_OUT_LINE = {
   en: "To stop these messages, reply STOP.",
 } as const;
 
+const nonEmptyVar = z.string().trim().min(1);
 const vars = {
-  businessAmountDue: z.object({ business: z.string().min(1), amount: z.string().min(1), due_date: z.string().min(1) }),
-  businessAmount: z.object({ business: z.string().min(1), amount: z.string().min(1) }),
-  amountRemaining: z.object({ amount: z.string().min(1), remaining: z.string().min(1) }),
+  businessAmountDue: z.object({ business: nonEmptyVar, amount: nonEmptyVar, due_date: nonEmptyVar }),
+  businessAmount: z.object({ business: nonEmptyVar, amount: nonEmptyVar }),
+  amountRemaining: z.object({ amount: nonEmptyVar, remaining: nonEmptyVar }),
 };
 
 export interface TemplateDef {
@@ -75,15 +76,20 @@ export const TEMPLATES = {
 export type TemplateKey = keyof typeof TEMPLATES;
 
 export function renderTemplate(key: TemplateKey, locale: "ar" | "en", variables: Record<string, string>): string {
+  if (!Object.prototype.hasOwnProperty.call(TEMPLATES, key)) {
+    throw new Error(`Unknown template: ${String(key)}`);
+  }
   const def: TemplateDef = TEMPLATES[key];
   const parsed = def.variables.safeParse(variables);
   if (!parsed.success) {
     throw new Error(`Template ${key} variable mismatch: ${parsed.error.issues.map((i) => i.path.join(".")).join(", ")}`);
   }
+  const safeVars = parsed.data as Record<string, unknown>;
   let text = def.body[locale].replace(/\{\{(\w+)\}\}/g, (_m, name: string) => {
-    const value = variables[name];
-    if (value === undefined) throw new Error(`Template ${key}: missing variable ${name}`);
-    return value;
+    if (!Object.prototype.hasOwnProperty.call(safeVars, name) || typeof safeVars[name] !== "string") {
+      throw new Error(`Template ${key}: missing variable ${name}`);
+    }
+    return safeVars[name];
   });
   if (def.reminder) text = `${text} ${OPT_OUT_LINE[locale]}`;
   return text;

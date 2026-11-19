@@ -133,6 +133,12 @@ describe("WhatsAppCloudProvider (mocked fetch, Meta-shaped responses)", () => {
     await expect(p2.downloadMedia("big-2")).rejects.toThrow(/10 MB/);
   });
 
+  it("rejects untrusted non-Meta media URLs to prevent SSRF and token leakage", async () => {
+    const { fetchImpl } = stubFetch({ url: "https://attacker.example/steal", mime_type: "image/jpeg", file_size: 100 });
+    const p = new WhatsAppCloudProvider({ ...config, fetchImpl });
+    await expect(p.downloadMedia("media-ssrf")).rejects.toThrow(/trusted Meta HTTPS host/i);
+  });
+
   it("refuses loudly when not configured instead of pretending to send", async () => {
     const p = new WhatsAppCloudProvider({ apiVersion: "", phoneNumberId: "", accessToken: "" });
     await expect(p.sendTemplate({ toE164: "+201001234567", templateKey: "x", variables: {}, idempotencyKey: "k4", channel: "whatsapp" }))

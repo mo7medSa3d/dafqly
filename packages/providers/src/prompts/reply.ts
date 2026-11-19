@@ -7,6 +7,7 @@ import { buildExtractionPrompt } from "./shared";
  */
 export const REPLY_PROMPT_VERSION = "reply-v1";
 export const REPLY_TOOL_NAME = "classify_reply";
+const MAX_REPLY_CHARS = 4_000;
 
 export const REPLY_SYSTEM = buildExtractionPrompt("reply-classification", REPLY_TOOL_NAME, "<customer_message> tags", [
   "Classify one customer reply (colloquial Arabic, Franco-Arabic, typos, or mixed) into: promise_to_pay, already_paid, dispute, request_extension, partial_payment_offer, wrong_person, opt_out, question, greeting_or_other.",
@@ -15,11 +16,15 @@ export const REPLY_SYSTEM = buildExtractionPrompt("reply-classification", REPLY_
 ]);
 
 export function replyUserText(text: string, context: { todayIso: string; timezone: string; dueOn?: string | null }): string {
+  // Neutralize delimiter tags inside untrusted customer text so a reply cannot escape <customer_message>.
+  const safeText = text
+    .slice(0, MAX_REPLY_CHARS)
+    .replace(/<\/?customer_message\b[^>]*>/gi, (m) => m.replace(/</g, "&lt;").replace(/>/g, "&gt;"));
   return [
     `Current date: ${context.todayIso} (timezone ${context.timezone}).`,
     context.dueOn ? `The invoice being discussed was due on ${context.dueOn}.` : "No specific invoice is attached.",
     "<customer_message>",
-    text,
+    safeText,
     "</customer_message>",
   ].join("\n");
 }

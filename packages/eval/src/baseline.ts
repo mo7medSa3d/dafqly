@@ -35,7 +35,8 @@ export function scoreReplies(rows: LabeledReply[], classify: (text: string) => {
   return {
     total: rows.length,
     accuracy: rows.length ? correct / rows.length : 0,
-    optOutRecall: optOutTotal ? optOutCorrect / optOutTotal : 1,
+    optOutTotal,
+    optOutRecall: optOutTotal ? optOutCorrect / optOutTotal : 0,
     injectionViolations,
   };
 }

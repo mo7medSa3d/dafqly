@@ -15,6 +15,8 @@ import { processInboundReply, recordPendingReceiptIntent } from "@/server/replie
 import { withAiTenantContext } from "@/server/ai-budget";
 import { readRequestBodyLimited, RequestBodyTooLargeError } from "@/server/request-body";
 
+export const dynamic = "force-dynamic";
+
 /**
  * WhatsApp webhook (BUILD_PLAN F3, ADR-015):
  * - GET: Meta's verification handshake — echo hub.challenge as plain text
@@ -53,7 +55,10 @@ export async function GET(req: Request): Promise<Response> {
       headers: { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff", ...NO_STORE },
     });
   }
-  return new Response("forbidden", { status: 403, headers: NO_STORE });
+  return new Response("forbidden", {
+    status: 403,
+    headers: { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff", ...NO_STORE },
+  });
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -66,7 +71,7 @@ export async function POST(req: Request): Promise<Response> {
   const e = env();
   const secret = e.WHATSAPP_APP_SECRET;
   if (!secret) {
-    return Response.json({ error: { code: "WEBHOOK_NOT_CONFIGURED", message: "WHATSAPP_APP_SECRET is not set" } }, { status: 503, headers: NO_STORE });
+    return Response.json({ error: { code: "WEBHOOK_NOT_CONFIGURED", message: "Webhook not configured" } }, { status: 503, headers: NO_STORE });
   }
   // Enforce a byte limit while streaming, before allocating the full body.
   let rawBytes: Uint8Array;
@@ -138,7 +143,7 @@ export async function POST(req: Request): Promise<Response> {
     const persisted = await persistWebhookEvents(owner, payload);
     events = persisted.events;
   } catch {
-    // Persistence failed before inbox capture: return 500 so Meta does not retry.
+    // Persistence failed before inbox capture: return 500 so Meta retries.
     return Response.json({ error: { code: "PERSIST_FAILED", message: "could not persist webhook" } }, { status: 500, headers: NO_STORE });
   }
   if (events.length === 0) {
@@ -147,14 +152,14 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const summary = await processWebhookEvents(deps, events, new Date());
     await owner.update(webhookEvents).set({ processedAt: new Date(), processError: null })
-      .where(inArray(webhookEvents.dedupeKey, events.map((e) => e.dedupeKey)));
+      .where(inArray(webhookEvents.dedupeKey, events.map((ev) => ev.dedupeKey)));
     return Response.json({ received: true, events: events.length, ...summary }, { headers: NO_STORE });
   } catch (err) {
     // Persisted but not processed: record the failure for operator recovery,
     // still 200 so Meta does not hammer us; inbox payloads are PII-redacted.
     const processError = (err instanceof Error ? err.message : "processing failed").slice(0, 1000);
     await owner.update(webhookEvents).set({ processError })
-      .where(and(inArray(webhookEvents.dedupeKey, events.map((e) => e.dedupeKey)), isNull(webhookEvents.processedAt)))
+      .where(and(inArray(webhookEvents.dedupeKey, events.map((ev) => ev.dedupeKey)), isNull(webhookEvents.processedAt)))
       .catch(() => {});
     return Response.json({ received: true, events: events.length, processing: "failed-recorded" }, { headers: NO_STORE });
   }

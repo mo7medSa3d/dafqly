@@ -36,7 +36,8 @@ export function LocaleToggle({
       document.documentElement.classList.add("switching-locale");
 
       // 2. Persist theme and locale in cookies & storage for instantaneous server rendering
-      const savedTheme = window.localStorage.getItem("dafqly-theme") || document.documentElement.dataset.theme || "light";
+      const rawTheme = window.localStorage.getItem("dafqly-theme") || document.documentElement.dataset.theme;
+      const savedTheme = rawTheme === "dark" ? "dark" : "light";
       document.cookie = `dafqly-theme=${savedTheme}; path=/; max-age=31536000; SameSite=Lax`;
       document.cookie = `NEXT_LOCALE=${targetLocale}; path=/; max-age=31536000; SameSite=Lax`;
       document.documentElement.dataset.theme = savedTheme;
@@ -62,9 +63,9 @@ export function LocaleToggle({
     });
   }
 
-  const label = currentLocale === "ar" ? "English" : "العربية";
-  const shortLabel = currentLocale === "ar" ? "EN" : "ع";
-  const title = currentLocale === "ar" ? "Switch to English" : "التحويل إلى العربية";
+  const label = activeLocale === "ar" ? "English" : "العربية";
+  const shortLabel = activeLocale === "ar" ? "EN" : "ع";
+  const title = activeLocale === "ar" ? "Switch to English" : "التحويل إلى العربية";
   // WCAG 2.5.3: in compact mode only the short label ("EN"/"ع") is
   // visible, so the accessible name must start with it — otherwise axe
   // flags label-content-name-mismatch on the dashboard header.
@@ -78,7 +79,7 @@ export function LocaleToggle({
       title={accessibleLabel}
       aria-label={accessibleLabel}
       disabled={isPending || isSwitching}
-      className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "min-h-[36px]", className)}
+      className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "min-h-[36px] min-w-[36px]", className)}
     >
       {isPending || isSwitching ? (
         <SpinnerGap size={15} strokeWidth={2.5} className="animate-spin text-primary" aria-hidden />

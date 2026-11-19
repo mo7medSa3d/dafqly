@@ -10,9 +10,12 @@ describe("quiet hours (default 21:00-09:00 Africa/Cairo)", () => {
     expect(isInQuietHours(new Date("2026-11-09T06:59:00Z"), DEFAULT_POLICY)).toBe(true); // 08:59 Cairo
     expect(isInQuietHours(new Date("2026-11-09T10:00:00Z"), DEFAULT_POLICY)).toBe(false); // 12:00 Cairo
   });
-  it("moves a quiet-hours instant to the next allowed slot, never drops it", () => {
+  it("moves a quiet-hours instant to the next allowed slot, snapping mid-minute inputs to exact boundary", () => {
     const slot = nextAllowedSlot(new Date("2026-11-09T19:30:00Z"), DEFAULT_POLICY); // Mon 21:30 Cairo
     expect(slot.toISOString()).toBe("2026-11-10T07:00:00.000Z"); // Tue 09:00 Cairo
+    const snapped = nextAllowedSlot(new Date("2026-11-09T19:02:37.500Z"), DEFAULT_POLICY); // Mon 21:02:37 Cairo
+    expect(snapped.toISOString()).toBe("2026-11-10T07:00:00.000Z"); // Tue 09:00:00 Cairo
+    expect(() => nextAllowedSlot(new Date("invalid"), DEFAULT_POLICY)).toThrow(/Invalid Date/);
   });
   it("returns the instant unchanged when already allowed", () => {
     const t = new Date("2026-11-09T10:00:00Z");

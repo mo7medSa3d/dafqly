@@ -165,7 +165,7 @@ export function allocatePayment(paymentMinor: bigint, targets: readonly Allocati
   const eligible = targets
     .filter((t) => (t.status === "open" || t.status === "partially_paid") && outstandingMinor(t.amountMinor, t.paidMinor) > 0n)
     .slice()
-    .sort((a, b) => (a.dueOn === b.dueOn ? (a.invoiceId < b.invoiceId ? -1 : 1) : a.dueOn < b.dueOn ? -1 : 1));
+    .sort((a, b) => (a.dueOn === b.dueOn ? (a.invoiceId < b.invoiceId ? -1 : a.invoiceId > b.invoiceId ? 1 : 0) : a.dueOn < b.dueOn ? -1 : 1));
   const allocations: AllocationResult["allocations"] = [];
   let remaining = paymentMinor;
   for (const t of eligible) {

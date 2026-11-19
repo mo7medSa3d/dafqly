@@ -109,4 +109,43 @@ describe("email (H5 SMTP seam)", () => {
       else envMut.SMTP_URL = prevSmtp;
     }
   });
+
+  it("sendEmail rejects CR/LF/NUL header injection and blank headers in from, to, and subject", async () => {
+    const baseOverrides = { smtpUrl: "smtp://127.0.0.1:1025", from: "Dafqly <no-reply@example.test>" };
+    const poisonedValues = [
+      "a@example.test\rBcc: evil@example.test",
+      "a@example.test\nBcc: evil@example.test",
+      "a@example.test\r\nBcc: evil@example.test",
+      "a@example.test\0evil",
+      "   ",
+    ];
+    for (const bad of poisonedValues) {
+      await expect(
+        sendEmail({ to: bad, subject: "ok", text: "body" }, baseOverrides),
+      ).rejects.toMatchObject({ code: "INVALID_EMAIL_HEADER", status: 400 });
+      await expect(
+        sendEmail({ to: "user@example.test", subject: bad, text: "body" }, baseOverrides),
+      ).rejects.toMatchObject({ code: "INVALID_EMAIL_HEADER", status: 400 });
+      await expect(
+        sendEmail({ to: "user@example.test", subject: "ok", text: "body" }, { smtpUrl: "smtp://127.0.0.1:1025", from: bad }),
+      ).rejects.toMatchObject({ code: "INVALID_EMAIL_HEADER", status: 400 });
+    }
+  });
+
+  it("sendVerificationEmailLink rejects non-http/https URLs, malformed URLs, and CR/LF/NUL injection", async () => {
+    const overrides = { smtpUrl: "smtp://127.0.0.1:1025", from: "Dafqly <no-reply@example.test>" };
+    const invalidUrls = [
+      "javascript:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+      "ftp://example.test/verify?token=abc",
+      "not-a-url",
+      "https://app.example.test/verify?token=abc\r\nBcc: evil@example.test",
+      "https://app.example.test/verify?token=abc\0def",
+    ];
+    for (const url of invalidUrls) {
+      await expect(
+        sendVerificationEmailLink({ to: "user@example.test", url }, overrides),
+      ).rejects.toMatchObject({ code: "INVALID_VERIFICATION_URL", status: 400 });
+    }
+  });
 });

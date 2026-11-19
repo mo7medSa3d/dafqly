@@ -1,8 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "@/components/ui/solid-icons";
 import { WhatsappLogo } from "@/components/ui/icons";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { btnSmall, btnGhost } from "./ui";
 
 interface WhatsAppShareProps {
@@ -23,7 +23,13 @@ export function WhatsAppShareButton({
   showCopy = false,
 }: WhatsAppShareProps) {
   const t = useTranslations("share");
+  const locale = useLocale();
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+  }, []);
 
   const handleClick = () => {
     const encoded = encodeURIComponent(message);
@@ -57,7 +63,8 @@ export function WhatsAppShareButton({
     }
     if (ok) {
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -68,7 +75,7 @@ export function WhatsAppShareButton({
       <button
         type="button"
         onClick={handleClick}
-        className={`${size === "md" ? btnGhost : btnSmall} ${className}`}
+        className={`${size === "md" ? `${btnGhost} min-h-11` : btnSmall} ${className}`}
         title={t("whatsapp")}
         aria-label={buttonText ?? t("whatsapp")}
       >
@@ -81,13 +88,13 @@ export function WhatsAppShareButton({
           type="button"
           onClick={(e) => void handleCopy(e)}
           className={`${btnSmall} px-2`}
-          title={copied ? t("copied") : "Copy"}
-          aria-label={copied ? t("copied") : "Copy"}
+          title={copied ? t("copied") : (locale === "ar" ? "نسخ" : "Copy")}
+          aria-label={copied ? t("copied") : (locale === "ar" ? "نسخ" : "Copy")}
         >
           {copied ? (
-            <Check size={14} strokeWidth={2.5} className="text-status-paid-fg" />
+            <Check size={14} strokeWidth={2.5} className="text-status-paid-fg" aria-hidden />
           ) : (
-            <Copy size={14} className="text-text-subtle" />
+            <Copy size={14} className="text-text-subtle" aria-hidden />
           )}
         </button>
       )}

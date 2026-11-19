@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { clickNav } from "./helpers";
+import { isoDate } from "./helpers";
 
 /**
  * M5 (F9/F11/F12/F13) over real HTTP against the production build:
@@ -41,19 +41,19 @@ test("M5 cheque lifecycle in the UI: register -> deposit -> clear pays the invoi
     displayName: `عميل م٥ ${stamp}`, phone: `01013${stamp}`,
   });
   const invoice = await trpcMutate<{ id: string; outstandingMinor: string }>(page, "invoices.create", {
-    debtorId: debtor.id, amount: "300.00", issuedOn: "2026-11-09", dueOn: "2026-11-25",
+    debtorId: debtor.id, amount: "300.00", issuedOn: isoDate(0), dueOn: isoDate(16),
   });
 
   await page.goto("/ar/dashboard");
-  await clickNav(page, "nav-cheques");
+  await page.goto("/ar/cheques");
   await page.getByTestId("cheque-debtor").selectOption(debtor.id);
   await page.getByTestId("cheque-direction").selectOption("receivable");
   await page.getByTestId("cheque-number").fill(`E2E-${stamp}`);
   await page.getByTestId("cheque-bank").fill("CIB");
   await page.getByTestId("cheque-amount").fill("300");
   await page.getByTestId("cheque-invoice").selectOption(invoice.id);
-  await page.getByTestId("cheque-issue").fill("2026-11-09");
-  await page.getByTestId("cheque-due").fill("2026-11-12");
+  await page.getByTestId("cheque-issue").fill(isoDate(0));
+  await page.getByTestId("cheque-due").fill(isoDate(3));
   await page.getByTestId("cheque-submit").click();
   const row = page.getByTestId("cheque-row").filter({ hasText: `E2E-${stamp}` });
   await expect(row).toBeVisible();

@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { cn, toSafeLocalePath } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -46,6 +46,8 @@ export function NotificationBell({ locale }: { locale: string }) {
   const isEn = locale === "en";
   const router = useRouter();
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<FilterTab>("all");
@@ -103,11 +105,18 @@ export function NotificationBell({ locale }: { locale: string }) {
     };
   }, [fetchList]);
 
-  // Close on Escape or outside click
+  // Focus panel on open; close on Escape (restoring focus) or outside click
   useEffect(() => {
     if (!open) return;
+    const raf = window.requestAnimationFrame(() => {
+      panelRef.current?.focus();
+    });
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     };
     const onPointerDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
@@ -117,6 +126,7 @@ export function NotificationBell({ locale }: { locale: string }) {
     window.addEventListener("keydown", onKey);
     document.addEventListener("mousedown", onPointerDown);
     return () => {
+      window.cancelAnimationFrame(raf);
       window.removeEventListener("keydown", onKey);
       document.removeEventListener("mousedown", onPointerDown);
     };
@@ -148,6 +158,7 @@ export function NotificationBell({ locale }: { locale: string }) {
   };
 
   const handleMarkAllRead = async () => {
+    if (unreadCount === 0) return;
     const nowIso = new Date().toISOString();
     setItems((prev) => prev.map((item) => ({ ...item, readAt: item.readAt ?? nowIso })));
     setUnreadCount(0);
@@ -178,13 +189,8 @@ export function NotificationBell({ locale }: { locale: string }) {
       void handleMarkRead(item.id);
     }
     setOpen(false);
-    if (item.actionUrl) {
-      const normalized =
-        item.actionUrl === `/${locale}` || item.actionUrl.startsWith(`/${locale}/`)
-          ? item.actionUrl
-          : `/${locale}${item.actionUrl.startsWith("/") ? item.actionUrl : `/${item.actionUrl}`}`;
-      router.push(normalized);
-    }
+    const normalized = toSafeLocalePath(item.actionUrl, locale);
+    if (normalized) router.push(normalized);
   };
 
   const badge = unreadCount > 9 ? "9+" : String(unreadCount);
@@ -202,6 +208,7 @@ export function NotificationBell({ locale }: { locale: string }) {
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         data-testid="notification-bell-btn"
         onClick={() => {
@@ -212,6 +219,7 @@ export function NotificationBell({ locale }: { locale: string }) {
           });
         }}
         aria-label={bellLabel}
+        aria-haspopup="dialog"
         aria-expanded={open}
         className={cn(buttonVariants({ variant: open ? "soft" : "outline", size: "icon" }), "relative size-9", !open && "text-text-muted hover:border-border")}
       >
@@ -234,10 +242,13 @@ export function NotificationBell({ locale }: { locale: string }) {
 
       {open && (
         <div
+          ref={panelRef}
+          tabIndex={-1}
           role="dialog"
+          aria-modal="true"
           aria-label={isEn ? "Workspace Notifications" : "إشعارات مساحة العمل"}
           data-testid="notification-popover"
-          className="fixed inset-x-3 top-14 z-50 w-auto overflow-hidden rounded-xl border border-border bg-surface panel-shadow sm:absolute sm:inset-x-auto sm:top-11 sm:end-0 sm:w-[min(92vw,390px)]"
+          className="fixed inset-x-3 top-14 z-50 w-auto overflow-hidden rounded-xl border border-border bg-surface panel-shadow focus:outline-none sm:absolute sm:inset-x-auto sm:top-11 sm:end-0 sm:w-[min(92vw,390px)]"
         >
           {/* Header */}
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 px-4 py-3">
@@ -348,7 +359,7 @@ export function NotificationBell({ locale }: { locale: string }) {
                         handleItemClick(item);
                       }
                     }}
-                    className={`group flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-surface-muted/60 focus:outline-none focus:bg-surface-muted/60 ${
+                    className={`group flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-surface-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 focus-visible:bg-surface-muted/60 ${
                       unread ? "bg-callout/35" : ""
                     }`}
                   >

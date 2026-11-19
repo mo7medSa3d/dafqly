@@ -13,26 +13,30 @@ import { resolveStatement } from "@/server/statements";
 const HEADERS = { "X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store" };
 const TOKEN_RE = /^[A-Za-z0-9_-]{32,128}$/;
 const MAX_RECEIPT_BYTES = 10 * 1024 * 1024;
-const ALLOWED_MIME_PREFIXES = ["image/png", "image/jpeg", "image/webp", "image/heic", "image/heif", "application/pdf"];
+const ALLOWED_MIMES = ["image/png", "image/jpeg", "image/webp", "image/heic", "image/heif", "application/pdf"];
 
 export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }): Promise<Response> {
   const { token } = await params;
   const ip = clientIp(req.headers);
   const limit = rateLimit(`statement:receipt:${ip}`, { limit: 10, windowSeconds: 60 });
-  const tokenLimit = rateLimit(`statement:receipt:token:${tokenBucketKey(token)}`, { limit: 5, windowSeconds: 60 });
-  if (!limit.allowed || !tokenLimit.allowed) {
-    const retryAfter = Math.max(limit.retryAfterSeconds, tokenLimit.retryAfterSeconds);
+  if (!limit.allowed) {
     return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), {
-      status: 429, headers: { ...HEADERS, "Retry-After": String(retryAfter) },
+      status: 429, headers: { ...HEADERS, "Retry-After": String(limit.retryAfterSeconds) },
     });
   }
   if (!TOKEN_RE.test(token)) {
     return Response.json(toApiErrorBody(new AppError("NOT_FOUND", "Not found", 404)), { status: 404, headers: HEADERS });
   }
+  const tokenLimit = rateLimit(`statement:receipt:token:${tokenBucketKey(token)}`, { limit: 5, windowSeconds: 60 });
+  if (!tokenLimit.allowed) {
+    return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), {
+      status: 429, headers: { ...HEADERS, "Retry-After": String(tokenLimit.retryAfterSeconds) },
+    });
+  }
   let formData: FormData;
   try {
     const rawBytes = await readRequestBodyLimited(req, MAX_RECEIPT_BYTES + 65_536);
-    const boundedReq = new Request(req.url, { method: req.method, headers: req.headers, body: rawBytes as never });
+    const boundedReq = new Request(req.url, { method: req.method, headers: req.headers, body: Buffer.from(rawBytes) });
     formData = await boundedReq.formData();
   } catch (err) {
     if (err instanceof RequestBodyTooLargeError) {
@@ -47,8 +51,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   if (file.size > MAX_RECEIPT_BYTES) {
     return Response.json(toApiErrorBody(new AppError("BODY_TOO_LARGE", "Receipt file exceeds 10 MB", 413)), { status: 413, headers: HEADERS });
   }
-  const mime = (file.type || "image/jpeg").toLowerCase();
-  if (!ALLOWED_MIME_PREFIXES.includes(mime)) {
+  const mime = (file.type || "image/jpeg").toLowerCase().split(";")[0]?.trim() || "image/jpeg";
+  if (!ALLOWED_MIMES.includes(mime)) {
     return Response.json(toApiErrorBody(new AppError("UNSUPPORTED_FILE", "Unsupported receipt file type", 400)), { status: 400, headers: HEADERS });
   }
   try {
@@ -85,11 +89,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
           provider: "portal", bodyText: "Customer uploaded receipt via statement portal",
           mediaId: out.fileId, status: "received",
         }).returning({ id: messages.id });
-        await tx.insert(messageIntents).values({
-          tenantId: link.tenantId, messageId: msgRow!.id, intent: "receipt_image_pending",
-          extracted: { fileId: out.fileId, sha256: out.sha256, outcome: out.outcome, checks: out.checks } as never,
-          confidence: out.extraction?.confidence ?? 0, resolvedBy: "human", actionTaken: "human_inbox",
-        });
+        if (msgRow) {
+          await tx.insert(messageIntents).values({
+            tenantId: link.tenantId, messageId: msgRow.id, intent: "receipt_image_pending",
+            extracted: { fileId: out.fileId, sha256: out.sha256, outcome: out.outcome, checks: out.checks } as never,
+            confidence: out.extraction?.confidence ?? 0, resolvedBy: "human", actionTaken: "human_inbox",
+          });
+        }
       });
     }
     return Response.json({ ok: true, outcome: out.outcome, paymentId: out.paymentId, fileId: out.fileId }, { status: 201, headers: HEADERS });

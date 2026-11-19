@@ -69,5 +69,8 @@ describe("UnifiedAiProvider", () => {
     expect(cfg).toEqual({ provider: "openai", apiKey: "sk-123", model: undefined, baseUrl: undefined });
     expect(hasUsableLlmConfig({ AI_PROVIDER: "openai", AI_API_KEY: "sk-123" })).toBe(true);
     expect(hasUsableLlmConfig({ AI_PROVIDER: "gemini" })).toBe(false);
+    // Never leak one vendor's legacy key to a different provider.
+    expect(resolveAiConfig({ AI_PROVIDER: "openai", GEMINI_API_KEY: "gem-secret" }).apiKey).toBeUndefined();
+    expect(resolveAiConfig({ AI_PROVIDER: "gemini", GEMINI_API_KEY: "gem-secret" }).apiKey).toBe("gem-secret");
   });
 });

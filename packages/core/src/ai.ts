@@ -63,9 +63,18 @@ function amountMinorFieldForCurrency(currency: string) {
   });
 }
 
+function isValidCalendarDate(iso: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return false;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
 const amountMinorField = amountMinorFieldForCurrency("EGP");
 const confidenceField = z.number().min(0).max(1);
-const dateField = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const dateField = z.string().refine(isValidCalendarDate, "date must be a valid YYYY-MM-DD calendar date");
 
 // ------------------------------------------------------------------- F6 ledger
 const ledgerRowSchema = z.object({
@@ -264,15 +273,16 @@ export function evaluateReceiptChecks(input: {
     passed: !seenHashes.has(sha256),
     detail: seenHashes.has(sha256) ? "this exact image was submitted before" : "image hash not seen before",
   });
-  const normRef = e.reference_no ? normalizeDigits(e.reference_no).trim().replace(/[\s\-_]/g, "").toUpperCase() : null;
-  const refSeen = e.reference_no !== null && (
-    seenReferences.has(e.reference_no) ||
-    (normRef !== null && Array.from(seenReferences).some((r) => normalizeDigits(r).trim().replace(/[\s\-_]/g, "").toUpperCase() === normRef))
+  const normRef = e.reference_no ? normalizeDigits(e.reference_no).trim().replace(/[\s\-_]/g, "").toUpperCase() : "";
+  const hasRef = normRef.length > 0;
+  const refSeen = hasRef && (
+    (e.reference_no !== null && seenReferences.has(e.reference_no)) ||
+    Array.from(seenReferences).some((r) => normalizeDigits(r).trim().replace(/[\s\-_]/g, "").toUpperCase() === normRef)
   );
   checks.push({
     key: "duplicate_reference",
-    passed: e.reference_no !== null && !refSeen,
-    detail: e.reference_no === null ? "no reference number on the receipt" : refSeen ? "reference number was seen before" : "reference not seen before",
+    passed: hasRef && !refSeen,
+    detail: !hasRef ? "no reference number on the receipt" : refSeen ? "reference number was seen before" : "reference not seen before",
   });
   let dateOk = false;
   let dateDetail = "receipt has no readable datetime";
@@ -313,7 +323,7 @@ export interface ReceiptMatch {
 
 function targetsOf(invoices: readonly OpenInvoiceForMatch[]): AllocationTarget[] {
   return invoices
-    .filter((i) => i.outstandingMinor > 0)
+    .filter((i) => Number.isSafeInteger(i.outstandingMinor) && i.outstandingMinor > 0)
     .map((i) => ({
       invoiceId: i.id, amountMinor: BigInt(i.outstandingMinor), paidMinor: 0n,
       dueOn: i.dueOn, status: "open" as const,
@@ -346,8 +356,8 @@ function findExactSubset(invoices: readonly OpenInvoiceForMatch[], target: numbe
  * allocated oldest-first via the core allocator.
  */
 export function matchReceiptAmount(amountMinor: number, openInvoices: readonly OpenInvoiceForMatch[]): ReceiptMatch {
-  if (!Number.isInteger(amountMinor) || amountMinor <= 0) return { kind: "none", invoiceIds: [], allocations: [] };
-  const open = openInvoices.filter((i) => i.outstandingMinor > 0);
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) return { kind: "none", invoiceIds: [], allocations: [] };
+  const open = openInvoices.filter((i) => Number.isSafeInteger(i.outstandingMinor) && i.outstandingMinor > 0);
   if (open.length === 0) return { kind: "none", invoiceIds: [], allocations: [] };
   const single = open.find((i) => i.outstandingMinor === amountMinor);
   if (single) {
@@ -432,6 +442,7 @@ export function resolveRelativeDate(text: string, todayIso: string, timezone: st
     const date = `${dmy[3]}-${dmy[2]!.padStart(2, "0")}-${dmy[1]!.padStart(2, "0")}`;
     return { date, ambiguous: false };
   }
+  if (!isValidCalendarDate(todayIso)) return { date: null, ambiguous: false };
   if (/بعد\s+بكر[هة]/.test(t)) return { date: addDaysIso(todayIso, 2), ambiguous: false };
   if (/بكر[هة]|غدا|غداً/.test(t)) return { date: addDaysIso(todayIso, 1), ambiguous: false };
   if (/[أآا]خر\s+الشهر/.test(t)) {
@@ -532,7 +543,7 @@ export function scoreReplySet(items: readonly ReplyScoreItem[]): ReplyScore {
     dateTotal,
     dateAccuracy: dateTotal ? dateOk / dateTotal : 1,
     optOutTotal,
-    optOutRecall: optOutTotal ? optOutOk / optOutTotal : 1,
+    optOutRecall: optOutTotal ? optOutOk / optOutTotal : 0,
     injectionViolations,
   };
 }
@@ -588,7 +599,12 @@ export function sanitizePromptData(input: string): string {
   // user-supplied text stored after sanitizing (conversation titles,
   // messages) must be NUL-free or the insert fails with error 22021.
   // String arg (not a regex) so eslint no-control-regex stays quiet.
-  const nulFree = input.replaceAll(String.fromCharCode(0), "");
+  const nulFree = Array.from(input)
+    .filter((ch) => {
+      const c = ch.charCodeAt(0);
+      return c === 0x09 || c === 0x0a || c === 0x0d || (c >= 0x20 && c !== 0x7f);
+    })
+    .join("");
   // 1. Strip Tashkeel (harakat), Tatweel, and zero-width characters so obfuscated Arabic injections are exposed
   const stripped = nulFree
     .replace(/[\u064B-\u065F\u0670]/g, "") // Tashkeel / Harakat
@@ -700,6 +716,10 @@ export function smartHeaderMapper(rawHeaders: readonly string[]): SmartHeaderMap
       return;
     }
     const normalized = normalizeArabicName(rawClean).replace(/[^a-z0-9\u0621-\u064A]/g, "");
+    if (!normalized) {
+      columns.push({ index, rawHeader: rawClean, normalizedHeader: "", detectedField: null, confidence: 0, reason: "no match" });
+      return;
+    }
 
     let bestField: WorkspaceImportField | null = null;
     let bestConfidence = 0;
@@ -949,18 +969,20 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
   const currencyCode = input.currency && /^[A-Za-z]{3}$/.test(input.currency.trim())
     ? normalizeCurrencyCode(input.currency.trim())
     : "EGP";
-  const currency = isEn ? (input.currency ?? "EGP") : getCurrencySymbol(currencyCode, "ar");
+  const currency = isEn ? currencyCode : getCurrencySymbol(currencyCode, "ar");
   const amountMajor = formatCurrencyMinor(amountMinor, currencyCode);
-  const invoiceRefText = input.reference ? (isEn ? ` #${input.reference}` : ` رقم ${input.reference}`) : "";
+  const safeRef = input.reference ? sanitizePromptData(input.reference) : "";
+  const invoiceRefText = safeRef ? (isEn ? ` #${safeRef}` : ` رقم ${safeRef}`) : "";
+  const daysOverdue = Number.isFinite(input.daysOverdue) ? Math.trunc(input.daysOverdue) : 0;
 
   // Select appropriate tone based on overdue status and customer risk flag
   let tone: NotificationTone = input.tone ?? "polite";
   if (!input.tone) {
-    if (input.riskFlag || input.daysOverdue > 30) {
+    if (input.riskFlag || daysOverdue > 30) {
       tone = "urgent";
-    } else if (input.daysOverdue > 7) {
+    } else if (daysOverdue > 7) {
       tone = "firm";
-    } else if (input.daysOverdue <= 0) {
+    } else if (daysOverdue <= 0) {
       tone = "friendly";
     } else {
       tone = "polite";
@@ -977,7 +999,7 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
         text = `عزيزي ${debtorDisplayName}، نرجو الإحاطة بأن الفاتورة${invoiceRefText} المستحقة لدى ${businessDisplayName} بقيمة ${amountMajor} ${currency} حل موعد سدادها (${input.dueDate}). شاكرين تعاونكم معنا.`;
         break;
       case "firm":
-        text = `السيد/ة ${debtorDisplayName}، نلفت انتباهكم إلى تأخر سداد الفاتورة${invoiceRefText} المستحقة لدى ${businessDisplayName} بقيمة ${amountMajor} ${currency} منذ ${input.daysOverdue} يوماً (تاريخ الاستحقاق ${input.dueDate}). نرجو التكرم بسرعة السداد لتجنب أي تعليق في التعاملات.`;
+        text = `السيد/ة ${debtorDisplayName}، نلفت انتباهكم إلى تأخر سداد الفاتورة${invoiceRefText} المستحقة لدى ${businessDisplayName} بقيمة ${amountMajor} ${currency} منذ ${daysOverdue} يوماً (تاريخ الاستحقاق ${input.dueDate}). نرجو التكرم بسرعة السداد لتجنب أي تعليق في التعاملات.`;
         break;
       case "urgent":
         text = `إشعار عاجل - ${debtorDisplayName}: نرجو تسوية المبلغ المتأخر والبالغ ${amountMajor} ${currency} لصالح ${businessDisplayName} بصورة فورية (تاريخ الاستحقاق ${input.dueDate}). يرجى التواصل معنا أو السداد عبر الرابط التالي.`;
@@ -995,7 +1017,7 @@ export function generateSmartNotification(input: GenerateSmartNotificationInput)
         text = `Dear ${debtorDisplayName}, please note that your invoice${invoiceRefText} of ${amountMajor} ${currency} with ${businessDisplayName} is now due (${input.dueDate}). Thank you for your prompt payment.`;
         break;
       case "firm":
-        text = `Notice for ${debtorDisplayName}: Your payment of ${amountMajor} ${currency} to ${businessDisplayName} is overdue by ${input.daysOverdue} days (due ${input.dueDate}). Please settle this amount to maintain your active account.`;
+        text = `Notice for ${debtorDisplayName}: Your payment of ${amountMajor} ${currency} to ${businessDisplayName} is overdue by ${daysOverdue} days (due ${input.dueDate}). Please settle this amount to maintain your active account.`;
         break;
       case "urgent":
         text = `Urgent Notice - ${debtorDisplayName}: An outstanding balance of ${amountMajor} ${currency} is past due at ${businessDisplayName} (due ${input.dueDate}). Please arrange immediate settlement.`;

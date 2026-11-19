@@ -101,7 +101,7 @@ export function BillingClient({
             <span>
               {quota.state === "exceeded" ? t("quotaExceeded") : t("quotaWarn")}
               {" — "}
-              <span dir="ltr">
+              <span className="tabular-nums" dir="ltr">
                 {quota.used} {t("quotaOf")} {quota.quota ?? "∞"}
               </span>
             </span>
@@ -122,12 +122,12 @@ export function BillingClient({
                 </div>
                 <div className="flex items-baseline justify-between pt-1">
                   <span className="text-sm font-extrabold text-text">
-                    <span className="tnum" dir="ltr">{quota.used}</span>
+                    <span className="tnum tabular-nums" dir="ltr">{quota.used}</span>
                     <span className="text-xs font-normal text-text-muted mx-1">{t("quotaOf")}</span>
-                    <span className="tnum" dir="ltr">{quota.quota ?? "∞"}</span>
+                    <span className="tnum tabular-nums" dir="ltr">{quota.quota ?? "∞"}</span>
                   </span>
                   {pct !== null && (
-                    <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-bold text-primary">
+                    <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-bold text-primary tabular-nums">
                       {pct}%
                     </span>
                   )}
@@ -142,9 +142,9 @@ export function BillingClient({
                   <li key={p.key} className="flex items-center justify-between gap-3 py-3">
                     <div className="flex flex-col">
                       <span className="text-xs font-bold text-text">{isAr ? p.nameAr : p.nameEn}</span>
-                      <span className="text-[11px] text-text-muted">
+                      <span className="text-[11px] text-text-muted tabular-nums">
                         {p.monthlyMessageQuota ?? "∞"} {t("perMonth")} ·{" "}
-                        <span className="tnum" dir="ltr">{formatCurrency(BigInt(p.priceMinor))}</span>
+                        <span className="tnum tabular-nums" dir="ltr">{formatCurrency(BigInt(p.priceMinor))}</span>
                       </span>
                     </div>
                     {!isCurrent ? (
@@ -308,15 +308,15 @@ export function BillingClient({
             </div>
             <div>
               <p className="text-xs font-semibold text-text-muted">{t("currentPlan")}</p>
-              <p className="text-base font-extrabold text-text capitalize">{quota.planKey} · <span dir="ltr">{quota.month}</span></p>
+              <p className="text-base font-extrabold text-text capitalize">{quota.planKey} · <span className="tabular-nums" dir="ltr">{quota.month}</span></p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm font-extrabold text-text" dir="ltr">
-              <span className="tnum">{quota.used}</span> / <span className="tnum">{quota.quota ?? "∞"}</span>
+              <span className="tnum tabular-nums">{quota.used}</span> / <span className="tnum tabular-nums">{quota.quota ?? "∞"}</span>
             </span>
             {pct !== null && (
-              <span className="rounded-md bg-surface-muted px-2.5 py-1 text-xs font-bold text-primary tnum">
+              <span className="rounded-md bg-surface-muted px-2.5 py-1 text-xs font-bold text-primary tnum tabular-nums">
                 {pct}%
               </span>
             )}
@@ -335,7 +335,7 @@ export function BillingClient({
           <span>
             {quota.state === "exceeded" ? t("quotaExceeded") : t("quotaWarn")}
             {" — "}
-            <span dir="ltr">
+            <span className="tabular-nums" dir="ltr">
               {quota.used} {t("quotaOf")} {quota.quota ?? "∞"}
             </span>
           </span>
@@ -474,7 +474,7 @@ export function BillingClient({
               <Receipt size={18} className="text-primary" />
               <span>{isAr ? "سجل فواتير الاشتراك" : "Subscription Invoice History"}</span>
             </h2>
-            <span className="text-xs text-text-muted">
+            <span className="text-xs text-text-muted tabular-nums">
               {subInvoices.length} {isAr ? "فاتورة مسجلة" : "invoices recorded"}
             </span>
           </div>
@@ -507,10 +507,10 @@ export function BillingClient({
                   return (
                     <tr key={inv.id} className="transition-colors hover:bg-callout/40">
                       <td className="px-4 py-3 font-bold text-text">{planTitle}</td>
-                      <td className="px-4 py-3 text-text-muted" dir="ltr">
+                      <td className="px-4 py-3 text-text-muted tabular-nums" dir="ltr">
                         {inv.periodStart} → {inv.periodEnd}
                       </td>
-                      <td className="tnum px-4 py-3 font-extrabold text-text" dir="ltr">
+                      <td className="tnum tabular-nums px-4 py-3 font-extrabold text-text" dir="ltr">
                         {formattedAmt}
                       </td>
                       <td className="px-4 py-3">

@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
-import { ArrowLeft, CheckCircle } from "@/components/ui/solid-icons";
+import { ArrowLeft, CheckCircle, SpinnerGap } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { BrandLockup } from "./BrandMark";
 import { ThemeToggle } from "./ThemeToggle";
@@ -56,6 +56,7 @@ export function OnboardingWizard() {
   const [busy, setBusy] = useState(false);
 
   async function onCreate() {
+    if (busy) return;
     if (!consent) { setError(t("consentRequired")); return; }
     setBusy(true);
     setError(null);
@@ -75,7 +76,7 @@ export function OnboardingWizard() {
   }
 
   const steps = [t("stepBusiness"), t("stepSchedule"), t("stepTone")];
-  const backBtn = `${btnGhost} px-3`;
+  const backBtn = `${btnGhost} min-h-11 min-w-11 px-3`;
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col gap-6 p-4 sm:p-8">
@@ -89,14 +90,14 @@ export function OnboardingWizard() {
       <div className="flex flex-col items-center gap-2 text-center sm:flex-row sm:text-start"><OnboardingIllustration size={150} /><div><h1 className="text-xl font-extrabold">{t("title")}</h1><p className="mt-1 text-sm text-text-muted">{locale === "ar" ? "جهّز مساحة عملك لإدارة الفواتير والتحصيل والمتابعة." : "Set up your workspace for invoices, collections and follow-ups."}</p></div></div>
 
       {/* Stepper: numbered/filled nodes joined by a progress track */}
-      <ol className="flex items-center gap-2" aria-label="steps">
+      <ol className="flex items-center gap-2" aria-label={locale === "ar" ? "خطوات الإعداد" : "Setup steps"}>
         {steps.map((label, i) => {
           const done = i < step;
           const current = i === step;
           return (
-            <li key={label} className="flex flex-1 items-center gap-2 last:flex-none">
+            <li key={label} aria-current={current ? "step" : undefined} className="flex flex-1 items-center gap-2 last:flex-none">
               <span className={`flex size-8 shrink-0 items-center justify-center rounded text-sm font-extrabold ${done || current ? "bg-primary text-primary-fg" : "bg-surface-muted text-text-muted"}`}>
-                {done ? <CheckCircle size={17} aria-hidden /> : <span className="tnum" dir="ltr">{i + 1}</span>}
+                {done ? <CheckCircle size={17} aria-hidden /> : <span className="tnum tabular-nums" dir="ltr">{i + 1}</span>}
               </span>
               <span className={`hidden text-sm sm:block ${current ? "font-bold" : done ? "font-semibold" : "text-text-muted"}`}>{label}</span>
               {i < steps.length - 1 && <span className={`mx-1 h-0.5 flex-1 rounded ${done ? "bg-status-paid-fg" : "bg-border"}`} aria-hidden />}
@@ -109,9 +110,9 @@ export function OnboardingWizard() {
         {step === 0 && (
           <div className="flex flex-col gap-4">
             <label className={labelCls}><span>{t("businessNameAr")}</span>
-              <input data-testid="ob-name-ar" className={inputCls} maxLength={120} value={businessNameAr} onChange={(e) => setBusinessNameAr(e.target.value)} required /></label>
+              <input data-testid="ob-name-ar" autoComplete="organization" className={inputCls} maxLength={120} value={businessNameAr} onChange={(e) => setBusinessNameAr(e.target.value)} required /></label>
             <label className={labelCls}><span>{t("businessNameEn")}</span>
-              <input data-testid="ob-name-en" className={inputCls} dir="ltr" maxLength={120} value={businessNameEn} onChange={(e) => setBusinessNameEn(e.target.value)} /></label>
+              <input data-testid="ob-name-en" autoComplete="organization" className={`${inputCls} text-start`} dir="ltr" maxLength={120} value={businessNameEn} onChange={(e) => setBusinessNameEn(e.target.value)} /></label>
             <label className={labelCls}><span>{t("timezone")}</span>
               <select data-testid="ob-timezone" className={inputCls} value={timezone} onChange={(e) => setTimezone(e.target.value)}>
                 {![
@@ -144,7 +145,7 @@ export function OnboardingWizard() {
                 <option value="UTC">UTC</option>
               </select></label>
             <div>
-              <button data-testid="ob-next" className={btnPrimary} disabled={businessNameAr.trim().length < 2} onClick={() => setStep(1)}>{tc("continue")}</button>
+              <button type="button" data-testid="ob-next" className={`${btnPrimary} min-h-11 w-full sm:w-auto`} disabled={businessNameAr.trim().length < 2} onClick={() => setStep(1)}>{tc("continue")}</button>
             </div>
           </div>
         )}
@@ -153,9 +154,9 @@ export function OnboardingWizard() {
           <div className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <label className={labelCls}><span>{t("quietStart")}</span>
-                <input data-testid="ob-quiet-start" className={inputCls} type="time" dir="ltr" value={quietStart} onChange={(e) => setQuietStart(e.target.value)} /></label>
+                <input data-testid="ob-quiet-start" className={`${inputCls} tabular-nums text-start`} type="time" dir="ltr" value={quietStart} onChange={(e) => setQuietStart(e.target.value)} /></label>
               <label className={labelCls}><span>{t("quietEnd")}</span>
-                <input data-testid="ob-quiet-end" className={inputCls} type="time" dir="ltr" value={quietEnd} onChange={(e) => setQuietEnd(e.target.value)} /></label>
+                <input data-testid="ob-quiet-end" className={`${inputCls} tabular-nums text-start`} type="time" dir="ltr" value={quietEnd} onChange={(e) => setQuietEnd(e.target.value)} /></label>
             </div>
             <label className="flex min-h-touch items-center gap-2.5">
               <input data-testid="ob-friday" type="checkbox" className="size-[18px] accent-primary" checked={fridayMorningSkip} onChange={(e) => setFridayMorningSkip(e.target.checked)} />
@@ -163,7 +164,7 @@ export function OnboardingWizard() {
             <label className={labelCls}><span>{t("defaultTermsDays")}</span>
               <input
                 data-testid="ob-terms"
-                className={inputCls}
+                className={`${inputCls} tabular-nums text-start`}
                 type="number"
                 dir="ltr"
                 min={0}
@@ -173,12 +174,13 @@ export function OnboardingWizard() {
               />
             </label>
             <div className="flex gap-2">
-              <button className={backBtn} onClick={() => setStep(0)} aria-label={tc("back")}>
+              <button type="button" className={backBtn} onClick={() => setStep(0)} aria-label={tc("back")}>
                 <ArrowLeft size={18} aria-hidden className="rtl:-scale-x-100" />
               </button>
               <button
+                type="button"
                 data-testid="ob-next"
-                className={`${btnPrimary} flex-1`}
+                className={`${btnPrimary} min-h-11 flex-1`}
                 disabled={!/^\d{2}:\d{2}$/.test(quietStart) || !/^\d{2}:\d{2}$/.test(quietEnd)}
                 onClick={() => setStep(2)}
               >
@@ -207,10 +209,13 @@ export function OnboardingWizard() {
               <span className="text-sm">{t("consent")}</span></label>
             {error && <p role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-sm font-semibold text-danger">{error}</p>}
             <div className="flex gap-2">
-              <button className={backBtn} disabled={busy} onClick={() => setStep(1)} aria-label={tc("back")}>
+              <button type="button" className={backBtn} disabled={busy} onClick={() => setStep(1)} aria-label={tc("back")}>
                 <ArrowLeft size={18} aria-hidden className="rtl:-scale-x-100" />
               </button>
-              <button data-testid="ob-create" disabled={busy} onClick={onCreate} className={`${btnPrimary} flex-1`}>{t("createCta")}</button>
+              <button type="button" data-testid="ob-create" disabled={busy} aria-busy={busy} onClick={onCreate} className={`${btnPrimary} min-h-11 flex-1`}>
+                {busy && <SpinnerGap size={18} className="animate-spin" aria-hidden />}
+                {t("createCta")}
+              </button>
             </div>
           </div>
         )}

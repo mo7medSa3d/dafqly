@@ -7,7 +7,8 @@ import { AppError } from "./errors";
  */
 export function requireIdempotencyKey(headers: Headers): string {
   const key = headers.get("idempotency-key")?.trim();
-  if (!key || key.length < 8 || key.length > 128) {
+  const hasControlChar = key ? [...key].some((ch) => { const c = ch.charCodeAt(0); return c < 0x20 || c === 0x7f; }) : false;
+  if (!key || key.length < 8 || key.length > 128 || hasControlChar) {
     throw new AppError("IDEMPOTENCY_KEY_REQUIRED", "POST endpoints that trigger sends require an Idempotency-Key header (8-128 chars)", 400);
   }
   return key;

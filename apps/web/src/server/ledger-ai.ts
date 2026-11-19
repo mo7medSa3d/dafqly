@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import {
   AppError, MAX_LEDGER_PAGES, normalizeCurrencyCode, normalizeLedgerRowDigits, normalizePhone, parseMoney,
@@ -45,6 +45,12 @@ interface LedgerStoredRow {
   pageIndex: number;
 }
 
+function isValidIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
 function validateRowData(data: LedgerRowData): { field: string; reason: string }[] {
   const errors: { field: string; reason: string }[] = [];
   if (!data.name.trim()) errors.push({ field: "name", reason: "name is empty" });
@@ -53,6 +59,9 @@ function validateRowData(data: LedgerRowData): { field: string; reason: string }
     if (BigInt(data.amountMinor) <= 0n) errors.push({ field: "amount", reason: "amount must be positive" });
   } catch {
     errors.push({ field: "amount", reason: "amount is not readable" });
+  }
+  if (data.date !== null && !isValidIsoDate(data.date)) {
+    errors.push({ field: "date", reason: "date must be a valid YYYY-MM-DD calendar date" });
   }
   return errors;
 }
@@ -234,10 +243,13 @@ export async function getLedgerJob(app: Db, tenantId: string, jobId: string): Pr
 
 export async function listLedgerJobs(app: Db, tenantId: string) {
   return withTenant(app, tenantId, async (tx) => {
-    const rows = await tx.select().from(importJobs)
+    const rows = await tx.select({
+      id: importJobs.id, fileName: importJobs.fileName, status: importJobs.status, stats: importJobs.stats,
+      createdAt: importJobs.createdAt,
+    }).from(importJobs)
       .where(and(eq(importJobs.tenantId, tenantId), eq(importJobs.kind, "ledger_photo")))
-      .orderBy(asc(importJobs.id));
-    return rows.slice(-25).reverse().map((j) => ({
+      .orderBy(desc(importJobs.id)).limit(25);
+    return rows.map((j) => ({
       id: j.id, fileName: j.fileName, status: j.status, stats: j.stats,
       createdAt: j.createdAt.toISOString(),
     }));
@@ -249,8 +261,8 @@ export const updateLedgerRowInput = z.object({
   rowId: z.string().uuid(),
   name: z.string().trim().min(1).max(160).optional(),
   phone: z.string().trim().max(32).nullable().optional(),
-  amount: z.string().trim().min(1).optional(), // decimal string in tenant currency
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  amount: z.string().trim().min(1).max(32).optional(), // decimal string in tenant currency
+  date: z.string().refine(isValidIsoDate, "INVALID_DATE").nullable().optional(),
   note: z.string().trim().max(500).nullable().optional(),
   /** Merchant confirming a suggestion (or choosing another debtor) in review. */
   debtorId: z.string().uuid().nullable().optional(),
@@ -287,7 +299,7 @@ export async function updateLedgerRow(
     if (input.note !== undefined) data.note = input.note;
     if (input.debtorId !== undefined) {
       if (input.debtorId !== null) {
-        const [deb] = await tx.select({ id: debtors.id }).from(debtors).where(and(eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
+        const [deb] = await tx.select({ id: debtors.id }).from(debtors).where(and(eq(debtors.tenantId, tenantId), eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
         if (!deb) throw new AppError("NOT_FOUND", "Debtor not found", 404);
       }
       data.debtorId = input.debtorId;

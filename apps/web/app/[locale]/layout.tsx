@@ -85,7 +85,7 @@ export default async function LocaleLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var m=document.cookie.match(/(?:^|; )dafqly-theme=([^;]*)/);var c=m?m[1]:null;var t=c||localStorage.getItem("dafqly-theme")||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=t;document.documentElement.classList.toggle("dark",t==="dark");if(!c||c!==t){document.cookie="dafqly-theme="+t+";path=/;max-age=31536000;SameSite=Lax";}}catch(e){}})();`,
+            __html: `(function(){try{var m=document.cookie.match(/(?:^|; )dafqly-theme=([^;]*)/);var c=m&&(m[1]==="dark"||m[1]==="light")?m[1]:null;var s=localStorage.getItem("dafqly-theme");var ls=(s==="dark"||s==="light")?s:null;var t=c||ls||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=t;document.documentElement.classList.toggle("dark",t==="dark");if(!c||c!==t){document.cookie="dafqly-theme="+t+";path=/;max-age=31536000;SameSite=Lax";}}catch(e){}})();`,
           }}
         />
       </head>

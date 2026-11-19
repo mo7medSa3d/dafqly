@@ -168,7 +168,7 @@ export async function syncWorkspaceNotifications(
         })
         .from(payments)
         .innerJoin(debtors, eq(debtors.id, payments.debtorId))
-        .where(and(eq(payments.status, "claimed"), isNull(debtors.deletedAt)))
+        .where(and(eq(payments.tenantId, tenantId), eq(payments.status, "claimed"), isNull(debtors.deletedAt)))
         .orderBy(asc(payments.createdAt), asc(payments.id))
         .limit(11),
       tx
@@ -181,7 +181,7 @@ export async function syncWorkspaceNotifications(
         .from(disputes)
         .innerJoin(debtors, eq(debtors.id, disputes.debtorId))
         .innerJoin(invoices, eq(invoices.id, disputes.invoiceId))
-        .where(and(eq(disputes.status, "open"), isNull(debtors.deletedAt)))
+        .where(and(eq(disputes.tenantId, tenantId), eq(disputes.status, "open"), isNull(debtors.deletedAt)))
         .orderBy(asc(disputes.createdAt), asc(disputes.id))
         .limit(11),
       tx
@@ -192,7 +192,7 @@ export async function syncWorkspaceNotifications(
         })
         .from(messageIntents)
         .innerJoin(messages, eq(messages.id, messageIntents.messageId))
-        .where(and(eq(messageIntents.resolvedBy, "human"), eq(messageIntents.actionTaken, "human_inbox")))
+        .where(and(eq(messageIntents.tenantId, tenantId), eq(messageIntents.resolvedBy, "human"), eq(messageIntents.actionTaken, "human_inbox")))
         .orderBy(asc(messageIntents.createdAt), asc(messageIntents.id))
         .limit(11),
       tx
@@ -210,6 +210,7 @@ export async function syncWorkspaceNotifications(
         .leftJoin(invoices, eq(invoices.id, cheques.invoiceId))
         .where(
           and(
+            eq(cheques.tenantId, tenantId),
             isNull(debtors.deletedAt),
             sql`(${cheques.status} = 'bounced' OR (${cheques.status} IN ('held', 'deposited') AND ${cheques.dueDate} <= ${dueWindowEnd}))`,
           ),
@@ -228,6 +229,7 @@ export async function syncWorkspaceNotifications(
         .innerJoin(debtors, eq(debtors.id, invoices.debtorId))
         .where(
           and(
+            eq(invoices.tenantId, tenantId),
             isNull(debtors.deletedAt),
             inArray(invoices.status, ["open", "partially_paid"]),
             lte(invoices.dueOn, overdueCutoff),
@@ -246,6 +248,7 @@ export async function syncWorkspaceNotifications(
         .innerJoin(debtors, eq(debtors.id, collectionTasks.debtorId))
         .where(
           and(
+            eq(collectionTasks.tenantId, tenantId),
             isNull(debtors.deletedAt),
             inArray(collectionTasks.status, ["open", "in_progress"]),
             sql`${collectionTasks.dueAt} < now()`,
@@ -260,7 +263,7 @@ export async function syncWorkspaceNotifications(
           rationale: aiActionApprovals.rationale,
         })
         .from(aiActionApprovals)
-        .where(eq(aiActionApprovals.status, "pending"))
+        .where(and(eq(aiActionApprovals.tenantId, tenantId), eq(aiActionApprovals.status, "pending")))
         .orderBy(asc(aiActionApprovals.createdAt), asc(aiActionApprovals.id))
         .limit(11),
       // F-06: tenant display currency for the notification amounts.
@@ -347,7 +350,7 @@ export async function listNotifications(
   opts: { onlyUnread?: boolean; limit?: number } = {},
 ): Promise<{ items: NotificationView[]; unreadCount: number; urgentCount: number }> {
   return withTenant(app, tenantId, async (tx) => {
-    const conds = [isNull(notifications.dismissedAt)];
+    const conds = [eq(notifications.tenantId, tenantId), isNull(notifications.dismissedAt)];
     if (opts.onlyUnread) conds.push(isNull(notifications.readAt));
 
     const [rows, counts] = await Promise.all([
@@ -363,7 +366,7 @@ export async function listNotifications(
           urgentCount: sql<number>`count(*) filter (where ${notifications.readAt} is null and ${notifications.severity} = 'urgent')::int`,
         })
         .from(notifications)
-        .where(isNull(notifications.dismissedAt)),
+        .where(and(eq(notifications.tenantId, tenantId), isNull(notifications.dismissedAt))),
     ]);
 
     return {
@@ -380,7 +383,7 @@ export async function markNotificationRead(app: Db, tenantId: string, id: string
     await tx
       .update(notifications)
       .set({ readAt: now, updatedAt: now })
-      .where(and(eq(notifications.id, id), isNull(notifications.readAt)));
+      .where(and(eq(notifications.tenantId, tenantId), eq(notifications.id, id), isNull(notifications.readAt)));
   });
   return { ok: true };
 }
@@ -391,7 +394,7 @@ export async function markAllNotificationsRead(app: Db, tenantId: string): Promi
     await tx
       .update(notifications)
       .set({ readAt: now, updatedAt: now })
-      .where(and(isNull(notifications.dismissedAt), isNull(notifications.readAt)));
+      .where(and(eq(notifications.tenantId, tenantId), isNull(notifications.dismissedAt), isNull(notifications.readAt)));
   });
   return { ok: true };
 }
@@ -406,7 +409,7 @@ export async function dismissNotification(app: Db, tenantId: string, id: string)
         readAt: sql`coalesce(${notifications.readAt}, ${now.toISOString()}::timestamptz)`,
         updatedAt: now,
       })
-      .where(eq(notifications.id, id));
+      .where(and(eq(notifications.tenantId, tenantId), eq(notifications.id, id)));
   });
   return { ok: true };
 }

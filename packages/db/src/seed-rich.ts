@@ -6,7 +6,7 @@
 // Login: rich@tahseel.test — password from RICH_DEMO_PASSWORD, else
 // DEMO_PASSWORD (the e2e runner sets DEMO_PASSWORD=test, so the rich login
 // is rich@tahseel.test / test under e2e), else a random one printed once.
-// Public statement: /s/rich-statement-demo-2026 (fixed dev-only token,
+// Public statement: /s/rich-statement-demo-2026-token-0001 (fixed dev-only token,
 // documented in docs/FINAL_VERIFICATION_EVIDENCE.md and RUNBOOK.md).
 //
 // Idempotent: safe to run repeatedly (a second run prints "already exists"
@@ -38,11 +38,8 @@ if (process.env.NODE_ENV === "production" && process.env.ALLOW_PROD_SEED !== "1"
 const phoneHash = (e164: string) => createHmac("sha256", pepper).update(e164).digest("hex");
 export const RICH_EMAIL = "rich@tahseel.test";
 export const RICH_PASSWORD = process.env.RICH_DEMO_PASSWORD ?? process.env.DEMO_PASSWORD ?? randomBytes(16).toString("hex");
-if (!process.env.RICH_DEMO_PASSWORD && !process.env.DEMO_PASSWORD) {
-  console.log(`seed-rich: no RICH_DEMO_PASSWORD/DEMO_PASSWORD — generated a random rich password (dev only): ${RICH_PASSWORD}`);
-}
 // Fixed dev-only public-statement token (synthetic tenant, local dev/e2e only).
-export const RICH_STATEMENT_TOKEN = "rich-statement-demo-2026";
+export const RICH_STATEMENT_TOKEN = "rich-statement-demo-2026-token-0001";
 
 const { db, client } = createDb(url);
 const today = new Date();
@@ -54,20 +51,26 @@ const ts = (daysFromNow: number, hour = 10) => {
 };
 
 try {
+  await db.transaction(async (tx) => {
   if (process.env.RESET_RICH_SEED === "1" || process.argv.includes("--reset")) {
-    const existingUsers = await db.select().from(user).where(eq(user.email, RICH_EMAIL));
+    const existingUsers = await tx.select().from(user).where(eq(user.email, RICH_EMAIL));
     for (const u of existingUsers) {
-      const ms = await db.select().from(memberships).where(eq(memberships.userId, u.id));
-      for (const m of ms) await db.delete(tenants).where(eq(tenants.id, m.tenantId));
-      await db.delete(user).where(eq(user.id, u.id));
+      const ms = await tx.select().from(memberships).where(eq(memberships.userId, u.id));
+      for (const m of ms) await tx.delete(tenants).where(eq(tenants.id, m.tenantId));
+      await tx.delete(user).where(eq(user.id, u.id));
     }
     console.log("seed-rich: previous rich tenant wiped (RESET_RICH_SEED=1)");
   }
 
-  const existing = await db.select().from(user).where(eq(user.email, RICH_EMAIL));
+  const existing = await tx.select().from(user).where(eq(user.email, RICH_EMAIL));
   if (existing.length > 0) {
     console.log("seed-rich: rich user already exists, nothing to do");
-  } else {
+    return;
+  }
+  {
+    if (!process.env.RICH_DEMO_PASSWORD && !process.env.DEMO_PASSWORD) {
+      console.log(`seed-rich: no RICH_DEMO_PASSWORD/DEMO_PASSWORD — generated a random rich password (dev only): ${RICH_PASSWORD}`);
+    }
     const tenantId = uuidv7();
     const userId = randomUUID().replace(/-/g, "");
     const settings: TenantSettings = {
@@ -76,16 +79,16 @@ try {
       defaultTermsDays: 14, easternDigits: false, currency: "EGP",
       businessNameEn: "Delta Trading Co.",
     };
-    await db.insert(tenants).values({
+    await tx.insert(tenants).values({
       id: tenantId, name: "شركة الدلتا للتجارة والمقاولات", businessNameAr: "شركة الدلتا للتجارة والمقاولات",
       timezone: "Africa/Cairo", plan: "trial", trialEndsAt: new Date(Date.now() + 14 * 86_400_000), settings,
     });
-    await db.insert(user).values({ id: userId, name: "مدير الحسابات", email: RICH_EMAIL, emailVerified: true });
-    await db.insert(account).values({
+    await tx.insert(user).values({ id: userId, name: "مدير الحسابات", email: RICH_EMAIL, emailVerified: true });
+    await tx.insert(account).values({
       id: randomUUID().replace(/-/g, ""), userId, accountId: userId, providerId: "credential",
       password: await argon2Hash(RICH_PASSWORD, { type: argon2id }),
     });
-    await db.insert(memberships).values({ tenantId, userId, role: "owner" });
+    await tx.insert(memberships).values({ tenantId, userId, role: "owner" });
 
     // ------------------------------------------------------------ debtors (12)
     const debtorDefs: { name: string; phone: string; whatsapp?: "unknown" | "reachable" | "unreachable"; risk?: boolean; optedOutDaysAgo?: number; creditMinor?: bigint; notes?: string }[] = [
@@ -106,7 +109,7 @@ try {
     for (const def of debtorDefs) {
       const idv = uuidv7();
       d.push(idv);
-      await db.insert(debtors).values({
+      await tx.insert(debtors).values({
         id: idv, tenantId, displayName: def.name, phoneE164: def.phone, phoneHash: phoneHash(def.phone),
         whatsappStatus: def.whatsapp ?? "unknown", riskFlag: def.risk ?? false,
         optedOutAt: def.optedOutDaysAgo !== undefined ? ts(-def.optedOutDaysAgo) : null,
@@ -157,7 +160,7 @@ try {
     for (const inv of invDefs) {
       const idv = uuidv7();
       invByRef.set(inv.ref, idv);
-      await db.insert(invoices).values({
+      await tx.insert(invoices).values({
         id: idv, tenantId, debtorId: d[inv.debtor]!, reference: inv.ref, description: inv.desc,
         amountMinor: inv.amount, currency: inv.currency ?? "EGP",
         issuedOn: iso(inv.issued), dueOn: iso(inv.due), status: inv.status,
@@ -197,7 +200,7 @@ try {
       const key = `p${i + 1}`;
       const idv = uuidv7();
       payId.set(key, idv);
-      await db.insert(payments).values({
+      await tx.insert(payments).values({
         id: idv, tenantId, debtorId: d[p.debtor]!, invoiceId: inv(p.invoice),
         amountMinor: p.amount, currency: "EGP", idempotencyKey: `rich-pay-${i + 1}`,
         method: p.method, receivedOn: iso(p.received), status: p.status, source: "manual",
@@ -222,7 +225,7 @@ try {
       { pay: "p16", invoice: "RICH-2026-016", amount: -300_000n },
     ];
     for (const a of allocDefs) {
-      await db.insert(paymentAllocations).values({
+      await tx.insert(paymentAllocations).values({
         id: uuidv7(), tenantId, paymentId: payId.get(a.pay)!, invoiceId: inv(a.invoice), amountMinor: a.amount,
       });
     }
@@ -238,7 +241,7 @@ try {
       { debtor: 2, invoice: "RICH-2026-007", number: "0001239", bank: "بنك الإسكندرية", amount: 100_000n, issue: -50, due: -40, status: "cancelled" },
     ];
     for (const c of chqDefs) {
-      await db.insert(cheques).values({
+      await tx.insert(cheques).values({
         id: uuidv7(), tenantId, debtorId: d[c.debtor]!, direction: "receivable", invoiceId: inv(c.invoice),
         number: c.number, bank: c.bank, amountMinor: c.amount,
         issueDate: iso(c.issue), dueDate: iso(c.due), status: c.status,
@@ -257,7 +260,7 @@ try {
       { debtor: 3, amount: 100_000n, on: 7, status: "rejected" },
     ];
     for (const p of prmDefs) {
-      await db.insert(promisesToPay).values({
+      await tx.insert(promisesToPay).values({
         id: uuidv7(), tenantId, debtorId: d[p.debtor]!, invoiceId: p.invoice ? inv(p.invoice) : null,
         amountMinor: p.amount, promisedOn: iso(p.on), status: p.status, source: p.source ?? "manual",
         note: null, fulfilledAt: p.fulfilled !== undefined ? ts(p.fulfilled) : null,
@@ -265,7 +268,7 @@ try {
     }
 
     // ----------------------------------------------------------- disputes (3)
-    await db.insert(disputes).values([
+    await tx.insert(disputes).values([
       { id: uuidv7(), tenantId, debtorId: d[3]!, invoiceId: inv("RICH-2026-012"), raisedBy: "debtor", reason: "المبلغ غير صحيح — تم الاتفاق على خصم 10% ولم يُطبَّق", status: "open" },
       { id: uuidv7(), tenantId, debtorId: d[8]!, invoiceId: inv("RICH-2026-026"), raisedBy: "debtor", reason: "البضاعة وصلت تالفة — نطلب الاستبدال", status: "open" },
       { id: uuidv7(), tenantId, debtorId: d[9]!, invoiceId: inv("RICH-2026-027"), raisedBy: "merchant", reason: "اختلاف على تاريخ الاستحقاق", status: "resolved", resolution: "reopen_invoice" },
@@ -291,7 +294,7 @@ try {
     ];
     const invDebtor = new Map<string, number>(invDefs.map((x) => [x.ref, x.debtor]));
     for (const r of remDefs) {
-      await db.insert(reminders).values({
+      await tx.insert(reminders).values({
         id: uuidv7(), tenantId, invoiceId: inv(r.invoice), debtorId: d[invDebtor.get(r.invoice)!]!,
         stepKey: r.step, channel: r.channel, templateKey: r.template, dueAt: ts(r.due),
         status: r.status, skipReason: r.skip ?? null, attempts: r.attempts ?? 0,
@@ -332,7 +335,7 @@ try {
       const m = msgDefs[i]!;
       const idv = uuidv7();
       msgIds.push(idv);
-      await db.insert(messages).values({
+      await tx.insert(messages).values({
         id: idv, tenantId, debtorId: d[m.debtor]!, invoiceId: m.invoice ? inv(m.invoice) : null,
         direction: m.dir, channel: "whatsapp", provider: "whatsapp",
         providerMessageId: `rich-wa-${m.dir}-${String(i + 1).padStart(3, "0")}`,
@@ -347,9 +350,9 @@ try {
       { msg: 15, intent: "opt_out", confidence: 0.99, resolvedBy: "auto", action: "opt_out", extracted: { promised_date: null, amount_minor: null, model: "seed", promptVersion: "seed" } },
     ];
     for (const it of intentDefs) {
-      await db.insert(messageIntents).values({
+      await tx.insert(messageIntents).values({
         id: uuidv7(), tenantId, messageId: msgIds[it.msg]!, intent: it.intent,
-        extracted: it.extracted as never, confidence: it.confidence,
+        extracted: it.extracted, confidence: it.confidence,
         resolvedBy: it.resolvedBy, actionTaken: it.action,
       });
     }
@@ -364,7 +367,7 @@ try {
       { debtor: 5, title: "مراجعة بيانات العميل", priority: "low", status: "cancelled", due: -5 },
     ];
     for (const t of taskDefs) {
-      await db.insert(collectionTasks).values({
+      await tx.insert(collectionTasks).values({
         id: uuidv7(), tenantId, debtorId: d[t.debtor ?? 0]!, invoiceId: t.invoice ? inv(t.invoice) : null,
         title: t.title, description: null, priority: t.priority, status: t.status,
         assignedToUserId: userId, dueAt: ts(t.due), createdBy: userId,
@@ -373,13 +376,13 @@ try {
     }
 
     // ------------------------------------------- public statement link (d1)
-    await db.insert(statementLinks).values({
+    await tx.insert(statementLinks).values({
       id: uuidv7(), tenantId, debtorId: d[0]!,
       tokenHash: createHash("sha256").update(RICH_STATEMENT_TOKEN, "utf8").digest("hex"),
       expiresAt: ts(30), createdBy: userId,
     });
 
-    await db.insert(auditLog).values({
+    await tx.insert(auditLog).values({
       tenantId, actorUserId: userId, action: "tenant.seeded", entity: "tenant", entityId: tenantId,
       after: { synthetic: true, note: "rich dataset seed" },
     });
@@ -387,6 +390,7 @@ try {
     console.log("seed-rich: counts: debtors 12, invoices 32, payments 16, allocations 13, cheques 6, promises 6, disputes 3, reminders 14, messages 18, intents 3, tasks 5, statement links 1");
     console.log(`seed-rich: public statement: /s/${RICH_STATEMENT_TOKEN}`);
   }
+  });
 } finally {
   await client.end();
 }

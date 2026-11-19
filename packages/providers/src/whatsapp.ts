@@ -27,9 +27,13 @@ interface GraphError { error?: { code?: number; message?: string } }
 interface GraphSendOk { messages?: { id?: string }[] }
 interface GraphMediaOk { url?: string; mime_type?: string; file_size?: number }
 
+const isTimeoutError = (err: unknown): boolean =>
+  err !== null && typeof err === "object" && (err as { name?: unknown }).name === "TimeoutError";
+
 export class WhatsAppCloudProvider implements TextCapableProvider {
   private static readonly MAX_CACHE_ENTRIES = 5_000;
   private static readonly MAX_MEDIA_BYTES = 10 * 1024 * 1024;
+  private static readonly ALLOWED_MEDIA_HOST_SUFFIXES = [".fbsbx.com", ".fbcdn.net", ".facebook.com", ".whatsapp.net"] as const;
   private byKey = new Map<string, SendResult>();
   private inFlight = new Map<string, Promise<SendResult>>();
   private readonly fetchImpl: typeof fetch;
@@ -66,8 +70,7 @@ export class WhatsAppCloudProvider implements TextCapableProvider {
       );
     } catch (err) {
       if (err instanceof ProviderError) throw err;
-      const isTimeout = err instanceof Error && err.name === "TimeoutError";
-      throw new ProviderError(isTimeout ? 504 : 503, err instanceof Error ? err.message : "WhatsApp network error");
+      throw new ProviderError(isTimeoutError(err) ? 504 : 503, err instanceof Error ? err.message : "WhatsApp network error");
     }
     const json = (await res.json().catch(() => ({}))) as GraphSendOk & GraphError;
     if (!res.ok || json.error) {
@@ -133,22 +136,28 @@ export class WhatsAppCloudProvider implements TextCapableProvider {
     if (!cleanMediaId) {
       throw new ProviderError(0, "WhatsApp mediaId is required");
     }
-    const apiVersion = override?.apiVersion || this.config.apiVersion;
-    const accessToken = override?.accessToken || this.config.accessToken;
+    const apiVersion = (override?.apiVersion || this.config.apiVersion).trim();
+    const accessToken = (override?.accessToken || this.config.accessToken).trim();
     if (!apiVersion || !accessToken) {
       throw new ProviderError(0, "WhatsApp provider is not configured (WHATSAPP_API_VERSION / WHATSAPP_ACCESS_TOKEN)");
     }
-    const metaRes = await this.fetchImpl(
-      `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(cleanMediaId)}`,
-      {
-        method: "GET",
-        headers: { Authorization: `Bearer ${accessToken}` },
-        signal: AbortSignal.timeout(15_000),
-      },
-    );
+    let metaRes: Response;
+    try {
+      metaRes = await this.fetchImpl(
+        `https://graph.facebook.com/${encodeURIComponent(apiVersion)}/${encodeURIComponent(cleanMediaId)}`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${accessToken}` },
+          signal: AbortSignal.timeout(15_000),
+        },
+      );
+    } catch (err) {
+      if (err instanceof ProviderError) throw err;
+      throw new ProviderError(isTimeoutError(err) ? 504 : 503, err instanceof Error ? err.message : "WhatsApp media lookup network error");
+    }
     const meta = (await metaRes.json().catch(() => ({}))) as GraphMediaOk & GraphError;
     if (!metaRes.ok || meta.error || !meta.url) {
-      const code = meta.error?.code ?? metaRes.status;
+      const code = meta.error?.code ?? (metaRes.status === 429 ? 130429 : metaRes.status);
       throw new ProviderError(code, meta.error?.message ?? `WhatsApp media lookup failed with HTTP ${metaRes.status}`);
     }
     let parsedMediaUrl: URL;
@@ -157,20 +166,29 @@ export class WhatsAppCloudProvider implements TextCapableProvider {
     } catch {
       throw new ProviderError(0, "WhatsApp media lookup returned an invalid URL");
     }
-    if (parsedMediaUrl.protocol !== "https:") {
-      throw new ProviderError(0, "WhatsApp media URL must use HTTPS");
+    const host = parsedMediaUrl.hostname.toLowerCase();
+    const trustedHost = WhatsAppCloudProvider.ALLOWED_MEDIA_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
+    if (parsedMediaUrl.protocol !== "https:" || parsedMediaUrl.username || parsedMediaUrl.password || !trustedHost) {
+      throw new ProviderError(0, "WhatsApp media URL must use a trusted Meta HTTPS host");
     }
     if (typeof meta.file_size === "number" && meta.file_size > WhatsAppCloudProvider.MAX_MEDIA_BYTES) {
       throw new ProviderError(0, "WhatsApp media exceeds 10 MB limit");
     }
-    const binRes = await this.fetchImpl(parsedMediaUrl.toString(), {
-      method: "GET",
-      headers: { Authorization: `Bearer ${accessToken}` },
-      signal: AbortSignal.timeout(15_000),
-    });
+    let binRes: Response;
+    try {
+      binRes = await this.fetchImpl(parsedMediaUrl.toString(), {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch (err) {
+      if (err instanceof ProviderError) throw err;
+      throw new ProviderError(isTimeoutError(err) ? 504 : 503, err instanceof Error ? err.message : "WhatsApp media download network error");
+    }
     if (!binRes.ok) {
       await binRes.body?.cancel?.().catch(() => undefined);
-      throw new ProviderError(binRes.status, `WhatsApp media download failed with HTTP ${binRes.status}`);
+      const code = binRes.status === 429 ? 130429 : binRes.status;
+      throw new ProviderError(code, `WhatsApp media download failed with HTTP ${binRes.status}`);
     }
     const contentLength = Number(binRes.headers?.get?.("content-length") ?? 0);
     if (Number.isFinite(contentLength) && contentLength > WhatsAppCloudProvider.MAX_MEDIA_BYTES) {

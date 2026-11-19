@@ -145,6 +145,32 @@ export interface UnifiedAiOptions {
 }
 
 const ANTHROPIC_API_VERSION = "2023-06-01";
+const MAX_ERROR_BODY_CHARS = 200;
+const MAX_JSON_RESPONSE_BYTES = 4 * 1024 * 1024;
+const RETRYABLE_AI_STATUSES = new Set([429, 502, 503, 504, 529]);
+
+function safeJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v));
+  } catch {
+    return JSON.stringify({ error: "unserializable_tool_result" });
+  }
+}
+
+async function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 interface NormalizedTurn {
   text: string;
@@ -169,6 +195,9 @@ export class UnifiedAiProvider implements OcrLlmProvider {
   private readonly timeoutMs: number;
   private readonly fetchFn: FetchFn;
   private readonly now: () => number;
+  private readonly isOfficialOpenAi: boolean;
+  private readonly supportsTemp: boolean;
+  private readonly supportsStreamUsage: boolean;
 
   constructor(opts: UnifiedAiOptions) {
     const key = opts.provider.trim().toLowerCase();
@@ -177,8 +206,20 @@ export class UnifiedAiProvider implements OcrLlmProvider {
     if (!baseUrl) {
       throw new Error(`Unknown AI provider "${opts.provider}". Use a built-in provider (gemini, openai, anthropic, openrouter, groq, deepseek, ollama) or set AI_BASE_URL.`);
     }
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(baseUrl);
+    } catch {
+      throw new Error(`Invalid AI baseUrl "${baseUrl}"`);
+    }
+    const isLocal = /^(localhost|127\.0\.0\.1|\[::1\]|host\.docker\.internal)$/i.test(parsedUrl.hostname);
+    if (parsedUrl.protocol !== "https:" && !(parsedUrl.protocol === "http:" && isLocal)) {
+      throw new Error("AI provider baseUrl must use HTTPS outside localhost");
+    }
+    if (parsedUrl.username || parsedUrl.password) {
+      throw new Error("AI provider baseUrl must not contain embedded credentials");
+    }
     const apiKey = opts.apiKey?.trim() ?? "";
-    const isLocal = /^(https?:\/\/)(localhost|127\.0\.0\.1|\[::1\]|host\.docker\.internal)/i.test(baseUrl);
     if (!apiKey && !isLocal && (preset?.requiresKey ?? true)) {
       throw new LlmNotConfiguredError();
     }
@@ -191,6 +232,9 @@ export class UnifiedAiProvider implements OcrLlmProvider {
     this.timeoutMs = opts.timeoutMs ?? 60_000;
     this.fetchFn = opts.fetchFn ?? ((url, init) => fetch(url, init));
     this.now = opts.now ?? (() => Date.now());
+    this.isOfficialOpenAi = parsedUrl.hostname === "api.openai.com";
+    this.supportsTemp = !this.isOfficialOpenAi || !/^(o[134]|gpt-5)/i.test(this.model);
+    this.supportsStreamUsage = this.isOfficialOpenAi || ["openrouter", "groq", "deepseek", "xai", "together"].includes(this.providerName);
   }
 
   private async request(
@@ -225,18 +269,15 @@ export class UnifiedAiProvider implements OcrLlmProvider {
       signal?: AbortSignal;
     },
   ): Promise<NormalizedTurn> {
-    const isOfficialOpenAi = this.baseUrl.includes("api.openai.com");
-    const tokenKey = isOfficialOpenAi ? "max_completion_tokens" : "max_tokens";
-    const supportsTemp = !isOfficialOpenAi || !/^(o[134]|gpt-5)/i.test(this.model);
-    const supportsStreamUsage = isOfficialOpenAi || ["openrouter", "groq", "deepseek", "xai", "together"].includes(this.providerName);
+    const tokenKey = this.isOfficialOpenAi ? "max_completion_tokens" : "max_tokens";
     const fullMessages = system ? [{ role: "system", content: system }, ...messages] : messages;
 
     const body: Record<string, unknown> = {
       model: this.model,
       [tokenKey]: options.maxTokens ?? 1600,
       messages: fullMessages,
-      ...(options.temperature !== undefined && supportsTemp ? { temperature: options.temperature } : {}),
-      ...(options.stream ? { stream: true, ...(supportsStreamUsage ? { stream_options: { include_usage: true } } : {}) } : {}),
+      ...(options.temperature !== undefined && this.supportsTemp ? { temperature: options.temperature } : {}),
+      ...(options.stream ? { stream: true, ...(this.supportsStreamUsage ? { stream_options: { include_usage: true } } : {}) } : {}),
     };
 
     if (options.tools && options.tools.length > 0) {
@@ -250,7 +291,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
     }
 
     const signal = combinedSignal(this.timeoutMs, options.signal);
-    const res = await this.fetchFn(`${this.baseUrl}/chat/completions`, {
+    const res = await this.fetchWithRetry(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -258,15 +299,15 @@ export class UnifiedAiProvider implements OcrLlmProvider {
       },
       body: JSON.stringify(body),
       signal,
-    });
+    }, signal);
 
     if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      throw new Error(`${this.providerName} API error: HTTP ${res.status} ${detail.replace(/\s+/g, " ").slice(0, 200)}`.trim());
+      const detail = await this.readSafeErrorText(res);
+      throw new Error(`${this.providerName} API error: HTTP ${res.status} ${detail}`.trim());
     }
 
     if (!options.stream) {
-      const json = (await res.json()) as {
+      const json = (await this.readBoundedJson(res)) as {
         choices?: { message?: { content?: string | null; tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[] } }[];
         usage?: { prompt_tokens?: number; completion_tokens?: number };
       };
@@ -371,7 +412,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
     }
 
     const signal = combinedSignal(this.timeoutMs, options.signal);
-    const res = await this.fetchFn(`${this.baseUrl}/v1/messages`, {
+    const res = await this.fetchWithRetry(`${this.baseUrl}/v1/messages`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -380,15 +421,15 @@ export class UnifiedAiProvider implements OcrLlmProvider {
       },
       body: JSON.stringify(body),
       signal,
-    });
+    }, signal);
 
     if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      throw new Error(`anthropic API error: HTTP ${res.status} ${detail.replace(/\s+/g, " ").slice(0, 200)}`.trim());
+      const detail = await this.readSafeErrorText(res);
+      throw new Error(`anthropic API error: HTTP ${res.status} ${detail}`.trim());
     }
 
     if (!options.stream) {
-      const json = (await res.json()) as {
+      const json = (await this.readBoundedJson(res)) as {
         content?: { type: string; id?: string; name?: string; input?: unknown; text?: string }[];
         usage?: { input_tokens?: number; output_tokens?: number };
       };
@@ -471,6 +512,38 @@ export class UnifiedAiProvider implements OcrLlmProvider {
       }));
 
     return { text, toolCalls, inputTokens, outputTokens, rawAnthropicContent: content };
+  }
+
+  private async fetchWithRetry(url: string, init: RequestInit, signal: AbortSignal): Promise<Response> {
+    const maxAttempts = 3;
+    for (let attempt = 0; ; attempt += 1) {
+      const res = await this.fetchFn(url, init);
+      if (!RETRYABLE_AI_STATUSES.has(res.status) || attempt >= maxAttempts - 1) {
+        return res;
+      }
+      await res.body?.cancel?.().catch(() => undefined);
+      const retryAfterSec = Number(res.headers?.get?.("retry-after"));
+      const baseMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+        ? Math.min(retryAfterSec * 1000, 5_000)
+        : Math.min(250 * 2 ** attempt, 2_000);
+      const jitterMs = Math.floor(Math.random() * 150);
+      await sleepAbortable(baseMs + jitterMs, signal);
+    }
+  }
+
+  private async readSafeErrorText(res: Response): Promise<string> {
+    const raw = await res.text().catch(() => "");
+    const redacted = this.apiKey ? raw.split(this.apiKey).join("[redacted]") : raw;
+    return redacted.replace(/\s+/g, " ").trim().slice(0, MAX_ERROR_BODY_CHARS);
+  }
+
+  private async readBoundedJson(res: Response): Promise<unknown> {
+    const contentLength = Number(res.headers?.get?.("content-length") ?? 0);
+    if (Number.isFinite(contentLength) && contentLength > MAX_JSON_RESPONSE_BYTES) {
+      await res.body?.cancel?.().catch(() => undefined);
+      throw new Error(`${this.providerName} response exceeded 4 MB limit`);
+    }
+    return res.json();
   }
 
   private formatImageUserMessage(image: Uint8Array, mime: string, text: string) {
@@ -643,7 +716,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
             onEvent: input.onEvent,
           });
           toolExecutions.push({ name: call.name, arguments: call.args, result });
-          results.push({ type: "tool_result", tool_use_id: call.id, content: JSON.stringify(result) });
+          results.push({ type: "tool_result", tool_use_id: call.id, content: safeJsonStringify(result) });
         }
         messages.push({ role: "user", content: results });
       } else {
@@ -669,7 +742,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
             onEvent: input.onEvent,
           });
           toolExecutions.push({ name: call.name, arguments: call.args, result });
-          messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
+          messages.push({ role: "tool", tool_call_id: call.id, content: safeJsonStringify(result) });
         }
       }
     }

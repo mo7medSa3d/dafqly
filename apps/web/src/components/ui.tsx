@@ -142,7 +142,7 @@ export function SecurityNotice({
 /** Back link for detail screens; the arrow flips in RTL. */
 export function BackLink({ href, label }: { href: string; label: string }) {
   return (
-    <Link href={href} className="inline-flex items-center gap-1.5 text-sm font-bold text-link underline-offset-4 hover:underline">
+    <Link href={href} className="inline-flex min-h-[28px] items-center gap-1.5 rounded-md text-sm font-bold text-link underline-offset-4 hover:underline">
       <ArrowLeft size={17} aria-hidden className="rtl:-scale-x-100" />
       {label}
     </Link>
@@ -170,7 +170,7 @@ export function InitialAvatar({ name, size = 40 }: { name: string; size?: number
 export function LoadingState({ isAr, label }: { isAr: boolean; label?: string }) {
   return (
     <div className="flex items-center justify-center gap-2 py-10 text-sm text-text-muted">
-      <span className="size-2 animate-pulse rounded-full bg-primary" />
+      <span className="size-2 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />
       {label ?? (isAr ? "جارٍ تحميل البيانات…" : "Loading data…")}
     </div>
   );

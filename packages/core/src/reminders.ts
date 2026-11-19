@@ -86,8 +86,9 @@ const OPT_OUT_KEYWORDS = [
  */
 export function isOptOutText(text: string): boolean {
   const normalized = text
-    .replace(/[ً-ٰٟ]/g, "") // Arabic diacritics
-    .replace(/[.!؟?،,,;؛:]+$/u, "")
+    .replace(/[\u064B-\u065F\u0670\u0640\u200B-\u200D\uFEFF]/g, "") // Arabic diacritics, tatweel, zero-width
+    .trim()
+    .replace(/[.!؟?،,;؛:]+$/u, "")
     .trim()
     .toLowerCase();
   if (OPT_OUT_KEYWORDS.includes(normalized)) return true;

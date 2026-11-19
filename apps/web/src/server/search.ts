@@ -1,4 +1,4 @@
-import { and, asc, desc, ilike, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNull, or } from "drizzle-orm";
 import type { Db } from "@tahseel/db";
 import { likePattern } from "@tahseel/core";
 import { withTenant } from "@tahseel/db";
@@ -54,6 +54,7 @@ export async function globalSearch(app: Db, tenantId: string, query: string): Pr
         .from(debtors)
         .where(
           and(
+            eq(debtors.tenantId, tenantId),
             isNull(debtors.deletedAt),
             or(
               ilike(debtors.displayName, pattern),
@@ -76,9 +77,12 @@ export async function globalSearch(app: Db, tenantId: string, query: string): Pr
         })
         .from(invoices)
         .where(
-          or(
-            ilike(invoices.reference, pattern),
-            ilike(invoices.description, pattern),
+          and(
+            eq(invoices.tenantId, tenantId),
+            or(
+              ilike(invoices.reference, pattern),
+              ilike(invoices.description, pattern),
+            ),
           ),
         )
         .orderBy(desc(invoices.createdAt))
@@ -95,9 +99,12 @@ export async function globalSearch(app: Db, tenantId: string, query: string): Pr
         })
         .from(cheques)
         .where(
-          or(
-            ilike(cheques.number, pattern),
-            ilike(cheques.bank, pattern),
+          and(
+            eq(cheques.tenantId, tenantId),
+            or(
+              ilike(cheques.number, pattern),
+              ilike(cheques.bank, pattern),
+            ),
           ),
         )
         .orderBy(desc(cheques.dueDate))
@@ -140,6 +147,7 @@ export async function listAuditTrail(app: Db, tenantId: string, limit = 20): Pro
         createdAt: auditLog.createdAt,
       })
       .from(auditLog)
+      .where(eq(auditLog.tenantId, tenantId))
       .orderBy(desc(auditLog.createdAt))
       .limit(safeLimit);
 

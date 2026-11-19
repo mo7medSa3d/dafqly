@@ -3,6 +3,7 @@ import { cn, todayIso } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { inputVariants } from "@/components/ui/input";
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations, useLocale } from "next-intl";
 import { useCurrency } from "./CurrencyContext";
@@ -346,7 +347,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                   }`}
                 >
                   <Sparkle size={12} aria-hidden />
-                  {isAr ? <>الصحة الائتمانية <span className="tnum" dir="ltr">{debtorIntel.healthScore}/100</span></> : <>Health <span className="tnum" dir="ltr">{debtorIntel.healthScore}/100</span></>}
+                  {isAr ? <>الصحة الائتمانية <span className="tnum tabular-nums" dir="ltr">{debtorIntel.healthScore}/100</span></> : <>Health <span className="tnum tabular-nums" dir="ltr">{debtorIntel.healthScore}/100</span></>}
                 </span>
               )}
               {detail.riskFlag && (
@@ -356,7 +357,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                 </span>
               )}
             </div>
-            <p className="text-text-muted" dir="ltr">{detail.phoneE164}</p>
+            <p className="tabular-nums text-text-muted" dir="ltr">{detail.phoneE164}</p>
             {detail.optedOut ? (
               <div className="mt-2 flex flex-wrap items-center gap-2.5 rounded-xl border border-status-due-fg/30 bg-status-due-bg p-3 text-xs text-status-due-fg">
                 <span className="font-bold">⚠️ {isAr ? "التذكيرات التلقائية متوقفة لهذا العميل" : "Automatic reminders are paused for this customer"}</span>
@@ -458,7 +459,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               <PencilSimple size={17} aria-hidden />
               {tc.has("edit") ? tc("edit") : (isAr ? "تعديل" : "Edit")}
             </button>
-            <button type="button" data-testid="debtor-delete" disabled={busy} onClick={() => void onDelete()} className={cn(buttonVariants({ variant: "outline", size: "default" }), "border-status-overdue-fg/40 text-status-overdue-fg")}>
+            <button type="button" data-testid="debtor-delete" disabled={busy} aria-busy={busy} onClick={() => void onDelete()} className={cn(buttonVariants({ variant: "outline", size: "default" }), "border-status-overdue-fg/40 text-status-overdue-fg")}>
               <Trash size={17} aria-hidden />
               {t("delete")}
             </button>
@@ -482,8 +483,8 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                 <button type="button" onClick={() => setEditingDebtor(false)} className={btnGhost}>
                   {isAr ? "إلغاء" : "Cancel"}
                 </button>
-                <button type="button" disabled={busy || editName.trim().length === 0} onClick={() => void onSaveDebtor()} className={btnPrimary}>
-                  <Check size={16} strokeWidth={2.5} aria-hidden /> {tc("save")}
+                <button type="button" disabled={busy || editName.trim().length === 0} aria-busy={busy} onClick={() => void onSaveDebtor()} className={btnPrimary}>
+                  <Check size={16} strokeWidth={2.5} aria-hidden /> {busy ? (isAr ? "جارٍ الحفظ..." : "Saving...") : tc("save")}
                 </button>
               </div>
             </div>
@@ -496,12 +497,12 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               <Wallet size={16} aria-hidden className="text-primary" /> {t("outstanding")}
             </dt>
             <dd className="text-2xl font-extrabold text-primary">
-              <span className="tnum" dir="ltr" data-testid="debtor-outstanding">{fmt(detail.totalOutstandingMinor, detail.defaultCurrency)}</span>
+              <span className="tnum tabular-nums" dir="ltr" data-testid="debtor-outstanding">{fmt(detail.totalOutstandingMinor, detail.defaultCurrency)}</span>
               <span className="ms-1.5 text-xs font-bold text-text-muted">{detail.defaultCurrency}</span>
             </dd>
             {BigInt(detail.totalDisputedMinor || "0") > 0n && (
               <dd className="text-sm font-semibold text-text-muted">
-                <span className="tnum" dir="ltr" data-testid="debtor-disputed">{fmt(detail.totalDisputedMinor, detail.defaultCurrency)}</span>
+                <span className="tnum tabular-nums" dir="ltr" data-testid="debtor-disputed">{fmt(detail.totalDisputedMinor, detail.defaultCurrency)}</span>
                 <span className="ms-1.5 text-xs font-bold">{detail.defaultCurrency} — {locale === "ar" ? `متنازع عليه ومجمّد (${detail.disputedInvoicesCount})` : `disputed, frozen (${detail.disputedInvoicesCount})`}</span>
               </dd>
             )}
@@ -511,7 +512,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               <HandCoins size={16} aria-hidden className="text-status-paid-fg" /> {t("credit")}
             </dt>
             <dd className="text-2xl font-extrabold text-status-paid-fg">
-              <span className="tnum" dir="ltr" data-testid="debtor-credit">{fmt(detail.creditMinor, detail.creditCurrency)}</span>
+              <span className="tnum tabular-nums" dir="ltr" data-testid="debtor-credit">{fmt(detail.creditMinor, detail.creditCurrency)}</span>
               <span className="ms-1.5 text-xs font-bold text-text-muted">{detail.creditCurrency}</span>
             </dd>
           </div>
@@ -520,7 +521,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
           <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border px-5 py-3 text-xs font-semibold text-text-muted sm:px-6">
             <span>{locale === "ar" ? "أرصدة بعملات أخرى:" : "Other-currency balances:"}</span>
             {detail.outstandingByCurrency.filter((b) => b.currency !== detail.defaultCurrency && BigInt(b.minor) > 0n).map((b) => (
-              <span key={b.currency} dir="ltr">{fmt(b.minor, b.currency)} {b.currency}</span>
+              <span key={b.currency} className="tabular-nums" dir="ltr">{fmt(b.minor, b.currency)} {b.currency}</span>
             ))}
           </div>
         )}
@@ -541,7 +542,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                   <button
                     type="button"
                     onClick={() => setAmount(formatAmountOnly(BigInt(selectedOutstandingMinor), { currency: selectedPaymentCurrency }))}
-                    className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}
+                    className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "tabular-nums")}
                   >
                     {locale === "en" ? "Full Balance" : "كامل المستحق"} ({fmt(selectedOutstandingMinor, selectedPaymentCurrency)} {selectedPaymentCurrency})
                   </button>
@@ -564,7 +565,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               {openInvoices.map((i) => (
                 <li key={i.id}>
                   <label className="flex flex-wrap items-center gap-3 px-4 py-3">
-                    <span className="min-w-0 flex-1 text-sm font-semibold">{i.reference ?? i.id.slice(0, 8)} — {ti("remaining")}: <span className="tnum" dir="ltr">{fmt(i.outstandingMinor, i.currency)} {i.currency}</span></span>
+                    <span className="min-w-0 flex-1 text-sm font-semibold">{i.reference ?? i.id.slice(0, 8)} — {ti("remaining")}: <span className="tnum tabular-nums" dir="ltr">{fmt(i.outstandingMinor, i.currency)} {i.currency}</span></span>
                     <input data-testid={`pay-alloc-${i.id}`} className={cn(inputVariants, "w-full sm:w-32")} dir="ltr" inputMode="decimal"
                       value={alloc[i.id] ?? ""} onChange={(e) => setAlloc((s) => ({ ...s, [i.id]: e.target.value }))} />
                   </label>
@@ -574,7 +575,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
           )}
           {msg && <p role={msg.isError ? "alert" : "status"} data-testid="pay-msg" className={cn("text-sm font-semibold", msg.isError ? "text-status-overdue-fg" : "text-primary")}>{msg.text}</p>}
           <div>
-            <button data-testid="pay-submit" disabled={busy || amount.trim() === ""} className={btnPrimary}>{tp("record")}</button>
+            <button type="submit" data-testid="pay-submit" disabled={busy || amount.trim() === ""} aria-busy={busy} className={btnPrimary}>{busy ? (isAr ? "جارٍ التسجيل..." : "Recording...") : tp("record")}</button>
           </div>
         </form>
       </Panel>
@@ -610,8 +611,8 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               {statementLinks.map((l) => (
                 <li key={l.id} data-testid="stmt-link" className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
                   <span data-testid="stmt-link-state" className="rounded bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{ts(l.state)}</span>
-                  <span className="text-text-muted">{ts("expiresAt")}: <span dir="ltr">{l.expiresAt.slice(0, 10)}</span></span>
-                  <span className="text-text-muted">{ts("lastViewed")}: {l.lastViewedAt ? <span dir="ltr">{l.lastViewedAt.slice(0, 10)}</span> : ts("neverViewed")}</span>
+                  <span className="text-text-muted">{ts("expiresAt")}: <span className="tabular-nums" dir="ltr">{l.expiresAt.slice(0, 10)}</span></span>
+                  <span className="text-text-muted">{ts("lastViewed")}: {l.lastViewedAt ? <span className="tabular-nums" dir="ltr">{l.lastViewedAt.slice(0, 10)}</span> : ts("neverViewed")}</span>
                   {l.state === "valid" && (
                     <button type="button" data-testid="stmt-revoke" disabled={busy} onClick={() => void onRevokeStatement(l.id)} className={`${linkAction} ms-auto`}>{ts("revoke")}</button>
                   )}
@@ -626,7 +627,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
               {disputes.map((x) => (
                 <li key={x.id} data-testid="stmt-dispute" className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-status-disputed-bg px-4 py-3 text-sm text-status-disputed-fg">
                   <div className="min-w-0 break-words">
-                    <span className="font-bold">{ts(x.status)}</span> · {x.reason} · <span dir="ltr">{x.createdAt.slice(0, 10)}</span>
+                    <span className="font-bold">{ts(x.status)}</span> · {x.reason} · <span className="tabular-nums" dir="ltr">{x.createdAt.slice(0, 10)}</span>
                   </div>
                   {x.status === "open" && (
                     <div className="flex flex-wrap items-center gap-2">
@@ -660,15 +661,26 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
       </Panel>
 
       <Panel title={ti("title")} icon={Receipt} padded={false} className="overflow-hidden">
+        {detail.invoices.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2.5 p-8 text-center">
+            <p className="text-sm font-bold text-text">{ti("empty")}</p>
+            <p className="max-w-md text-xs text-text-muted">
+              {isAr ? "لا توجد فواتير مسجلة لهذا العميل بعد. أنشئ فاتورة لبدء المتابعة." : "No invoices recorded for this customer yet. Create an invoice to start tracking."}
+            </p>
+            <Link href={`/${locale}/invoices`} className={`${btnPrimary} mt-1`}>
+              + {ti("add")}
+            </Link>
+          </div>
+        ) : (
         <ul className="flex flex-col divide-y divide-border">
           {detail.invoices.map((i) => (
             <li key={i.id} data-testid="detail-invoice" className="flex flex-col gap-1.5 p-4 transition-colors hover:bg-callout/40 sm:px-6">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-extrabold text-primary" dir="ltr">{i.reference ?? "—"}</span>
+                <span className="tabular-nums font-extrabold text-primary" dir="ltr">{i.reference ?? "—"}</span>
                 <span className="ms-auto"><StatusPill status={i.status} label={ti(`statuses.${i.status}`)} testId={`detail-invoice-status-${i.id}`} /></span>
               </div>
               <p className="text-sm text-text-muted">
-                {ti("amount")}: <span className="tnum font-bold text-text" dir="ltr">{fmt(i.amountMinor, i.currency)} {i.currency}</span> · {ti("paid")}: <span className="tnum font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor, i.currency)} {i.currency}</span> · {ti("dueOn")}: <span dir="ltr">{i.dueOn}</span>
+                {ti("amount")}: <span className="tnum tabular-nums font-bold text-text" dir="ltr">{fmt(i.amountMinor, i.currency)} {i.currency}</span> · {ti("paid")}: <span className="tnum tabular-nums font-bold text-status-paid-fg" dir="ltr">{fmt(i.paidMinor, i.currency)} {i.currency}</span> · {ti("dueOn")}: <span className="tabular-nums" dir="ltr">{i.dueOn}</span>
               </p>
               {i.currencyWarning && <p className="text-sm font-semibold text-status-due-fg">{ti("currencyWarning")}</p>}
               <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -687,16 +699,25 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             </li>
           ))}
         </ul>
+        )}
       </Panel>
 
       <Panel title={tg("history")} icon={HandCoins} padded={false} className="overflow-hidden">
+        {detail.payments.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 p-8 text-center">
+            <p className="text-sm font-bold text-text">{isAr ? "لا توجد مدفوعات مسجلة بعد" : "No payments recorded yet"}</p>
+            <p className="max-w-md text-xs text-text-muted">
+              {isAr ? "استخدم نموذج تسجيل الدفعة أعلاه لتوثيق أول تحصيل من هذا العميل." : "Use the payment form above to record the first payment from this customer."}
+            </p>
+          </div>
+        ) : (
         <ul className="flex flex-col divide-y divide-border">
           {detail.payments.map((p) => (
             <li key={p.id} data-testid="payment-row" className="flex flex-col gap-2 p-4 text-sm sm:px-6">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                <span className="tnum text-base font-extrabold" dir="ltr">{fmt(p.amountMinor, p.currency)} {p.currency}</span>
+                <span className="tnum tabular-nums text-base font-extrabold" dir="ltr">{fmt(p.amountMinor, p.currency)} {p.currency}</span>
                 <span>{tp(`methods.${p.method}`)}</span>
-                <span className="text-text-muted" dir="ltr">{p.receivedOn}</span>
+                <span className="tabular-nums text-text-muted" dir="ltr">{p.receivedOn}</span>
                 <StatusPill
                   status={p.status}
                   label={p.status === "claimed" ? tg("claimed") : p.status === "confirmed" ? tg("confirmed") : tg("rejected")}
@@ -711,7 +732,7 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                   )}
                   {p.status === "confirmed" && p.source === "gateway" && !p.reversalOf && BigInt(p.amountMinor) > 0n && (
                     <>
-                      <button type="button" data-testid="gw-refund" disabled={gwBusy} onClick={() => void onRefund(p.id)} className={linkAction}>{tg("refund")}</button>
+                      <button type="button" data-testid="gw-refund" disabled={gwBusy} aria-busy={gwBusy} onClick={() => void onRefund(p.id)} className={linkAction}>{tg("refund")}</button>
                       <button
                         type="button"
                         onClick={() => { setRefundForId(refundForId === p.id ? null : p.id); setRefundAmount(""); }}
@@ -741,9 +762,15 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
             </li>
           ))}
         </ul>
+        )}
       </Panel>
 
       <Panel title={t("timeline")} icon={Clock}>
+        {timeline.length === 0 ? (
+          <p className="py-4 text-center text-sm text-text-muted">
+            {isAr ? "لا يوجد نشاط مسجل في السجل الزمني بعد." : "No activity recorded in the timeline yet."}
+          </p>
+        ) : (
         <ol data-testid="timeline" className="relative flex flex-col gap-5 border-s-2 border-border ps-6 ms-2">
           {timeline.map((e) => {
             const isPayment = e.kind === "payment";
@@ -759,14 +786,15 @@ export function DebtorDetailClient({ debtorId, businessName }: { debtorId: strin
                 </span>
                 <p className="min-w-0 break-words">
                   <span className="font-bold">{e.kind}</span>
-                  {" · "}<span className="text-text-muted" dir="ltr">{e.at.slice(0, 10)}</span>
+                  {" · "}<span className="tabular-nums text-text-muted" dir="ltr">{e.at.slice(0, 10)}</span>
                   {" · "}{e.summary}
-                  {e.amountMinor && <> · <span className="tnum font-bold text-primary" dir="ltr">{fmt(e.amountMinor)}</span></>}
+                  {e.amountMinor && <> · <span className="tnum tabular-nums font-bold text-primary" dir="ltr">{fmt(e.amountMinor)}</span></>}
                 </p>
               </li>
             );
           })}
         </ol>
+        )}
       </Panel>
     </section>
   );

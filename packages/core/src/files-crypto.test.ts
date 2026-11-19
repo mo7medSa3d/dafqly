@@ -145,11 +145,15 @@ describe("stripImageExif (M5)", () => {
       out.set(data, 8);
       return out;
     };
+    const vp8xPayload = new Uint8Array(10);
+    vp8xPayload[0] = 0x08; // EXIF flag bit set
     const webp = concatBytes(
       te.encode("RIFF"), new Uint8Array(4), te.encode("WEBP"),
-      chunk("VP8X", new Uint8Array(10)), chunk("EXIF", te.encode("II*\0GPS")), chunk("VP8L", new Uint8Array(5)),
+      chunk("VP8X", vp8xPayload), chunk("EXIF", te.encode("II*\0GPS")), chunk("VP8L", new Uint8Array(5)),
     );
     const clean = stripImageExif(webp, "image/webp");
+    expect(clean[20]! & 0x08).toBe(0); // EXIF flag cleared in VP8X
+    expect(vp8xPayload[0]).toBe(0x08); // input not mutated
     const s = new TextDecoder("latin1").decode(clean);
     expect(s).not.toContain("EXIF");
     expect(s).toContain("VP8X");

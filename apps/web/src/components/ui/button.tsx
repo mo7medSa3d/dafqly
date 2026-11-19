@@ -2,13 +2,13 @@ import { cva } from "class-variance-authority";
 
 /** shadcn/ui Button, themed with the monochrome Swiss-editorial oklch tokens. */
 export const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg text-[14px] font-semibold transition-[background-color,border-color,color,transform,box-shadow] outline-none focus-visible:ring-2 focus-visible:ring-ring/40 active:translate-y-px disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[18px]",
+  "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-lg text-[14px] font-semibold transition-[background-color,border-color,color,transform,box-shadow] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:translate-y-px disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[18px]",
   {
     variants: {
       variant: {
         default:
           "bg-primary text-primary-foreground shadow-xs hover:bg-primary-hover",
-        destructive: "bg-destructive text-destructive-foreground hover:opacity-90 focus-visible:ring-destructive/30",
+        destructive: "bg-destructive text-destructive-foreground hover:opacity-90 focus-visible:ring-destructive",
         outline:
           "border border-border bg-card text-foreground hover:border-foreground/40 hover:bg-accent",
         secondary: "bg-secondary text-secondary-foreground hover:bg-accent",

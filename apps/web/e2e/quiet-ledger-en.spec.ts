@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * Quiet Ledger EN pass: landing / login / dashboard in English (LTR),
@@ -8,7 +9,7 @@ import { mkdirSync } from "node:fs";
  * the same system holds in English. Screenshots land in
  * e2e/screenshots/redesign/ as after-en-*.png / after-404-*.png.
  */
-const shotsDir = "e2e/screenshots/redesign";
+const shotsDir = join("e2e", "screenshots", "redesign");
 mkdirSync(shotsDir, { recursive: true });
 
 test.use({ reducedMotion: "reduce" });
@@ -16,8 +17,9 @@ test.use({ reducedMotion: "reduce" });
 /** Fixed shell bars render once, at the page edge, in full-page captures. */
 async function fullShot(page: Page, name: string) {
   await page.addStyleTag({ content: "aside { position: absolute !important; } :has(> aside) { position: relative !important; }" }).catch(() => {});
-  await page.waitForTimeout(600); // let client data settle before capturing
-  await page.screenshot({ path: `${shotsDir}/${name}`, fullPage: true });
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({ path: join(shotsDir, name), fullPage: true });
 }
 
 async function loginEn(page: Page) {
@@ -35,15 +37,18 @@ async function noOverflow(page: Page) {
 
 test("quiet-ledger en: landing + login + dashboard, desktop + mobile", async ({ page, browser }) => {
   const desk = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", reducedMotion: "reduce" });
-  const dp = await desk.newPage();
-  await dp.goto("/en");
-  await fullShot(dp, "after-en-landing-desktop-light.png");
-  await dp.goto("/en/login");
-  await fullShot(dp, "after-en-login-desktop-light.png");
-  await loginEn(dp);
-  await expect(dp.getByTestId("dashboard")).toBeVisible();
-  await fullShot(dp, "after-en-dashboard-desktop-light.png");
-  await desk.close();
+  try {
+    const dp = await desk.newPage();
+    await dp.goto("/en");
+    await fullShot(dp, "after-en-landing-desktop-light.png");
+    await dp.goto("/en/login");
+    await fullShot(dp, "after-en-login-desktop-light.png");
+    await loginEn(dp);
+    await expect(dp.getByTestId("dashboard")).toBeVisible();
+    await fullShot(dp, "after-en-dashboard-desktop-light.png");
+  } finally {
+    await desk.close();
+  }
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/en");
@@ -62,8 +67,8 @@ test("quiet-ledger 404: custom page renders in both locales", async ({ page }) =
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/ar/definitely-not-a-page");
   await expect(page.getByText("الصفحة غير موجودة")).toBeVisible();
-  await page.screenshot({ path: `${shotsDir}/after-404-ar-desktop-light.png` });
+  await page.screenshot({ path: join(shotsDir, "after-404-ar-desktop-light.png") });
   await page.goto("/en/definitely-not-a-page");
   await expect(page.getByText("Page not found")).toBeVisible();
-  await page.screenshot({ path: `${shotsDir}/after-404-en-desktop-light.png` });
+  await page.screenshot({ path: join(shotsDir, "after-404-en-desktop-light.png") });
 });

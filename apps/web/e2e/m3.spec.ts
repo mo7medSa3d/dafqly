@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { createHmac } from "node:crypto";
+import { join } from "node:path";
 import { clickNav } from "./helpers";
 
 /**
@@ -70,31 +71,34 @@ test("M3 statement: view totals, dispute lands + pauses, revoke makes it a gener
   const statementUrl = `/s/${tokenMatch![1]!}`;
 
   const pub = await browser.newContext();
-  const pubPage = await pub.newPage();
-  await pubPage.goto(statementUrl);
-  await expect(pubPage.getByTestId("statement-page")).toBeVisible();
-  await expect(pubPage.getByTestId("statement-business")).toContainText("النيل");
-  await expect(pubPage.getByTestId("statement-total")).toContainText("3,000.00");
-  await expect(pubPage.getByTestId("statement-invoice")).toHaveCount(1);
+  try {
+    const pubPage = await pub.newPage();
+    await pubPage.goto(statementUrl);
+    await expect(pubPage.getByTestId("statement-page")).toBeVisible();
+    await expect(pubPage.getByTestId("statement-business")).toContainText("النيل");
+    await expect(pubPage.getByTestId("statement-total")).toContainText("3,000.00");
+    await expect(pubPage.getByTestId("statement-invoice")).toHaveCount(1);
 
-  // Dispute the invoice from the public page.
-  await pubPage.locator('[data-testid^="statement-dispute-"]').first().click();
-  await pubPage.locator('[data-testid^="dispute-reason-"]').first().fill("المبلغ مختلف عن المتفق عليه");
-  await pubPage.locator('[data-testid^="dispute-submit-"]').first().click();
-  await expect(pubPage.getByTestId("statement-msg")).toContainText("تم تسجيل اعتراضك");
-  await expect(pubPage.locator('[data-testid^="statement-invoice-status-"]').first()).toContainText("متنازع");
+    // Dispute the invoice from the public page.
+    await pubPage.locator('[data-testid^="statement-dispute-"]').first().click();
+    await pubPage.locator('[data-testid^="dispute-reason-"]').first().fill("المبلغ مختلف عن المتفق عليه");
+    await pubPage.locator('[data-testid^="dispute-submit-"]').first().click();
+    await expect(pubPage.getByTestId("statement-msg")).toContainText("تم تسجيل اعتراضك");
+    await expect(pubPage.locator('[data-testid^="statement-invoice-status-"]').first()).toContainText("متنازع");
 
-  // The merchant sees the dispute on the debtor page.
-  await page.reload();
-  await expect(page.getByTestId("stmt-dispute").first()).toContainText("المبلغ مختلف");
+    // The merchant sees the dispute on the debtor page.
+    await page.reload();
+    await expect(page.getByTestId("stmt-dispute").first()).toContainText("المبلغ مختلف");
 
-  // Revoking the link turns the public page into the generic not-found.
-  await page.getByTestId("stmt-revoke").first().click();
-  await expect(page.getByTestId("stmt-link-state").first()).toContainText("ملغي");
-  await pubPage.goto(statementUrl);
-  await expect(pubPage.getByTestId("statement-not-found")).toBeVisible();
-  await pubPage.screenshot({ path: "e2e/screenshots/m3-statement-not-found-ar-light.png" });
-  await pub.close();
+    // Revoking the link turns the public page into the generic not-found.
+    await page.getByTestId("stmt-revoke").first().click();
+    await expect(page.getByTestId("stmt-link-state").first()).toContainText("ملغي");
+    await pubPage.goto(statementUrl);
+    await expect(pubPage.getByTestId("statement-not-found")).toBeVisible();
+    await pubPage.screenshot({ path: join("e2e", "screenshots", "m3-statement-not-found-ar-light.png") });
+  } finally {
+    await pub.close();
+  }
 });
 
 test("M3 webhook: bad HMAC 401, signed success pays exactly once, replay is a no-op", async ({ page, browser, request }) => {
@@ -106,7 +110,7 @@ test("M3 webhook: bad HMAC 401, signed success pays exactly once, replay is a no
 
   const obj: Record<string, unknown> = {
     amount_cents: 125050, created_at: "2026-11-09T10:00:00.000000", currency: "EGP",
-    error_occured: false, has_parent_transaction: false, id: 424242001, integration_id: 123456,
+    error_occured: false, has_parent_transaction: false, id: Date.now(), integration_id: 123456,
     is_3d_secure: true, is_auth: false, is_capture: false, is_refunded: false,
     is_standalone_payment: true, is_voided: false,
     order: { id: 987650, merchant_order_id: link.specialReference }, owner: 777, pending: false,
@@ -128,14 +132,17 @@ test("M3 webhook: bad HMAC 401, signed success pays exactly once, replay is a no
   // The statement now shows the invoice paid, total zero, exactly one payment.
   const stmt = await trpcMutate<{ path: string }>(page, "statements.create", { debtorId });
   const pub = await browser.newContext();
-  const pubPage = await pub.newPage();
-  await pubPage.goto(stmt.path);
-  await expect(pubPage.getByTestId("statement-page")).toBeVisible();
-  await expect(pubPage.getByTestId("statement-total")).toContainText("0.00");
-  await expect(pubPage.locator('[data-testid^="statement-invoice-status-"]').first()).toContainText("مدفوعة");
-  await expect(pubPage.getByTestId("statement-payment")).toHaveCount(1);
-  await pubPage.screenshot({ path: "e2e/screenshots/m3-statement-paid-ar-light.png" });
-  await pub.close();
+  try {
+    const pubPage = await pub.newPage();
+    await pubPage.goto(stmt.path);
+    await expect(pubPage.getByTestId("statement-page")).toBeVisible();
+    await expect(pubPage.getByTestId("statement-total")).toContainText("0.00");
+    await expect(pubPage.locator('[data-testid^="statement-invoice-status-"]').first()).toContainText("مدفوعة");
+    await expect(pubPage.getByTestId("statement-payment")).toHaveCount(1);
+    await pubPage.screenshot({ path: join("e2e", "screenshots", "m3-statement-paid-ar-light.png") });
+  } finally {
+    await pub.close();
+  }
 
   // Merchant side: one gateway payment row; debtor-facing gateway link UI is removed.
   await page.reload();

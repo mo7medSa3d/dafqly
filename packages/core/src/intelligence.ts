@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { sanitizePromptData, type NotificationTone, type ReplyIntent } from "./ai";
+import { normalizeDigits } from "./digits";
 import { formatCurrencyMinor, getCurrencySymbol, normalizeCurrencyCode, type SupportedCurrency } from "./money";
 import { isInQuietHours, nextAllowedSlot, localDateOf, safeTimezone, DEFAULT_POLICY, type SchedulePolicy } from "./time";
 
@@ -217,10 +218,11 @@ export function scoreDebtorIntelligence(input: DebtorScoreInput): DebtorIntellig
       urgency: "low",
     };
   } else if (dueSoonCheque) {
+    const safeChequeNo = sanitizePromptData(dueSoonCheque.number) || dueSoonCheque.number;
     recommendation = {
       actionKind: "follow_up_cheque",
-      titleAr: `متابعة تحصيل شيك #${dueSoonCheque.number}`,
-      titleEn: `Follow up cheque #${dueSoonCheque.number}`,
+      titleAr: `متابعة تحصيل شيك #${safeChequeNo}`,
+      titleEn: `Follow up cheque #${safeChequeNo}`,
       reasonAr: `شيك بقيمة ${formatCurrencyMinor(dueSoonCheque.amountMinor, input.currency)} ${symAr} يستحق بحلول ${dueSoonCheque.dueDate}.`,
       reasonEn: `Cheque of ${formatCurrencyMinor(dueSoonCheque.amountMinor, input.currency)} ${symEn} due on ${dueSoonCheque.dueDate}.`,
       suggestedTone: "polite",
@@ -490,6 +492,9 @@ export function buildInstallmentPlan(input: InstallmentPlanInput): InstallmentPl
   const safeDebtor = sanitizePromptData(input.debtorName) || "العميل";
   const safeBiz = sanitizePromptData(input.businessName) || "دفقلي";
   const count = input.installmentsCount;
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error("installmentsCount must be a positive integer");
+  }
   const downPct = input.downPaymentPct ?? 0;
   const stepDays = input.interval === "weekly" ? 7 : input.interval === "biweekly" ? 14 : 30;
   const startIso = input.startDateIso.slice(0, 10);
@@ -994,13 +999,14 @@ export function buildOperationalNotificationCandidates(input: OperationalSignals
 
   for (const disp of input.openDisputes.slice(0, 5)) {
     const safeName = sanitizePromptData(disp.debtorName) || disp.debtorName;
+    const safeRef = disp.invoiceRef ? sanitizePromptData(disp.invoiceRef) : "";
     out.push({
       kind: "dispute",
       severity: "urgent",
       titleAr: `اعتراض مفتوح من ${safeName}`,
       titleEn: `Open invoice dispute from ${safeName}`,
-      bodyAr: `الاعتراض${disp.invoiceRef ? ` على ${disp.invoiceRef}` : ""} أوقف التذكيرات التلقائية لحين المراجعة.`,
-      bodyEn: `Dispute${disp.invoiceRef ? ` on ${disp.invoiceRef}` : ""} paused automated reminders until resolved.`,
+      bodyAr: `الاعتراض${safeRef ? ` على ${safeRef}` : ""} أوقف التذكيرات التلقائية لحين المراجعة.`,
+      bodyEn: `Dispute${safeRef ? ` on ${safeRef}` : ""} paused automated reminders until resolved.`,
       actionUrl: `/debtors/${disp.debtorId}`,
       entityType: "dispute",
       entityId: disp.id,
@@ -1029,13 +1035,14 @@ export function buildOperationalNotificationCandidates(input: OperationalSignals
     const symAr = getCurrencySymbol(cur, "ar");
     const symEn = getCurrencySymbol(cur, "en");
     const safeName = sanitizePromptData(chq.debtorName) || chq.debtorName;
+    const safeChequeNo = sanitizePromptData(chq.number) || chq.number;
     const amt = formatCurrencyMinor(chq.amountMinor, cur);
     const isBounced = chq.status === "bounced";
     out.push({
       kind: "cheque_alert",
       severity: isBounced ? "urgent" : "warning",
-      titleAr: isBounced ? `تنبيه: ارتداد شيك #${chq.number}` : `استحقاق شيك #${chq.number} قريباً`,
-      titleEn: isBounced ? `Alert: Cheque #${chq.number} bounced` : `Cheque #${chq.number} due soon`,
+      titleAr: isBounced ? `تنبيه: ارتداد شيك #${safeChequeNo}` : `استحقاق شيك #${safeChequeNo} قريباً`,
+      titleEn: isBounced ? `Alert: Cheque #${safeChequeNo} bounced` : `Cheque #${safeChequeNo} due soon`,
       bodyAr: `${safeName} — ${amt} ${symAr} (تاريخ الاستحقاق ${chq.dueDate}).`,
       bodyEn: `${safeName} — ${amt} ${symEn} (due ${chq.dueDate}).`,
       actionUrl: "/cheques",
@@ -1127,13 +1134,25 @@ export interface OptimalReminderWindowResult {
   strategyReasonEn: string;
 }
 
+const MAX_HHMM_FMT_CACHE = 64;
+const hhmmFmtCache = new Map<string, Intl.DateTimeFormat>();
+
 function formatLocalTimeHHMM(at: Date, timezone: string): string {
-  const fmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone: safeTimezone(timezone),
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  });
+  const tz = safeTimezone(timezone);
+  let fmt = hhmmFmtCache.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-GB", {
+      timeZone: tz,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    if (hhmmFmtCache.size >= MAX_HHMM_FMT_CACHE) {
+      const oldest = hhmmFmtCache.keys().next().value;
+      if (oldest !== undefined) hhmmFmtCache.delete(oldest);
+    }
+    hhmmFmtCache.set(tz, fmt);
+  }
   return fmt.format(at);
 }
 
@@ -1330,7 +1349,7 @@ export function planCopilotToolCalls(input: CopilotToolPlanInput): CopilotToolPl
   // 1. Check if the user query mentions a specific customer in the tenant ledger
   let matchedDebtor: { debtorId: string; displayName: string } | null = null;
   if (normQ.length >= 2) {
-    const digitsInQ = safeQ.replace(/\D+/g, "");
+    const digitsInQ = normalizeDigits(safeQ).replace(/\D+/g, "");
     for (const d of input.debtors) {
       const normName = normalizeArabicSearch(d.displayName);
       if (!normName) continue;

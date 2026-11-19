@@ -551,8 +551,9 @@ export function DafqlyLanding({ locale: propLocale }: { locale?: string }) {
                   type="button"
                   aria-label={c.nav.menu}
                   aria-expanded={menuOpen}
+                  aria-controls="mobile-nav"
                   onClick={() => setMenuOpen((v) => !v)}
-                  className="inline-flex size-8 items-center justify-center rounded-full border border-border text-foreground md:hidden"
+                  className="inline-flex size-10 items-center justify-center rounded-full border border-border text-foreground md:hidden"
                 >
                   {menuOpen ? <X size={16} /> : <List size={16} />}
                 </button>
@@ -576,8 +577,8 @@ export function DafqlyLanding({ locale: propLocale }: { locale?: string }) {
                     <a href="#pricing" onClick={() => setMenuOpen(false)} className="py-2 text-muted-foreground">{c.nav.pricing}</a>
                     <a href="#faq" onClick={() => setMenuOpen(false)} className="py-2 text-muted-foreground">{c.nav.faq}</a>
                     <div className="mt-2 flex gap-3 border-t border-border pt-4">
-                      <Link href={`/${locale}/login`} onClick={() => setMenuOpen(false)} className={`${btnSecondary} flex-1 text-center !min-h-10`}>{c.nav.login}</Link>
-                      <Link href={`/${locale}/signup`} onClick={() => setMenuOpen(false)} className={`${btnPrimary} flex-1 text-center !min-h-10`}>{c.nav.start}</Link>
+                      <Link href={`/${locale}/login`} onClick={() => setMenuOpen(false)} className={`${btnSecondary} flex-1 text-center`}>{c.nav.login}</Link>
+                      <Link href={`/${locale}/signup`} onClick={() => setMenuOpen(false)} className={`${btnPrimary} flex-1 text-center`}>{c.nav.start}</Link>
                     </div>
                   </div>
                 </m.nav>
@@ -648,7 +649,7 @@ export function DafqlyLanding({ locale: propLocale }: { locale?: string }) {
                 <div className="mt-8 grid grid-cols-2 gap-6 sm:grid-cols-4">
                   {c.social.stats.map((s) => (
                     <div key={s.label} className="flex flex-col items-center gap-1 text-center">
-                      <span className="text-3xl font-black tracking-tight text-foreground sm:text-4xl" dir="ltr">
+                      <span className="tabular-nums text-3xl font-black tracking-tight text-foreground sm:text-4xl" dir="ltr">
                         {s.value}
                       </span>
                       <span className="text-xs font-medium text-muted-foreground">
@@ -737,8 +738,9 @@ export function DafqlyLanding({ locale: propLocale }: { locale?: string }) {
                   <div className="mt-7 inline-flex items-center rounded-full border border-border bg-card p-1 text-sm">
                     <button
                       type="button"
+                      aria-pressed={billingPeriod === "monthly"}
                       onClick={() => setBillingPeriod("monthly")}
-                      className={`relative rounded-full px-4 py-1.5 font-semibold transition-colors ${
+                      className={`relative min-h-10 rounded-full px-4 py-1.5 font-semibold transition-colors ${
                         billingPeriod === "monthly" ? "text-background" : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
@@ -754,8 +756,9 @@ export function DafqlyLanding({ locale: propLocale }: { locale?: string }) {
                     </button>
                     <button
                       type="button"
+                      aria-pressed={billingPeriod === "annual"}
                       onClick={() => setBillingPeriod("annual")}
-                      className={`relative flex items-center gap-1.5 rounded-full px-4 py-1.5 font-semibold transition-colors ${
+                      className={`relative flex min-h-10 items-center gap-1.5 rounded-full px-4 py-1.5 font-semibold transition-colors ${
                         billingPeriod === "annual" ? "text-background" : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
@@ -800,7 +803,7 @@ export function DafqlyLanding({ locale: propLocale }: { locale?: string }) {
                           </div>
 
                           <div className="mt-5 flex items-baseline gap-1" dir="ltr">
-                            <span className="text-3xl font-black tracking-tight sm:text-4xl">
+                            <span className="tabular-nums text-3xl font-black tracking-tight sm:text-4xl">
                               {price === "0" ? (isAr ? "مجاناً" : "Free") : price}
                             </span>
                             {price !== "0" && (
@@ -829,11 +832,11 @@ export function DafqlyLanding({ locale: propLocale }: { locale?: string }) {
                         </div>
 
                         <Link
-                          href={`/${locale}/signup`}
-                          className={`mt-8 inline-flex min-h-[44px] items-center justify-center rounded-full text-sm font-semibold transition-colors ${
+                          href={`/${locale}/signup?plan=${p.key}`}
+                          className={`mt-8 inline-flex min-h-11 items-center justify-center rounded-full text-sm font-semibold transition-colors ${
                             p.featured
                               ? "bg-background text-foreground hover:bg-background/90"
-                              : "bg-foreground text-background hover:bg-foreground/90"
+                              : "border border-border bg-background text-foreground hover:bg-accent"
                           }`}
                         >
                           {c.pricing.cta}
@@ -860,8 +863,9 @@ export function DafqlyLanding({ locale: propLocale }: { locale?: string }) {
                         <button
                           type="button"
                           aria-expanded={open}
+                          aria-controls={`faq-panel-${idx}`}
                           onClick={() => setOpenFaq(open ? null : idx)}
-                          className="flex w-full items-center justify-between gap-4 px-5 py-4 text-sm font-semibold transition-colors hover:bg-accent/40 sm:text-base"
+                          className="flex min-h-11 w-full items-center justify-between gap-4 px-5 py-4 text-sm font-semibold transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:text-base"
                         >
                           <span className="text-start">{item.q}</span>
                           <CaretDown
@@ -873,6 +877,7 @@ export function DafqlyLanding({ locale: propLocale }: { locale?: string }) {
                         <AnimatePresence initial={false}>
                           {open && (
                             <m.div
+                              id={`faq-panel-${idx}`}
                               initial={{ opacity: 0, height: 0 }}
                               animate={{ opacity: 1, height: "auto" }}
                               exit={{ opacity: 0, height: 0 }}
@@ -910,11 +915,12 @@ export function DafqlyLanding({ locale: propLocale }: { locale?: string }) {
                     type="email"
                     dir="ltr"
                     autoComplete="email"
+                    aria-invalid={error ? true : undefined}
                     value={email}
                     onChange={(e) => { setEmail(e.target.value); setError(null); }}
                     placeholder={c.cta.placeholder}
                     aria-label={c.cta.placeholder}
-                    className="min-h-[44px] flex-1 rounded-full border border-background/20 bg-background/10 px-5 text-sm text-background placeholder:text-background/40 outline-none transition focus:border-background/40 focus:ring-2 focus:ring-background/20"
+                    className="min-h-11 flex-1 rounded-full border border-background/20 bg-background/10 px-5 text-start text-sm text-background placeholder:text-background/40 outline-none transition focus:border-background/40 focus:ring-2 focus:ring-background/20"
                   />
                   <button
                     type="submit"

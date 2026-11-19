@@ -107,25 +107,27 @@
   --radius-xl: var(--radius-xl);
 }
 
-/* Complete suppression of native scrollbars on all browsers & platforms */
-html, body, *, *::before, *::after {
-  scrollbar-width: none !important;
-  -ms-overflow-style: none !important;
+/* Subtle, tokenized thin scrollbars (opt-out via .no-scrollbar) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 ::-webkit-scrollbar {
-  display: none !important;
-  width: 0px !important;
-  height: 0px !important;
-  background: transparent !important;
+  width: 6px;
+  height: 6px;
 }
-::-webkit-scrollbar-track,
-::-webkit-scrollbar-thumb,
-::-webkit-scrollbar-corner,
-::-webkit-scrollbar-button {
-  display: none !important;
-  width: 0px !important;
-  height: 0px !important;
-  background: transparent !important;
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 @layer base {
@@ -141,14 +143,23 @@ html, body, *, *::before, *::after {
     line-height: var(--lh-body);
     letter-spacing: 0;
   }
-  .tnum { font-variant-numeric: tabular-nums; }
+  [dir="rtl"], [dir="rtl"] body {
+    line-height: 1.7;
+  }
+  [dir="rtl"], [dir="rtl"] * {
+    letter-spacing: 0 !important;
+  }
+  table td, table th {
+    font-variant-numeric: tabular-nums;
+  }
+  .tnum, .tabular-nums { font-variant-numeric: tabular-nums; }
 }
 
 @layer utilities {
   .panel-shadow {
     box-shadow: var(--shadow-offset-x) var(--shadow-offset-y) var(--shadow-blur) var(--shadow-spread) color-mix(in srgb, var(--shadow-color) 10%, transparent);
   }
-  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
 }
 
@@ -202,10 +213,10 @@ html.switching-locale *::after {
 .ai-caret::after { content: ""; display: inline-block; width: 2px; height: 1em; margin-inline-start: 2px; vertical-align: -2px; background: currentColor; animation: ai-blink 1s steps(2) infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .ai-rise, .ai-step, .ai-menu, .ai-menu-item, .ai-dots i, .ai-spin, .ai-caret::after { animation: none !important; }
+  .reveal, .ai-rise, .ai-step, .ai-menu, .ai-menu-item, .ai-dots i, .ai-spin, .ai-caret::after { animation: none !important; }
 }
 
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; scroll-padding-top: 5rem; }
 @view-transition { navigation: auto; }
 ::selection { background: var(--foreground); color: var(--background); }
 

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useTranslations, useLocale } from "next-intl";
 import { useCurrency } from "./CurrencyContext";
-import { ChatCircleDots, Check, CheckCircle, Clock, Copy, Robot, Sparkle, UploadSimple, User, XCircle } from "@/components/ui/solid-icons";
+import { ChatCircleDots, Check, CheckCircle, Clock, Copy, Robot, Sparkle, UploadSimple, User, X, XCircle } from "@/components/ui/solid-icons";
 import { trpc } from "@/lib/trpc-client";
 import { InitialAvatar, LoadingState, Panel, btnPrimary, inputCls, labelCls } from "./ui";
 
@@ -50,6 +50,12 @@ function resolveImageMime(file: File): string | null {
     if (ext === "heif") return "image/heif";
   }
   return null;
+}
+
+function confidenceBadgeClass(confidence: number): string {
+  if (confidence >= 0.85) return "border-status-paid-fg/25 bg-status-paid-bg text-status-paid-fg";
+  if (confidence >= 0.6) return "border-status-due-fg/25 bg-status-due-bg text-status-due-fg";
+  return "border-danger/30 bg-danger-bg text-danger";
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -171,6 +177,7 @@ export function AiInboxClient() {
   }
 
   async function actOnClaim(paymentId: string, action: "confirm" | "reject") {
+    if (busy) return;
     setBusy(true); setMsg(null);
     try {
       if (action === "confirm") await trpc.payments.confirm.mutate({ paymentId });
@@ -185,6 +192,7 @@ export function AiInboxClient() {
   }
 
   async function onResolveIntent(id: string, decision: string) {
+    if (busy) return;
     setBusy(true); setMsg(null);
     try {
       await trpc.replies.resolveIntent.mutate({ intentId: id, decision });
@@ -251,23 +259,31 @@ export function AiInboxClient() {
           </div>
         )}
         {msg && (
-          <p
+          <div
             role={msg.isError ? "alert" : "status"}
-            className={`rounded-xl border px-4 py-3 text-sm font-bold ${
+            className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-bold ${
               msg.isError
                 ? "border-danger/30 bg-danger-bg text-danger"
                 : "border-status-paid-fg/25 bg-status-paid-bg text-status-paid-fg"
             }`}
           >
-            {msg.text}
-          </p>
+            <span>{msg.text}</span>
+            <button
+              type="button"
+              onClick={() => setMsg(null)}
+              aria-label={isAr ? "إغلاق التنبيه" : "Dismiss message"}
+              className="shrink-0 rounded-md p-1 opacity-75 transition-opacity hover:opacity-100"
+            >
+              <X size={15} strokeWidth={2.5} aria-hidden />
+            </button>
+          </div>
         )}
 
         {/* Claims Section */}
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-extrabold text-text">{t("claimsTitle")}</h2>
-            <span className="rounded bg-callout px-3 py-1 text-xs font-bold text-primary">
+            <span className="rounded bg-callout px-3 py-1 text-xs font-bold text-primary tabular-nums">
               {claims.length} {isAr ? "مطالبات" : "Claims"}
             </span>
           </div>
@@ -275,9 +291,16 @@ export function AiInboxClient() {
           {loading ? (
             <LoadingState isAr={isAr} />
           ) : claims.length === 0 ? (
-            <div className="panel-shadow flex items-center gap-3 rounded-xl border border-border bg-surface p-6 text-sm text-text-muted">
-              <Clock size={22} className="shrink-0 text-text-subtle" />
-              <span>{t("claimsEmpty")}</span>
+            <div className="panel-shadow flex items-start gap-3 rounded-xl border border-border bg-surface p-6 text-sm">
+              <Clock size={22} aria-hidden className="mt-0.5 shrink-0 text-text-subtle" />
+              <div className="flex flex-col gap-1">
+                <p className="font-bold text-text">{t("claimsEmpty")}</p>
+                <p className="text-xs text-text-muted">
+                  {isAr
+                    ? "ارفع صورة إيصال تحويل من اللوحة الجانبية أو انتظر إيصالات العملاء الواردة عبر واتساب."
+                    : "Upload a transfer receipt from the side panel or wait for incoming customer receipts on WhatsApp."}
+                </p>
+              </div>
             </div>
           ) : (
             <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
@@ -295,11 +318,22 @@ export function AiInboxClient() {
                         )}
                         <div className="min-w-0">
                           <Link href={`/${locale}/debtors/${c.debtorId}`} className="break-words font-bold text-text hover:underline">{c.debtorName}</Link>
-                          <p className="text-xs text-text-muted">
-                            {c.method} · <span dir="ltr">{c.receivedOn}</span>
-                            {c.referenceNo ? ` · #${c.referenceNo}` : ""}
-                            {typeof c.confidence === "number" ? ` · ${isAr ? "الثقة" : "Conf"}: ${Math.round(c.confidence * 100)}%` : ""}
-                          </p>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-text-muted">
+                            <span>{c.method}</span>
+                            <span aria-hidden>·</span>
+                            <span className="tabular-nums" dir="ltr">{c.receivedOn}</span>
+                            {c.referenceNo && (
+                              <>
+                                <span aria-hidden>·</span>
+                                <span className="font-mono tabular-nums" dir="ltr">#{c.referenceNo}</span>
+                              </>
+                            )}
+                            {typeof c.confidence === "number" && (
+                              <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold tabular-nums", confidenceBadgeClass(c.confidence))} dir="ltr">
+                                {Math.round(c.confidence * 100)}% {isAr ? "ثقة" : "conf"}
+                              </span>
+                            )}
+                          </div>
                           {c.evidenceFileId && (
                             <a href={`/api/files/${c.evidenceFileId}`} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11px] font-bold text-primary underline underline-offset-4">
                               {isAr ? "فتح الصورة بحجم كامل ↗" : "Open full receipt ↗"}
@@ -308,11 +342,12 @@ export function AiInboxClient() {
                         </div>
                       </div>
                     <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-                      <span className="tnum text-lg font-extrabold text-primary" dir="ltr">{format(BigInt(c.amountMinor), c.currency ? { currency: c.currency } : undefined)}</span>
+                      <span className="tnum tabular-nums text-lg font-extrabold text-primary" dir="ltr">{format(BigInt(c.amountMinor), c.currency ? { currency: c.currency } : undefined)}</span>
                       <div className="flex gap-2">
                         <button
                           type="button"
                           disabled={busy}
+                          aria-busy={busy}
                           className={`${btnPrimary} px-3 py-1.5 text-xs font-bold`}
                           onClick={() => void actOnClaim(c.id, "confirm")}
                         >
@@ -322,6 +357,7 @@ export function AiInboxClient() {
                         <button
                           type="button"
                           disabled={busy}
+                          aria-busy={busy}
                           className={cn(buttonVariants({ variant: "outline", size: "sm" }), "text-text-muted hover:border-danger hover:text-danger")}
                           onClick={() => void actOnClaim(c.id, "reject")}
                         >
@@ -354,7 +390,7 @@ export function AiInboxClient() {
               <Robot size={22} aria-hidden className="text-primary" />
               <span>{t("intentsTitle")}</span>
             </h2>
-            <span className="rounded bg-callout px-3 py-1 text-xs font-bold text-primary">
+            <span className="rounded bg-callout px-3 py-1 text-xs font-bold text-primary tabular-nums">
               {intents.length} {isAr ? "رسائل" : "Messages"}
             </span>
           </div>
@@ -362,9 +398,16 @@ export function AiInboxClient() {
           {loading ? (
             <LoadingState isAr={isAr} />
           ) : intents.length === 0 ? (
-            <div className="panel-shadow flex items-center gap-3 rounded-xl border border-border bg-surface p-6 text-sm text-text-muted">
-              <CheckCircle size={22} className="shrink-0 text-status-paid-fg" />
-              <span>{t("intentsEmpty")}</span>
+            <div className="panel-shadow flex items-start gap-3 rounded-xl border border-border bg-surface p-6 text-sm">
+              <CheckCircle size={22} aria-hidden className="mt-0.5 shrink-0 text-status-paid-fg" />
+              <div className="flex flex-col gap-1">
+                <p className="font-bold text-text">{t("intentsEmpty")}</p>
+                <p className="text-xs text-text-muted">
+                  {isAr
+                    ? "ستظهر هنا أي ردود عملاء تحتاج مراجعة بشرية مع اقتراح رد ذكي فوري."
+                    : "Customer replies that need human review will appear here with 1-click AI smart reply suggestions."}
+                </p>
+              </div>
             </div>
           ) : (
             <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
@@ -381,9 +424,9 @@ export function AiInboxClient() {
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex min-w-0 flex-wrap items-center gap-2 font-bold text-text">
                           <span>{i.debtorName ?? (isAr ? "عميل غير محدد" : "Unassigned")}</span>
-                          <span className="rounded bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{i.intent}</span>
+                          <span className="rounded-full border border-primary/20 bg-callout px-2.5 py-0.5 text-xs font-bold text-primary">{i.intent}</span>
                         </div>
-                        <span className="tnum rounded border border-border bg-surface-muted px-2.5 py-0.5 text-xs font-semibold text-text-subtle" dir="ltr">
+                        <span className={cn("tnum tabular-nums rounded-full border px-2.5 py-0.5 text-xs font-bold", confidenceBadgeClass(i.confidence))} dir="ltr">
                           {Math.round(i.confidence * 100)}% {isAr ? "ثقة" : "confidence"}
                         </span>
                       </div>
@@ -434,7 +477,7 @@ export function AiInboxClient() {
 
                       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
                         <p className="text-xs text-text-muted">
-                          {i.actionTaken ?? (isAr ? "بانتظار قرارك" : "Awaiting action")} · <span dir="ltr">{i.createdAt.slice(0, 10)}</span>
+                          {i.actionTaken ?? (isAr ? "بانتظار قرارك" : "Awaiting action")} · <span className="tabular-nums" dir="ltr">{i.createdAt.slice(0, 10)}</span>
                         </p>
                         <div className="flex flex-wrap items-center gap-2">
                           <button

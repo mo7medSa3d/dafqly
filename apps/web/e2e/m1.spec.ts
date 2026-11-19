@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { resolve } from "node:path";
-import { clickNav } from "./helpers";
+import { join, resolve } from "node:path";
+import { clickNav, isoDate } from "./helpers";
 
 /**
  * M1 exit flow (§10): manage invoices with correct statuses, and import a
@@ -37,7 +37,7 @@ test("M1 F1: debtor -> invoice -> partial payment -> paid, with correct statuses
   await expect(page).toHaveURL(/\/ar\/invoices/);
   await page.getByTestId("inv-amount").fill("1000");
   await page.getByTestId("inv-reference").fill("E2E-INV-1");
-  await page.getByTestId("inv-due").fill("2026-11-20");
+  await page.getByTestId("inv-due").fill(isoDate(10));
   await page.getByTestId("inv-create").click();
   await expect(page.getByTestId("invoice-row")).toHaveCount(1);
   await expect(page.getByTestId("invoice-status")).toHaveText("مفتوحة");
@@ -60,7 +60,7 @@ test("M1 F1: debtor -> invoice -> partial payment -> paid, with correct statuses
   await page.getByTestId("pay-submit").click();
   await expect(page.getByTestId("debtor-outstanding")).toContainText("0.00");
   await expect(page.locator('[data-testid^="detail-invoice-status-"]')).toHaveText("مدفوعة");
-  await page.screenshot({ path: "e2e/screenshots/m1-debtor-paid-ar-light.png" });
+  await page.screenshot({ path: join("e2e", "screenshots", "m1-debtor-paid-ar-light.png") });
 });
 
 test("M1 F2 exit: import a messy Excel file (header on row 3), commit, undo", async ({ page }) => {
@@ -68,7 +68,7 @@ test("M1 F2 exit: import a messy Excel file (header on row 3), commit, undo", as
   await clickNav(page, "nav-import");
   await expect(page).toHaveURL(/\/ar\/import/);
 
-  const fixture = resolve(process.cwd(), "../../packages/eval/fixtures/import/test/03-header-row-3.xlsx");
+  const fixture = resolve(process.cwd(), "..", "..", "packages", "eval", "fixtures", "import", "test", "03-header-row-3.xlsx");
   await page.getByTestId("import-file").setInputFiles(fixture);
   await expect(page.getByTestId("import-stats")).toContainText("1");
   await expect(page.getByTestId("import-row")).toHaveCount(1);
@@ -81,7 +81,7 @@ test("M1 F2 exit: import a messy Excel file (header on row 3), commit, undo", as
   await clickNav(page, "nav-debtors");
   await expect(page.getByTestId("debtor-row")).toHaveCount(1);
   await expect(page.getByTestId("debtor-row")).toContainText("Omar Fathy");
-  await page.screenshot({ path: "e2e/screenshots/m1-import-committed-ar-light.png" });
+  await page.screenshot({ path: join("e2e", "screenshots", "m1-import-committed-ar-light.png") });
 
   await clickNav(page, "nav-import");
   await page.getByTestId("import-undo").click();

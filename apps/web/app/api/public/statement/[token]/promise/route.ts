@@ -19,11 +19,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   const { token } = await params;
   const ip = clientIp(req.headers);
   const limit = rateLimit(`statement:promise:${ip}`, { limit: 6, windowSeconds: 3600 });
+  if (!limit.allowed) {
+    return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), {
+      status: 429, headers: { ...HEADERS, "Retry-After": String(limit.retryAfterSeconds) },
+    });
+  }
+  if (!TOKEN_RE.test(token)) {
+    return Response.json(toApiErrorBody(new AppError("NOT_FOUND", "Not found", 404)), { status: 404, headers: HEADERS });
+  }
   // M9: per-token bucket too (3/hour per link), on top of the per-debtor cap.
+  // Evaluated after IP limit + token format check so bogus tokens cannot evict rate-limit buckets.
   const tokenLimit = rateLimit(`statement:promise:token:${tokenBucketKey(token)}`, { limit: 3, windowSeconds: 3600 });
-  if (!limit.allowed || !tokenLimit.allowed) {
-    const retryAfter = Math.max(limit.retryAfterSeconds, tokenLimit.retryAfterSeconds);
-    return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), { status: 429, headers: { ...HEADERS, "Retry-After": String(retryAfter) } });
+  if (!tokenLimit.allowed) {
+    return Response.json(toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)), {
+      status: 429, headers: { ...HEADERS, "Retry-After": String(tokenLimit.retryAfterSeconds) },
+    });
   }
   let raw: unknown;
   try {
@@ -37,7 +47,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   }
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) return Response.json(toApiErrorBody(new AppError("BAD_REQUEST", "Invalid promise request", 400)), { status: 400, headers: HEADERS });
-  if (!TOKEN_RE.test(token)) return Response.json(toApiErrorBody(new AppError("NOT_FOUND", "Not found", 404)), { status: 404, headers: HEADERS });
   try {
     const result = await createPublicPromiseRequest(appDb(), ownerDb(), token, parsed.data, new Date());
     return Response.json(result, { status: 201, headers: HEADERS });

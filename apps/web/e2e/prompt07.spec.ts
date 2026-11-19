@@ -1,7 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";
-import { clickNav } from "./helpers";
+import { join } from "node:path";
+import { clickNav, isoDate } from "./helpers";
 
 /**
  * Prompt 07 — real browser verification (2026-11-13).
@@ -21,7 +22,7 @@ import { clickNav } from "./helpers";
  *
  * The psql path is this VM's source-built Postgres (see engineering docs).
  */
-const shot = (name: string) => `e2e/screenshots/prompt07/${name}.png`;
+const shot = (name: string) => join("e2e", "screenshots", "prompt07", `${name}.png`);
 
 async function loginDemo(page: Page, locale: "ar" | "en" = "ar") {
   await page.goto(`/${locale}/login`);
@@ -56,15 +57,6 @@ function getSql() {
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) throw new Error("DATABASE_URL must be set for prompt07.spec.ts");
   return postgres(dbUrl);
-}
-async function dbOne(query: string): Promise<string> {
-  const sql = getSql();
-  try {
-    const rows = await sql.unsafe(query).values();
-    return String(rows[0]?.[0] ?? "");
-  } finally {
-    await sql.end();
-  }
 }
 
 test("P07 route tour (AR desktop 1440): every key screen renders + screenshots", async ({ page }) => {
@@ -147,7 +139,7 @@ test("P07 UI journey verified in the DB: partial payment updates the invoice row
   await clickNav(page, "nav-invoices");
   await page.getByTestId("inv-amount").fill("1000");
   await page.getByTestId("inv-reference").fill(ref);
-  await page.getByTestId("inv-due").fill("2026-11-20");
+  await page.getByTestId("inv-due").fill(isoDate(10));
   await page.getByTestId("inv-create").click();
   await expect(page.getByTestId("invoice-row")).toHaveCount(1);
 
@@ -161,10 +153,21 @@ test("P07 UI journey verified in the DB: partial payment updates the invoice row
   await page.screenshot({ path: shot("13-debtor-partial-ar-1440") });
 
   // The toast is not proof: the invoice row itself must say so.
-  const row = await dbOne(`SELECT status || '|' || paid_minor::text FROM invoices WHERE reference='${ref}'`);
-  expect(row).toBe("partially_paid|40000");
-  const payment = await dbOne(`SELECT count(*) FROM payments p JOIN debtors d ON d.id = p.debtor_id WHERE d.phone_e164 = '+20${phone.slice(1)}' AND p.status='confirmed'`);
-  expect(payment).toBe("1");
+  const sql = getSql();
+  try {
+    const invRows = await sql<{ status: string; paid_minor: string }[]>`
+      SELECT status, paid_minor::text FROM invoices WHERE reference = ${ref}
+    `;
+    expect(invRows[0]).toEqual({ status: "partially_paid", paid_minor: "40000" });
+    const payRows = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM payments p
+      JOIN debtors d ON d.id = p.debtor_id
+      WHERE d.phone_e164 = ${`+20${phone.slice(1)}`} AND p.status = 'confirmed'
+    `;
+    expect(payRows[0]?.n).toBe("1");
+  } finally {
+    await sql.end();
+  }
 });
 
 test("P07 F-20: billing badge is centred on its card in RTL", async ({ page }) => {
@@ -199,30 +202,47 @@ test("P07 F-20: forecast chart keeps time left→right in AR and EN", async ({ p
   // invoices with confirmed allocations; the UI would need 20 form
   // submissions for the same rows. The rows are exactly what recordPayment
   // + clear would write: paid invoice + confirmed payment + allocation.
-  const ids = await dbOne(`SELECT tenant_id::text || '|' || id::text FROM debtors WHERE phone_e164 = '+20${phone.slice(1)}'`);
-  const [tenantId, debtorId] = ids.split("|");
-  const inserts: string[] = [];
-  for (let i = 0; i < 10; i++) {
-    // Due dates spread over the past 8 weeks (computed, not hand-rolled:
-    // September has 30 days, so 6 + i*4 overflows the month past i=6).
-    const due = new Date(Date.UTC(2026, 8, 6 + i * 4)).toISOString().slice(0, 10);
-    // Random ids: fixed ids collide on a Playwright retry (the first
-    // attempt's rows survive — retries run against the same DB).
-    const inv = randomUUID();
-    const pay = randomUUID();
-    const alc = randomUUID();
-    inserts.push(
-      `INSERT INTO invoices (id, tenant_id, debtor_id, reference, amount_minor, paid_minor, currency, issued_on, due_on, status, source) VALUES ('${inv}', '${tenantId}', '${debtorId}', 'P07-FC-${i}', 100000, 100000, 'EGP', '2026-09-01', '${due}', 'paid', 'manual');`,
-      `INSERT INTO payments (id, tenant_id, debtor_id, amount_minor, currency, method, received_on, status, source) VALUES ('${pay}', '${tenantId}', '${debtorId}', 100000, 'EGP', 'cash', '${due}', 'confirmed', 'manual');`,
-      `INSERT INTO payment_allocations (id, tenant_id, payment_id, invoice_id, amount_minor) VALUES ('${alc}', '${tenantId}', '${pay}', '${inv}', 100000);`,
-    );
+  const sql = getSql();
+  try {
+    const debtorRows = await sql<{ tenant_id: string; id: string }[]>`
+      SELECT tenant_id::text, id::text FROM debtors WHERE phone_e164 = ${`+20${phone.slice(1)}`}
+    `;
+    const tenantId = debtorRows[0]?.tenant_id;
+    const debtorId = debtorRows[0]?.id;
+    expect(tenantId).toBeTruthy();
+    expect(debtorId).toBeTruthy();
+
+    const issuedHistory = isoDate(-65);
+    for (let i = 0; i < 10; i++) {
+      // Due dates spread over the past ~8 weeks relative to today.
+      const due = isoDate(-56 + i * 4);
+      // Random ids: fixed ids collide on a Playwright retry (the first
+      // attempt's rows survive — retries run against the same DB).
+      const inv = randomUUID();
+      const pay = randomUUID();
+      const alc = randomUUID();
+      await sql`
+        INSERT INTO invoices (id, tenant_id, debtor_id, reference, amount_minor, paid_minor, currency, issued_on, due_on, status, source)
+        VALUES (${inv}, ${tenantId!}, ${debtorId!}, ${`P07-FC-${i}`}, 100000, 100000, 'EGP', ${issuedHistory}, ${due}, 'paid', 'manual')
+      `;
+      await sql`
+        INSERT INTO payments (id, tenant_id, debtor_id, amount_minor, currency, method, received_on, status, source)
+        VALUES (${pay}, ${tenantId!}, ${debtorId!}, 100000, 'EGP', 'cash', ${due}, 'confirmed', 'manual')
+      `;
+      await sql`
+        INSERT INTO payment_allocations (id, tenant_id, payment_id, invoice_id, amount_minor)
+        VALUES (${alc}, ${tenantId!}, ${pay}, ${inv}, 100000)
+      `;
+    }
+    // One OPEN future invoice, so the chart has a non-zero week to draw (10 paid
+    // invoices alone train the lateness stats but leave every week at 0).
+    await sql`
+      INSERT INTO invoices (id, tenant_id, debtor_id, reference, amount_minor, paid_minor, currency, issued_on, due_on, status, source)
+      VALUES (${randomUUID()}, ${tenantId!}, ${debtorId!}, 'P07-FC-OPEN', 50000, 0, 'EGP', ${isoDate(-5)}, ${isoDate(10)}, 'open', 'manual')
+    `;
+  } finally {
+    await sql.end();
   }
-  // One OPEN invoice, so the chart has a non-zero week to draw (10 paid
-  // invoices alone train the lateness stats but leave every week at 0).
-  inserts.push(
-    `INSERT INTO invoices (id, tenant_id, debtor_id, reference, amount_minor, paid_minor, currency, issued_on, due_on, status, source) VALUES ('${randomUUID()}', '${tenantId}', '${debtorId}', 'P07-FC-OPEN', 50000, 0, 'EGP', '2026-11-01', '2026-11-27', 'open', 'manual');`,
-  );
-  { const sql = getSql(); try { await sql.unsafe(inserts.join(" ")); } finally { await sql.end(); } }
 
   await page.goto("/ar/dashboard");
   const svg = page.locator('svg[aria-label*="توقع"]');
@@ -257,7 +277,7 @@ test("P07 portal: statement page renders logged-out (mobile + desktop)", async (
   await clickNav(page, "nav-invoices");
   await page.getByTestId("inv-amount").fill("1000");
   await page.getByTestId("inv-reference").fill(`P07-PORTAL-${Date.now().toString().slice(-6)}`);
-  await page.getByTestId("inv-due").fill("2026-11-20");
+  await page.getByTestId("inv-due").fill(isoDate(10));
   await page.getByTestId("inv-create").click();
   await expect(page.getByTestId("invoice-row")).toHaveCount(1);
   await clickNav(page, "nav-debtors");
@@ -273,16 +293,22 @@ test("P07 portal: statement page renders logged-out (mobile + desktop)", async (
   const token = url!.trim().split("/s/")[1]!;
 
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  const mob = await ctx.newPage();
-  await mob.goto(`/s/${token}`);
-  await expect(mob.locator("body")).toContainText(outstanding);
-  await mob.screenshot({ path: shot("17-portal-ar-390") });
-  await ctx.close();
+  try {
+    const mob = await ctx.newPage();
+    await mob.goto(`/s/${token}`);
+    await expect(mob.locator("body")).toContainText(outstanding);
+    await mob.screenshot({ path: shot("17-portal-ar-390") });
+  } finally {
+    await ctx.close();
+  }
 
   const ctx2 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const desk = await ctx2.newPage();
-  await desk.goto(`/s/${token}`);
-  await expect(desk.locator("body")).toContainText(outstanding);
-  await desk.screenshot({ path: shot("18-portal-ar-1440") });
-  await ctx2.close();
+  try {
+    const desk = await ctx2.newPage();
+    await desk.goto(`/s/${token}`);
+    await expect(desk.locator("body")).toContainText(outstanding);
+    await desk.screenshot({ path: shot("18-portal-ar-1440") });
+  } finally {
+    await ctx2.close();
+  }
 });

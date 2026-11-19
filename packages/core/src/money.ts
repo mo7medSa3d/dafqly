@@ -45,22 +45,38 @@ const SUPPORTED_CURRENCIES: readonly string[] = ["EGP", "SAR", "USD", "AED", "EU
  * unknown or empty code falls back to EGP rather than throwing, matching
  * the DB CHECK constraints that only admit these seven codes. */
 export function normalizeCurrencyCode(currency: string | null | undefined): SupportedCurrency {
-  const norm = (currency ?? "").toUpperCase();
+  const norm = (currency ?? "").trim().toUpperCase();
   return (SUPPORTED_CURRENCIES as readonly string[]).includes(norm) ? (norm as SupportedCurrency) : "EGP";
 }
 
 export function currencyMinorExponent(currency: string): 0 | 2 | 3 {
-  const norm = (currency || "EGP").toUpperCase() as SupportedCurrency;
+  const norm = (currency || "EGP").trim().toUpperCase() as SupportedCurrency;
   // Unknown codes fall back to 2 (legacy behaviour); input boundaries
   // (tenant settings, invoice create) validate against SupportedCurrency,
   // so an unknown code reaching here is a stored-data problem, not input.
   return CURRENCY_MINOR_EXPONENT[norm] ?? 2;
 }
 
+const SCALE_BY_EXPONENT: Record<0 | 2 | 3, bigint> = { 0: 1n, 2: 100n, 3: 1000n };
+const ZERO_PAD_BY_EXPONENT: Record<2 | 3, string> = { 2: "00", 3: "000" };
+const MONEY_PATTERNS: Record<2 | 3, { grouped: RegExp; commaDecimal: RegExp; decimal: RegExp; tooMany: RegExp }> = {
+  2: {
+    grouped: /^\d{1,3}(\.\d{3})+,\d{1,2}$/,
+    commaDecimal: /^\d+,\d{1,2}$/,
+    decimal: /^\d+(\.\d{1,2})?$/,
+    tooMany: /^\d+\.\d{3,}$/,
+  },
+  3: {
+    grouped: /^\d{1,3}(\.\d{3})+,\d{1,3}$/,
+    commaDecimal: /^\d+,\d{1,3}$/,
+    decimal: /^\d+(\.\d{1,3})?$/,
+    tooMany: /^\d+\.\d{4,}$/,
+  },
+};
+
 export function parseMoney(input: string, currency: SupportedCurrency | string = "EGP"): bigint {
-  const code = (currency || "EGP").toUpperCase();
+  const code = (currency || "EGP").trim().toUpperCase() || "EGP";
   const exponent = currencyMinorExponent(code);
-  const scale = 10n ** BigInt(exponent);
   if (typeof input !== "string") throw new MoneyParseError(String(input), "not a string", code);
   let normalized = normalizeDigits(input)
     .trim()
@@ -78,24 +94,23 @@ export function parseMoney(input: string, currency: SupportedCurrency | string =
     return BigInt(normalized.replace(/[,.]/g, ""));
   }
 
-  const grouped = new RegExp(`^\\d{1,3}(\\.\\d{3})*,\\d{1,${exponent}}$`);
-  const commaDecimal = new RegExp(`^\\d+,\\d{1,${exponent}}$`);
-  if (grouped.test(normalized)) {
+  const patterns = MONEY_PATTERNS[exponent];
+  if (patterns.grouped.test(normalized)) {
     normalized = normalized.replace(/\./g, "").replace(",", ".");
-  } else if (commaDecimal.test(normalized)) {
-    normalized = normalized.replace(",", ".");
-  } else if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(normalized)) {
+  } else if (/^[1-9]\d{0,2}(,\d{3})+(\.\d+)?$/.test(normalized)) {
+    // Check thousands-comma grouping before commaDecimal so 3-decimal
+    // currencies (KWD) read "1,250" / "١٬٢٥٠" as 1250 KWD, not 1.250 KWD.
     normalized = normalized.replace(/,/g, "");
+  } else if (patterns.commaDecimal.test(normalized)) {
+    normalized = normalized.replace(",", ".");
   }
 
-  const decimalPattern = new RegExp(`^\\d+(\\.\\d{1,${exponent}})?$`);
-  if (!decimalPattern.test(normalized)) {
-    const tooMany = new RegExp(`^\\d+\\.\\d{${exponent + 1},}$`);
-    if (tooMany.test(normalized)) throw new MoneyParseError(input, `more than ${exponent} decimal places`, code);
+  if (!patterns.decimal.test(normalized)) {
+    if (patterns.tooMany.test(normalized)) throw new MoneyParseError(input, `more than ${exponent} decimal places`, code);
     throw new MoneyParseError(input, `expected digits with at most ${exponent} decimal places`, code);
   }
   const [whole, frac = ""] = normalized.split(".");
-  return BigInt(whole ?? "0") * scale + BigInt((frac + "0".repeat(exponent)).slice(0, exponent));
+  return BigInt(whole ?? "0") * SCALE_BY_EXPONENT[exponent] + BigInt((frac + ZERO_PAD_BY_EXPONENT[exponent]).slice(0, exponent));
 }
 
 /** EGP entry point (exponent 2). Kept for the many EGP call sites. */

@@ -4,6 +4,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { MotionConfig } from "motion/react";
 import { MotionProvider, PageTransition } from "./motion";
 import { useTranslations } from "next-intl";
 import { Bank, Bell, CalendarCheck, ClipboardText, CaretDoubleRight, CaretUp, CloudArrowUp, CreditCard, Lightning, List, MagnifyingGlass, Receipt, Robot, Scan, SlidersHorizontal, Sparkle, SquaresFour, UsersThree, X } from "@/components/ui/solid-icons";
@@ -69,6 +70,9 @@ export function AppShell({
   const t = useTranslations("nav");
   const pathname = usePathname();
   const aiMenuRef = useRef<HTMLDivElement>(null);
+  const mobileToggleRef = useRef<HTMLButtonElement>(null);
+  const mobileCloseRef = useRef<HTMLButtonElement>(null);
+  const wasMobileOpenRef = useRef(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -97,8 +101,9 @@ export function AppShell({
   // Every page mounts its own AppShell, so the sidebar state must live outside
   // React: read it before first paint (no flash) and write it only when the
   // user toggles it. Navigating never changes it.
+  const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
   const [sidebarReady, setSidebarReady] = useState(false);
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     try { setCollapsed(window.localStorage.getItem("dafqly:sidebar") === "collapsed"); } catch (err) { console.warn("[AppShell] sidebar state unreadable, using default", err); }
     setSidebarReady(true);
   }, []);
@@ -172,6 +177,7 @@ export function AppShell({
       }
       if (e.key === "Escape") {
         setAiMenuOpen(false);
+        setMobileOpen(false);
       }
     };
     const handleOpenCopilot = (e: Event) => {
@@ -200,6 +206,21 @@ export function AppShell({
       window.removeEventListener("dafqly:data-mutated", handleDataMutated);
     };
   }, [copilotOpen, fetchIntel]);
+
+  // Move focus into mobile drawer on open and restore to trigger on close
+  useEffect(() => {
+    if (mobileOpen) {
+      wasMobileOpenRef.current = true;
+      const raf = window.requestAnimationFrame(() => {
+        mobileCloseRef.current?.focus();
+      });
+      return () => window.cancelAnimationFrame(raf);
+    }
+    if (wasMobileOpenRef.current) {
+      wasMobileOpenRef.current = false;
+      mobileToggleRef.current?.focus();
+    }
+  }, [mobileOpen]);
 
   // Close AI quick menu on outside click
   useEffect(() => {
@@ -240,8 +261,16 @@ export function AppShell({
 
   return (
     <MotionProvider>
+      <MotionConfig reducedMotion="user">
       <CurrencyProvider currency={currency} locale={locale} digits={digits}>
         <div className="min-h-dvh bg-background text-foreground">
+          {/* Skip to main content (first focusable element) */}
+          <a
+            href="#main-content"
+            className="sr-only focus:not-sr-only focus:fixed focus:start-4 focus:top-4 focus:z-[100] focus:inline-flex focus:min-h-[40px] focus:items-center focus:rounded-lg focus:border focus:border-border focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-primary-foreground focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            {isEn ? "Skip to main content" : "تخطي إلى المحتوى الرئيسي"}
+          </a>
           {/* Mobile Backdrop */}
           <div
             className={`fixed inset-0 z-40 bg-foreground/35 backdrop-blur-xs transition-opacity duration-200 lg:hidden ${
@@ -253,6 +282,10 @@ export function AppShell({
 
           {/* Vercel-Style Minimalist Sidebar */}
           <aside
+            id="app-sidebar-nav"
+            role={mobileOpen ? "dialog" : undefined}
+            aria-modal={mobileOpen ? true : undefined}
+            aria-label={mobileOpen ? (isEn ? "Navigation menu" : "قائمة التنقل") : undefined}
             className={`fixed inset-y-0 start-0 z-50 flex flex-col border-e border-border bg-sidebar text-sidebar-foreground transition-transform duration-200 ease-out lg:z-40 ${sidebarReady ? "lg:transition-[width]" : ""} ${
               collapsed ? "w-[240px] lg:w-[60px]" : "w-[240px] lg:w-[240px]"
             } ${
@@ -271,7 +304,7 @@ export function AppShell({
                     type="button"
                     onClick={() => setSidebar(false)}
                     title={isEn ? "Expand sidebar" : "توسيع القائمة"}
-                    className="mx-auto flex size-8 items-center justify-center rounded-md border border-border bg-card transition-colors hover:bg-accent"
+                    className="mx-auto flex size-9 items-center justify-center rounded-md border border-border bg-card transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                   >
                     <BrandMark variant="color" size={18} />
                   </button>
@@ -283,18 +316,19 @@ export function AppShell({
                   type="button"
                   onClick={() => setSidebar(true)}
                   title={isEn ? "Collapse sidebar" : "طي القائمة"}
-                  className="hidden size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:inline-flex"
+                  className="hidden size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 lg:inline-flex"
                 >
                   <CaretDoubleRight size={14} strokeWidth={2} aria-hidden className="ltr:rotate-180" />
                 </button>
               )}
 
               <button
+                ref={mobileCloseRef}
                 type="button"
                 data-testid="mobile-menu-close"
                 onClick={() => setMobileOpen(false)}
                 aria-label={isEn ? "Close menu" : "إغلاق القائمة"}
-                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground lg:hidden"
+                className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 lg:hidden"
               >
                 <X size={16} />
               </button>
@@ -326,7 +360,7 @@ export function AppShell({
                           aria-current={active ? "page" : undefined}
                           title={itemLabel(item)}
                           className={cn(
-                            "group relative flex h-10 items-center gap-3 rounded-md px-2.5 text-sm transition-colors",
+                            "group relative flex h-10 items-center gap-3 rounded-md px-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                             collapsed ? "lg:justify-center lg:px-0" : "",
                             active
                               ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
@@ -394,10 +428,13 @@ export function AppShell({
               <div className="flex h-14 w-full items-center justify-between gap-3 px-4 sm:px-6 lg:px-8 2xl:px-10">
                 <div className="flex min-w-0 items-center gap-3">
                   <button
+                    ref={mobileToggleRef}
                     type="button"
                     data-testid="mobile-menu-toggle"
                     onClick={() => setMobileOpen((v) => !v)}
                     aria-label={isEn ? "Open navigation menu" : "فتح القائمة الرئيسية"}
+                    aria-expanded={mobileOpen}
+                    aria-controls="app-sidebar-nav"
                     className={cn(buttonVariants({ variant: "outline", size: "icon" }), "size-9 shrink-0 lg:hidden")}
                   >
                     <List size={18} />
@@ -425,7 +462,7 @@ export function AppShell({
                     type="button"
                     data-testid="global-search-btn"
                     onClick={() => setSearchOpen(true)}
-                    className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+                    className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                     title={isEn ? "Quick search & commands (Ctrl+K)" : "بحث سريع وأوامر (Ctrl+K)"}
                   >
                     <MagnifyingGlass size={13} />
@@ -460,8 +497,10 @@ export function AppShell({
             )}
 
             <main
+              id="main-content"
+              tabIndex={-1}
               data-testid={testId}
-              className="flex w-full min-w-0 flex-1 flex-col gap-6 px-4 pb-24 pt-6 sm:px-6 lg:px-8 2xl:px-10"
+              className="flex w-full min-w-0 flex-1 flex-col gap-6 px-4 pb-24 pt-6 focus:outline-none sm:px-6 lg:px-8 2xl:px-10"
             >
               <PageTransition>{children}</PageTransition>
             </main>
@@ -613,7 +652,7 @@ export function AppShell({
                   : `المساعد الذكي (${priorityCount} إجراءات)`
               }
               className={cn(
-                "group inline-flex h-11 items-center gap-2.5 rounded-full border px-3.5 text-xs font-bold shadow-lg transition-all",
+                "group inline-flex h-11 items-center gap-2.5 rounded-full border px-3.5 text-xs font-bold shadow-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
                 copilotOpen || aiMenuOpen
                   ? "border-border bg-card text-foreground ring-1 ring-border/50"
                   : "border-primary-foreground/20 bg-primary text-primary-foreground shadow-xl ring-1 ring-border/40 hover:bg-primary-hover",
@@ -665,6 +704,7 @@ export function AppShell({
           )}
         </div>
       </CurrencyProvider>
+      </MotionConfig>
     </MotionProvider>
   );
 }

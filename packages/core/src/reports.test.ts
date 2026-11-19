@@ -81,9 +81,46 @@ describe("computeKpis (hand-computed)", () => {
       { debtorId: "d2", displayName: "Debtor Two", outstandingMinor: 30000 },
     ]);
   });
-  it("empty book -> zeros, no NaN", () => {
+  it("CEI (Collection Effectiveness Index) = netCollected / (netCollected + overdueAmount) * 100", () => {
+    // Fixture: netCollected = 28000, overdueAmount = 110000 (current 30000 excluded) -> 28000/138000*100 = 20.29
+    expect(k.ceiPct).toBe(20.29);
+
+    // 100% CEI when all overdue receivables are collected
+    const full = computeKpis({
+      invoices: [
+        { id: "N1", debtorId: "d1", amountMinor: 50000, paidMinor: 0, status: "open", issuedOn: "2026-11-10", dueOn: "2026-12-10" },
+      ],
+      payments: [{ amountMinor: 50000, status: "confirmed", receivedOn: "2026-11-12" }],
+      debtorNames: names,
+      today: "2026-11-15",
+    });
+    expect(full.ceiPct).toBe(100);
+
+    // 0% CEI when overdue exists and nothing collected
+    const zero = computeKpis({
+      invoices: [
+        { id: "O1", debtorId: "d1", amountMinor: 50000, paidMinor: 0, status: "open", issuedOn: "2026-10-01", dueOn: "2026-11-01" },
+      ],
+      payments: [],
+      debtorNames: names,
+      today: "2026-11-15",
+    });
+    expect(zero.ceiPct).toBe(0);
+
+    // null when collectible is 0 (only not-yet-due invoices and 0 collected)
+    const notYetDue = computeKpis({
+      invoices: [
+        { id: "C1", debtorId: "d1", amountMinor: 50000, paidMinor: 0, status: "open", issuedOn: "2026-11-10", dueOn: "2026-12-10" },
+      ],
+      payments: [],
+      debtorNames: names,
+      today: "2026-11-15",
+    });
+    expect(notYetDue.ceiPct).toBeNull();
+  });
+  it("empty book -> zeros, ceiPct null, no NaN", () => {
     const e = computeKpis({ invoices: [], payments: [], debtorNames: new Map(), today: "2026-11-15" });
-    expect(e).toMatchObject({ totalOutstandingMinor: 0, collectionRate: 0, dsoDays: 0 });
+    expect(e).toMatchObject({ totalOutstandingMinor: 0, collectionRate: 0, ceiPct: null, dsoDays: 0 });
   });
 });
 

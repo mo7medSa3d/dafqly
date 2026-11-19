@@ -7,6 +7,7 @@ import {
   getCurrencySymbol,
   type SupportedCurrency,
 } from "@tahseel/core";
+import { toSafeBigInt } from "@/lib/format";
 
 const DEFAULT_CURRENCY: SupportedCurrency = "USD";
 
@@ -22,10 +23,8 @@ const defaultContext: CurrencyContextValue = {
   symbol: getCurrencySymbol(DEFAULT_CURRENCY, "en"),
   format: (minor, opts) =>
     formatMoney(minor, (opts?.currency ?? DEFAULT_CURRENCY) as SupportedCurrency, { locale: "en", ...opts }),
-  formatAmountOnly: (minor, opts) => {
-    const b = typeof minor === "bigint" ? minor : BigInt(String(minor || "0"));
-    return formatCurrencyMinor(b, (opts?.currency ?? DEFAULT_CURRENCY) as SupportedCurrency, opts);
-  },
+  formatAmountOnly: (minor, opts) =>
+    formatCurrencyMinor(toSafeBigInt(minor), (opts?.currency ?? DEFAULT_CURRENCY) as SupportedCurrency, opts),
 };
 
 const CurrencyContext = createContext<CurrencyContextValue>(defaultContext);
@@ -51,10 +50,8 @@ export function CurrencyProvider({
     format: (minor, opts) => formatMoney(minor, (opts?.currency ?? normCurrency) as SupportedCurrency, { locale, digits: opts?.digits ?? digits }),
     // Amount without the symbol, still in the tenant currency and its
     // minor-unit exponent (KWD 3 decimals, JPY 0) — not EGP.
-    formatAmountOnly: (minor, opts) => {
-      const b = typeof minor === "bigint" ? minor : BigInt(String(minor || "0"));
-      return formatCurrencyMinor(b, (opts?.currency ?? normCurrency) as SupportedCurrency, { digits: opts?.digits ?? digits });
-    },
+    formatAmountOnly: (minor, opts) =>
+      formatCurrencyMinor(toSafeBigInt(minor), (opts?.currency ?? normCurrency) as SupportedCurrency, { digits: opts?.digits ?? digits }),
   }), [normCurrency, symbol, locale, digits]);
 
   return (

@@ -20,6 +20,7 @@ export function ExportButtons() {
   const [error, setError] = useState<string | null>(null);
 
   async function download(kind: ExportKind) {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -48,6 +49,7 @@ export function ExportButtons() {
       <div className="flex flex-col gap-2">
         {kinds.map((k) => (
           <button
+            type="button"
             key={k.kind}
             data-testid={k.testid}
             disabled={busy}
@@ -58,7 +60,7 @@ export function ExportButtons() {
             {k.label}
           </button>
         ))}
-        {error && <p className="text-xs font-semibold text-danger">{error}</p>}
+        {error && <p role="alert" className="text-xs font-semibold text-danger">{error}</p>}
       </div>
     </Panel>
   );

@@ -27,9 +27,10 @@ describe("parseEnv", () => {
   it("refuses to boot with the shared-behavior flag on (ADR-006, legal sign-off pending)", () => {
     expect(() => parseEnv({ ...base, FEATURE_SHARED_BEHAVIOR: "true" })).toThrow(/shared.behavior|legal/i);
   });
-  it("parses explicit messaging booleans", () => {
+  it("parses explicit messaging booleans and treats empty string as default", () => {
     const env = parseEnv({ ...base, DRY_RUN_MESSAGING: "false" });
     expect(env.DRY_RUN_MESSAGING).toBe(false);
+    expect(parseEnv({ ...base, DRY_RUN_MESSAGING: "" }).DRY_RUN_MESSAGING).toBe(true);
   });
   it("rejects insecure or placeholder object storage configuration in production", () => {
     expect(() => parseEnv({ ...base, NODE_ENV: "production", APP_URL: "https://app.example.com" })).toThrow(/HTTPS object-storage/i);
@@ -71,6 +72,7 @@ describe("parseEnv", () => {
       DRY_RUN_MESSAGING: "true", GEMINI_API_KEY: "production-gemini-key",
     };
     expect(() => parseEnv({ ...prodBase, APP_URL: "http://localhost:3000" })).toThrow(/HTTPS non-localhost/i);
+    expect(() => parseEnv({ ...prodBase, APP_URL: "https://[::1]:3000" })).toThrow(/HTTPS non-localhost/i);
     expect(() => parseEnv({ ...prodBase, APP_URL: "https://app.example.com", EMAIL_VERIFICATION_ENABLED: "1" })).toThrow(/non-localhost SMTP_URL/i);
   });
 });

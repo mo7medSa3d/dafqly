@@ -1,8 +1,9 @@
+import { deflateRawSync } from "node:zlib";
 import { describe, it, expect } from "vitest";
 import ExcelJS from "exceljs";
 import {
   detectHeaderRow, suggestMapping, parseImportGrid, dedupeImportRows,
-  excelSerialToIso, parseImportDate, readWorkbookGrid, parseCsvText, decodeCsvBuffer, type Grid,
+  excelSerialToIso, parseImportDate, readWorkbookGrid, validateXlsxBuffer, parseCsvText, decodeCsvBuffer, type Grid,
 } from "./import";
 
 describe("header detection and mapping (F2: Arabic + English headers, header on row 3)", () => {
@@ -166,9 +167,10 @@ describe("workbook reading (F2 edge: merged cells)", () => {
     expect(grid[2]?.[0]).toBe("Merged Name");
     expect(grid[1]?.[1]).toBe("01001234567");
   });
-  it("parses CSV text including quoted commas", () => {
-    const grid = parseCsvText('Name,Phone,Amount\n"Ali, Ahmed",01001234567,"1,250.50"\n');
+  it("parses CSV text including quoted commas and unquoted mid-field quotes", () => {
+    const grid = parseCsvText('Name,Phone,Amount\n"Ali, Ahmed",01001234567,"1,250.50"\n5" pipe,01001234567,100\n');
     expect(grid[1]).toEqual(["Ali, Ahmed", "01001234567", "1,250.50"]);
+    expect(grid[2]).toEqual(['5" pipe', "01001234567", "100"]);
   });
   it("auto-detects semicolon CSV delimiter from Egyptian Windows Excel exports", () => {
     const csv = "اسم العميل;رقم الهاتف;المبلغ;تاريخ الاستحقاق\nأحمد علي;01001234567;1500;2026-12-01\n";
@@ -258,5 +260,86 @@ describe("workbook reading (F2 edge: merged cells)", () => {
     expect(rows).toHaveLength(5000);
     expect(rows.every((r) => r.status === "valid")).toBe(true);
     expect(rows[4999]?.rowNumber).toBe(5001);
+  });
+});
+
+function buildSyntheticZip(entries: { name: string; data: Buffer; compress?: boolean }[]): Uint8Array {
+  const localParts: Buffer[] = [];
+  const cdParts: Buffer[] = [];
+  let offset = 0;
+  for (const e of entries) {
+    const nameBuf = Buffer.from(e.name, "utf8");
+    const method = e.compress === false ? 0 : 8;
+    const payload = method === 8 ? deflateRawSync(e.data) : e.data;
+    const lh = Buffer.alloc(30 + nameBuf.length);
+    lh.writeUInt32LE(0x04034b50, 0);
+    lh.writeUInt16LE(20, 4);
+    lh.writeUInt16LE(method, 8);
+    lh.writeUInt32LE(payload.length, 18);
+    lh.writeUInt32LE(e.data.length, 22);
+    lh.writeUInt16LE(nameBuf.length, 26);
+    nameBuf.copy(lh, 30);
+    localParts.push(lh, payload);
+
+    const cd = Buffer.alloc(46 + nameBuf.length);
+    cd.writeUInt32LE(0x02014b50, 0);
+    cd.writeUInt16LE(20, 4);
+    cd.writeUInt16LE(20, 6);
+    cd.writeUInt16LE(method, 10);
+    cd.writeUInt32LE(payload.length, 20);
+    cd.writeUInt32LE(e.data.length, 24);
+    cd.writeUInt16LE(nameBuf.length, 28);
+    cd.writeUInt32LE(offset, 42);
+    nameBuf.copy(cd, 46);
+    cdParts.push(cd);
+
+    offset += lh.length + payload.length;
+  }
+  const cdBuf = Buffer.concat(cdParts);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(cdBuf.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return new Uint8Array(Buffer.concat([...localParts, cdBuf, eocd]));
+}
+
+describe("validateXlsxBuffer (CVE-2026-128341 & ZIP bomb pre-validator)", () => {
+  it("accepts a normal worksheet with small dataValidation sqref", () => {
+    const zip = buildSyntheticZip([
+      {
+        name: "xl/worksheets/sheet1.xml",
+        data: Buffer.from('<worksheet><dataValidations count="1"><dataValidation sqref="A1:A100"/></dataValidations></worksheet>'),
+      },
+    ]);
+    expect(() => validateXlsxBuffer(zip)).not.toThrow();
+  });
+
+  it("rejects oversized dataValidation sqref (CVE-2026-128341: A1:XFD1048576) before ExcelJS loads it", async () => {
+    const malicious = buildSyntheticZip([
+      {
+        name: "xl/worksheets/sheet1.xml",
+        data: Buffer.from('<worksheet><dataValidations count="1"><dataValidation type="list" sqref="A1:XFD1048576"/></dataValidations></worksheet>'),
+      },
+    ]);
+    expect(() => validateXlsxBuffer(malicious)).toThrow(/dataValidation cell span/i);
+    await expect(readWorkbookGrid(malicious)).rejects.toThrow(/dataValidation cell span/i);
+  });
+
+  it("rejects ZIP archives exceeding max entry count", () => {
+    const entries = Array.from({ length: 501 }, (_, i) => ({ name: `f${i}.txt`, data: Buffer.from("x"), compress: false }));
+    expect(() => validateXlsxBuffer(buildSyntheticZip(entries))).toThrow(/maximum entry count/i);
+  });
+
+  it("rejects ZIP bombs exceeding 32 MB uncompressed size", () => {
+    const bomb = buildSyntheticZip([
+      { name: "xl/worksheets/sheet1.xml", data: Buffer.alloc(33 * 1024 * 1024, 0x41), compress: true },
+    ]);
+    expect(() => validateXlsxBuffer(bomb)).toThrow(/maximum uncompressed size/i);
+  });
+
+  it("rejects non-ZIP buffers cleanly", () => {
+    expect(() => validateXlsxBuffer(new Uint8Array(Buffer.from("not a zip file at all 1234567890")))).toThrow(/missing ZIP/i);
   });
 });

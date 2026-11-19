@@ -206,8 +206,12 @@ export function decideGatewayCallback(
   if (cb.isVoided) return { action: "reverse", reason: "void", amountMinor: cb.amountMinor };
   if (cb.isAuth && !cb.isCapture) return { action: "ignore", reason: "auth_only" };
   if (cb.amountMinor !== ctx.link.amountMinor) return { action: "ignore", reason: "amount_mismatch" };
-  if (ctx.link.status !== "paid" && ctx.now.getTime() > ctx.link.expiresAt.getTime()) {
-    return { action: "ignore", reason: "link_expired" };
+  if (ctx.link.status !== "paid") {
+    const nowMs = ctx.now.getTime();
+    const expMs = ctx.link.expiresAt.getTime();
+    if (Number.isNaN(nowMs) || Number.isNaN(expMs) || nowMs > expMs) {
+      return { action: "ignore", reason: "link_expired" };
+    }
   }
   return { action: "fulfil" };
 }
@@ -405,7 +409,7 @@ export function reconcileLedger(
   }
   for (const [key, pays] of groups) {
     const [debtorId, currency] = key.split("|") as [string, string];
-    pays.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1));
+    pays.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     let credit = 0n;
     for (const p of pays) {
       const alloc = allocByPayment.get(p.id) ?? 0n;
@@ -460,7 +464,7 @@ export function reconcileLedger(
     if (d.creditMinor === 0n) continue;
     total(d.creditCurrency).storedCreditMinor += d.creditMinor;
   }
-  const byCurrency = [...totals.entries()].sort(([a], [b]) => (a < b ? -1 : 1))
+  const byCurrency = [...totals.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([currency, t]) => ({ currency, ...t }));
   return { balanced: discrepancies.length === 0, discrepancies, byCurrency };
 }
@@ -483,7 +487,9 @@ export function statementLinkState(
 ): StatementLinkState {
   if (!link) return "not_found";
   if (link.revokedAt) return "revoked";
-  if (now.getTime() >= link.expiresAt.getTime()) return "expired";
+  const nowMs = now.getTime();
+  const expMs = link.expiresAt.getTime();
+  if (Number.isNaN(nowMs) || Number.isNaN(expMs) || nowMs >= expMs) return "expired";
   return "valid";
 }
 

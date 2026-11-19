@@ -1,11 +1,12 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { formatMoney, getCurrencySymbol, normalizeCurrencyCode, parseMoney } from "@tahseel/core";
 import { cn, todayIso } from "@/lib/utils";
+import { toSafeBigInt } from "@/lib/format";
 import { inputVariants } from "@/components/ui/input";
-import { Bank, Check, CloudArrowUp, Copy, LockKey } from "@/components/ui/solid-icons";
+import { Bank, Check, CheckCircle, CloudArrowUp, Copy, LockKey, SpinnerGap } from "@/components/ui/solid-icons";
 import { BrandMark } from "./BrandMark";
 import { Panel, SecurityNotice, StatusPill, btnGhost, btnPrimary, btnSmall } from "./ui";
 
@@ -58,9 +59,10 @@ export function StatementClient({ token, initial }: { token: string; initial: St
   const currency = normalizeCurrencyCode(data.currency);
   const symbol = getCurrencySymbol(currency, locale);
 
-  const fmt = (minor: string) => formatMoney(BigInt(minor), currency, { locale });
+  const encodedToken = encodeURIComponent(token);
+  const fmt = (minor: string) => formatMoney(toSafeBigInt(minor), currency, { locale });
   const fmtCur = (minor: string, cur?: string) =>
-    formatMoney(BigInt(minor), normalizeCurrencyCode(cur ?? currency), { locale });
+    formatMoney(toSafeBigInt(minor), normalizeCurrencyCode(cur ?? currency), { locale });
 
   const statusLabel = (status: string) =>
     ({
@@ -101,34 +103,67 @@ export function StatementClient({ token, initial }: { token: string; initial: St
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [promiseInvoiceId, setPromiseInvoiceId] = useState("");
   const [promiseAmount, setPromiseAmount] = useState("");
-  const [promiseDate, setPromiseDate] = useState(todayIso(1));
+  const [promiseDate, setPromiseDate] = useState(() => todayIso(1));
   const [promiseNote, setPromiseNote] = useState("");
   const promiseRef = useRef<HTMLElement | null>(null);
+  const refreshAbortRef = useRef<AbortController | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    refreshAbortRef.current?.abort();
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+  }, []);
 
   async function refresh() {
+    refreshAbortRef.current?.abort();
+    const controller = new AbortController();
+    refreshAbortRef.current = controller;
     try {
-      const res = await fetch(`/api/public/statement/${token}`);
+      const res = await fetch(`/api/public/statement/${encodedToken}`, { signal: controller.signal });
       if (res.ok) setData((await res.json()) as StatementDataView);
     } catch {
       // Non-fatal: optimistic state already reflects submitted action
+    } finally {
+      if (refreshAbortRef.current === controller) refreshAbortRef.current = null;
     }
   }
 
   async function onCopyInstructions() {
-    if (!data.paymentInstructions || !navigator.clipboard) return;
+    if (!data.paymentInstructions) return;
+    let ok = false;
     try {
-      await navigator.clipboard.writeText(data.paymentInstructions);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(data.paymentInstructions);
+        ok = true;
+      }
     } catch {
-      // Clipboard blocked by browser policy
+      // Fallback below for restricted mobile webviews
+    }
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = data.paymentInstructions;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {
+        // Clipboard blocked by browser policy
+      }
+    }
+    if (ok) {
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
     }
   }
 
   async function onUploadReceipt(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
+    if (!file || uploading) return;
     if (file.size > MAX_RECEIPT_BYTES) {
       setMsg({ kind: "err", text: t("receiptTooLarge") });
       return;
@@ -139,7 +174,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
       const form = new FormData();
       form.append("file", file);
       if (promiseInvoiceId) form.append("invoiceId", promiseInvoiceId);
-      const res = await fetch(`/api/public/statement/${token}/receipt`, { method: "POST", body: form });
+      const res = await fetch(`/api/public/statement/${encodedToken}/receipt`, { method: "POST", body: form });
       if (!res.ok) throw new Error("upload failed");
       setMsg({ kind: "ok", text: t("receiptUploadOk") });
       await refresh();
@@ -151,11 +186,12 @@ export function StatementClient({ token, initial }: { token: string; initial: St
   }
 
   async function onDispute(invoiceId: string) {
+    if (busy) return;
     setBusy(true);
     setMsg(null);
     try {
       const disputeReason = reason.trim();
-      const res = await fetch(`/api/public/statement/${token}/dispute`, {
+      const res = await fetch(`/api/public/statement/${encodedToken}/dispute`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ invoiceId, reason: disputeReason }),
@@ -181,6 +217,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
   }
 
   async function onRequestPromise() {
+    if (busy) return;
     const activeCurrency = openInvoices.find((i) => i.id === promiseInvoiceId)?.currency ?? currency;
     let amountMinor: bigint;
     try {
@@ -196,7 +233,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
     setBusy(true);
     setMsg(null);
     try {
-      const res = await fetch(`/api/public/statement/${token}/promise`, {
+      const res = await fetch(`/api/public/statement/${encodedToken}/promise`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -226,6 +263,10 @@ export function StatementClient({ token, initial }: { token: string; initial: St
 
   const disputedIds = new Set(data.openDisputes.map((x) => x.invoiceId));
   const openInvoices = data.invoices.filter((i) => i.status === "open" || i.status === "partially_paid");
+  const isPaidInFull =
+    data.invoices.length > 0 &&
+    openInvoices.length === 0 &&
+    toSafeBigInt(data.totalDueMinor) === 0n;
   const showMultiCurrency =
     (data.totalsByCurrency?.length ?? 0) > 1 ||
     (data.totalsByCurrency?.length === 1 && normalizeCurrencyCode(data.totalsByCurrency[0]!.currency) !== currency);
@@ -253,12 +294,12 @@ export function StatementClient({ token, initial }: { token: string; initial: St
             <div className="min-w-0">
               <p className="text-xs font-semibold opacity-80">{t("totalDue")}</p>
               <p className="mt-1 text-3xl font-extrabold leading-none sm:text-4xl">
-                <span data-testid="statement-total" className="tnum" dir="ltr">
+                <span data-testid="statement-total" className="tnum tabular-nums" dir="ltr">
                   {fmt(data.totalDueMinor)}
                 </span>
               </p>
               {showMultiCurrency && (
-                <p className="mt-1.5 text-xs opacity-85" data-testid="statement-totals-by-currency">
+                <p className="mt-1.5 tnum tabular-nums text-xs opacity-85" dir="ltr" data-testid="statement-totals-by-currency">
                   {data.totalsByCurrency!.map((row) => fmtCur(row.minor, row.currency)).join(" · ")}
                 </p>
               )}
@@ -273,6 +314,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
       {msg && (
         <p
           role={msg.kind === "err" ? "alert" : "status"}
+          aria-live={msg.kind === "err" ? "assertive" : "polite"}
           data-testid="statement-msg"
           className={cn(
             "rounded-xl border px-4 py-3 text-sm font-semibold",
@@ -281,6 +323,25 @@ export function StatementClient({ token, initial }: { token: string; initial: St
         >
           {msg.text}
         </p>
+      )}
+
+      {isPaidInFull && (
+        <section
+          role="status"
+          className="flex items-start gap-3 rounded-2xl border border-status-paid-fg/25 bg-status-paid-bg/60 p-4 text-status-paid-fg sm:p-5"
+        >
+          <CheckCircle size={22} className="mt-0.5 shrink-0" aria-hidden />
+          <div className="space-y-0.5">
+            <h2 className="text-base font-extrabold">
+              {locale === "ar" ? "الحساب مسدّد بالكامل" : "Account paid in full"}
+            </h2>
+            <p className="text-sm opacity-90">
+              {locale === "ar"
+                ? "لا توجد مستحقات مفتوحة حالياً. شكراً لتعاونكم."
+                : "There is no open balance right now. Thank you for your prompt settlement."}
+            </p>
+          </div>
+        </section>
       )}
 
       {/* 2 & 3. Payment Instructions + One-Tap Receipt Upload */}
@@ -295,7 +356,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
                   type="button"
                   onClick={() => void onCopyInstructions()}
                   data-testid="statement-copy-instructions"
-                  className={cn(btnSmall, "min-h-10 gap-1.5 border border-border bg-background hover:bg-muted")}
+                  className={cn(btnSmall, "min-h-11 gap-1.5 border border-border bg-background hover:bg-muted")}
                 >
                   {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
                   <span>{copied ? t("copied") : t("copyInstructions")}</span>
@@ -315,12 +376,13 @@ export function StatementClient({ token, initial }: { token: string; initial: St
           <Panel title={t("receiptTitle")} subtitle={t("receiptHint")} icon={CloudArrowUp}>
             <label
               data-testid="statement-receipt-upload"
+              aria-busy={uploading}
               className={cn(
-                "flex min-h-[76px] cursor-pointer items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong bg-muted/40 px-4 py-3 text-sm font-bold text-primary transition-colors hover:bg-muted",
+                "flex min-h-[76px] cursor-pointer items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong bg-muted/40 px-4 py-3 text-sm font-bold text-primary transition-colors hover:bg-muted focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2",
                 uploading && "pointer-events-none opacity-60"
               )}
             >
-              <CloudArrowUp size={18} aria-hidden />
+              {uploading ? <SpinnerGap size={18} className="animate-spin" aria-hidden /> : <CloudArrowUp size={18} aria-hidden />}
               <span>{uploading ? t("receiptUploading") : t("receiptAction")}</span>
               <input
                 type="file"
@@ -353,7 +415,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
                         </span>
                         <StatusPill status={inv.status} label={statusLabel(inv.status)} testId={`statement-invoice-status-${inv.id}`} />
                         <span className="text-xs text-text-muted">
-                          {t("dueOn")}: <span dir="ltr">{inv.dueOn}</span>
+                          {t("dueOn")}: <span className="tabular-nums" dir="ltr">{inv.dueOn}</span>
                         </span>
                       </div>
                       {inv.description && <p className="truncate text-sm text-text-muted">{inv.description}</p>}
@@ -362,15 +424,15 @@ export function StatementClient({ token, initial }: { token: string; initial: St
                     <div className="grid grid-cols-3 gap-3 text-xs sm:text-sm md:flex md:items-center md:gap-5">
                       <div className="min-w-0">
                         <span className="block text-xs text-text-muted">{t("amount")}</span>
-                        <span className="tnum font-bold" dir="ltr">{fmtCur(inv.amountMinor, inv.currency)}</span>
+                        <span className="tnum tabular-nums font-bold" dir="ltr">{fmtCur(inv.amountMinor, inv.currency)}</span>
                       </div>
                       <div className="min-w-0">
                         <span className="block text-xs text-text-muted">{t("paid")}</span>
-                        <span className="tnum font-bold text-status-paid-fg" dir="ltr">{fmtCur(inv.paidMinor, inv.currency)}</span>
+                        <span className="tnum tabular-nums font-bold text-status-paid-fg" dir="ltr">{fmtCur(inv.paidMinor, inv.currency)}</span>
                       </div>
                       <div className="min-w-0">
                         <span className="block text-xs text-text-muted">{t("remaining")}</span>
-                        <span className="tnum font-extrabold text-primary" dir="ltr">{fmtCur(inv.outstandingMinor, inv.currency)}</span>
+                        <span className="tnum tabular-nums font-extrabold text-primary" dir="ltr">{fmtCur(inv.outstandingMinor, inv.currency)}</span>
                       </div>
                     </div>
 
@@ -380,7 +442,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
                           type="button"
                           disabled={busy}
                           onClick={() => startPromiseForInvoice(inv.id)}
-                          className={cn(btnPrimary, "min-h-10 flex-1 md:flex-none")}
+                          className={cn(btnPrimary, "min-h-11 flex-1 md:flex-none")}
                         >
                           {t("promiseAction")}
                         </button>
@@ -394,7 +456,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
                               setDisputeFor(disputeFor === inv.id ? null : inv.id);
                               setReason("");
                             }}
-                            className={cn(btnGhost, "min-h-10 flex-1 md:flex-none")}
+                            className={cn(btnGhost, "min-h-11 flex-1 md:flex-none")}
                           >
                             {t("disputeInvoice")}
                           </button>
@@ -416,6 +478,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
                         <textarea
                           data-testid={`dispute-reason-${inv.id}`}
                           required
+                          disabled={busy}
                           maxLength={1000}
                           value={reason}
                           onChange={(e) => setReason(e.target.value)}
@@ -428,8 +491,9 @@ export function StatementClient({ token, initial }: { token: string; initial: St
                         data-testid={`dispute-submit-${inv.id}`}
                         disabled={busy || reason.trim() === ""}
                         aria-busy={busy}
-                        className={cn(btnPrimary, "min-h-10 sm:w-fit")}
+                        className={cn(btnPrimary, "min-h-11 sm:w-fit")}
                       >
+                        {busy && <SpinnerGap size={16} className="animate-spin" aria-hidden />}
                         {t("submitDispute")}
                       </button>
                     </form>
@@ -464,7 +528,8 @@ export function StatementClient({ token, initial }: { token: string; initial: St
             <label className="flex min-w-0 flex-col gap-1.5 text-sm font-semibold">
               <span>{t("promiseInvoice")}</span>
               <select
-                className={cn(inputVariants, "min-h-10")}
+                disabled={busy}
+                className={cn(inputVariants, "min-h-11 tabular-nums")}
                 value={promiseInvoiceId}
                 onChange={(e) => setPromiseInvoiceId(e.target.value)}
               >
@@ -487,9 +552,11 @@ export function StatementClient({ token, initial }: { token: string; initial: St
               </span>
               <input
                 required
+                disabled={busy}
                 dir="ltr"
                 inputMode="decimal"
-                className={cn(inputVariants, "min-h-10")}
+                autoComplete="off"
+                className={cn(inputVariants, "min-h-11 tabular-nums text-start")}
                 value={promiseAmount}
                 onChange={(e) => setPromiseAmount(e.target.value)}
                 placeholder="1500.00"
@@ -499,10 +566,11 @@ export function StatementClient({ token, initial }: { token: string; initial: St
               <span>{t("promiseDate")}</span>
               <input
                 required
+                disabled={busy}
                 dir="ltr"
                 type="date"
                 min={todayIso()}
-                className={cn(inputVariants, "min-h-10")}
+                className={cn(inputVariants, "min-h-11 tabular-nums text-start")}
                 value={promiseDate}
                 onChange={(e) => setPromiseDate(e.target.value)}
               />
@@ -510,8 +578,9 @@ export function StatementClient({ token, initial }: { token: string; initial: St
             <label className="flex min-w-0 flex-col gap-1.5 text-sm font-semibold">
               <span>{t("promiseNote")}</span>
               <input
+                disabled={busy}
                 maxLength={500}
-                className={cn(inputVariants, "min-h-10")}
+                className={cn(inputVariants, "min-h-11")}
                 value={promiseNote}
                 onChange={(e) => setPromiseNote(e.target.value)}
                 placeholder={t("promiseNotePlaceholder")}
@@ -521,8 +590,9 @@ export function StatementClient({ token, initial }: { token: string; initial: St
               type="submit"
               disabled={busy || !promiseAmount.trim()}
               aria-busy={busy}
-              className={cn(btnPrimary, "min-h-10 sm:col-span-2")}
+              className={cn(btnPrimary, "min-h-11 sm:col-span-2")}
             >
+              {busy && <SpinnerGap size={16} className="animate-spin" aria-hidden />}
               {t("promiseSubmit")}
             </button>
           </form>
@@ -538,9 +608,9 @@ export function StatementClient({ token, initial }: { token: string; initial: St
                 const inv = p.invoiceId ? data.invoices.find((i) => i.id === p.invoiceId) : undefined;
                 return (
                   <li key={p.id} className="flex flex-wrap items-center gap-2 p-4 text-sm">
-                    <span className="tnum font-extrabold" dir="ltr">{fmtCur(p.amountMinor, inv?.currency)}</span>
+                    <span className="tnum tabular-nums font-extrabold" dir="ltr">{fmtCur(p.amountMinor, inv?.currency)}</span>
                     {inv?.reference && <span className="text-xs font-semibold text-primary" dir="ltr">{inv.reference}</span>}
-                    <span className="text-text-muted">· <span dir="ltr">{p.promisedOn}</span></span>
+                    <span className="text-text-muted">· <span className="tabular-nums" dir="ltr">{p.promisedOn}</span></span>
                     <span
                       className={cn(
                         "ms-auto rounded px-2.5 py-1 text-xs font-bold",
@@ -573,11 +643,11 @@ export function StatementClient({ token, initial }: { token: string; initial: St
             <ul className="flex flex-col divide-y divide-border">
               {data.payments.map((p) => (
                 <li key={p.id} data-testid="statement-payment" className="flex flex-wrap items-center gap-x-2.5 gap-y-1 p-4 text-sm sm:px-5">
-                  <span className="tnum text-base font-extrabold text-primary" dir="ltr">
+                  <span className="tnum tabular-nums text-base font-extrabold text-primary" dir="ltr">
                     {fmtCur(p.amountMinor, p.currency)}
                   </span>
                   <span className="text-text-muted">
-                    · {methodLabel(p.method)} · <span dir="ltr">{p.receivedOn}</span>
+                    · {methodLabel(p.method)} · <span className="tabular-nums" dir="ltr">{p.receivedOn}</span>
                   </span>
                   <span className="ms-auto">
                     <StatusPill status={p.status} label={statusLabel(p.status)} />
@@ -596,7 +666,7 @@ export function StatementClient({ token, initial }: { token: string; initial: St
           <BrandMark variant="mono" size={16} />
           <span>{t("footer", { business: data.businessName })}</span>
         </span>
-        <a href={`?lang=${locale === "ar" ? "en" : "ar"}`} className="font-semibold text-link underline-offset-4 hover:underline">
+        <a href={`?lang=${locale === "ar" ? "en" : "ar"}`} className="inline-flex min-h-11 items-center px-2 font-semibold text-link underline-offset-4 hover:underline">
           {locale === "ar" ? "English" : "العربية"}
         </a>
       </footer>

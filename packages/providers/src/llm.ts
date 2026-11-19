@@ -166,8 +166,10 @@ interface SyntheticPayload {
   errors?: Record<string, Record<string, unknown>>;
 }
 
+const TEXT_DECODER = new TextDecoder();
+
 function readSyntheticPayload(image: Uint8Array): SyntheticPayload | null {
-  const text = new TextDecoder().decode(image);
+  const text = TEXT_DECODER.decode(image);
   const at = text.indexOf(SYNTHETIC_MARKER);
   if (at < 0) return null;
   const rest = text.slice(at + SYNTHETIC_MARKER.length);
@@ -271,7 +273,11 @@ export function fakeClassifyReply(text: string, context: ReplyContext): ReplyCla
   if (/جزء|نص\s+المبلغ|دفعة|قسط/.test(t) || (/هدفع|هبعت|هحوّل|هحول/.test(t) && amountMatch)) {
     return {
       intent: "partial_payment_offer", confidence: 0.87, promised_date: promised,
-      amount_minor: amountMatch ? Math.round(Number(amountMatch[1]!.replace(/,/g, "")) * 100) : null,
+      amount_minor: (() => {
+        if (!amountMatch) return null;
+        const minor = Math.round(Number(amountMatch[1]!.replace(/,/g, "")) * 100);
+        return Number.isSafeInteger(minor) && minor > 0 ? minor : null;
+      })(),
     };
   }
   if (/مش\s+بتاعت|اعتراض|معترض|ماشتريتش|مش\s+ليا|الفاتورة\s+دي\s+غلط|الفاتورة\s+غلط|حاسب\s+غلط/.test(t)) {

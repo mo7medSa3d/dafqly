@@ -281,6 +281,7 @@ export interface GroupWork {
   payLinkEnabled: boolean;
 }
 
+const MAX_DISPATCH_BATCH_LIMIT = 5_000;
 const bump = (rec: Record<string, number>, key: string) => { rec[key] = (rec[key] ?? 0) + 1; };
 
 export async function dispatchDue(deps: EngineDeps, now: Date, opts: { tenantId?: string; limit?: number } = {}): Promise<DispatchSummary> {
@@ -290,7 +291,7 @@ export async function dispatchDue(deps: EngineDeps, now: Date, opts: { tenantId?
   };
   if (deps.globalPaused) { summary.paused = true; summary.note = "global pause is on"; return summary; }
   if (deps.providerHealthy === false) { summary.note = "provider unhealthy; due reminders left untouched"; return summary; }
-  const limit = opts.limit ?? 500;
+  const limit = Math.max(1, Math.min(MAX_DISPATCH_BATCH_LIMIT, Math.trunc(opts.limit ?? 500) || 500));
 
   let tenantIds: string[] = [];
   if (opts.tenantId) {
@@ -528,7 +529,7 @@ async function prepareTenant(deps: EngineDeps, tenantId: string, now: Date, limi
 
 function orderedParameters(templateKey: string, variables: Record<string, string>): string[] {
   const def = TEMPLATES[templateKey as TemplateKey];
-  const shape = (def.variables as { shape?: Record<string, unknown> }).shape;
+  const shape = (def?.variables as { shape?: Record<string, unknown> } | undefined)?.shape;
   if (!shape) return Object.values(variables);
   return Object.keys(shape).map((k) => variables[k] ?? "");
 }
@@ -588,15 +589,21 @@ export function resolveTenantWhatsappOverride(
   if (version !== "v1" || !ivB64 || !tagB64 || !dataB64) {
     throw new Error("Malformed encrypted WhatsApp token");
   }
+  const iv = Buffer.from(ivB64, "base64url");
+  const tag = Buffer.from(tagB64, "base64url");
+  if (iv.length !== 12 || tag.length !== 16) {
+    throw new Error("Malformed encrypted WhatsApp token");
+  }
   const key = createHash("sha256").update(sessionSecret).digest();
-  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivB64, "base64url"));
-  decipher.setAuthTag(Buffer.from(tagB64, "base64url"));
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
   const accessToken = Buffer.concat([decipher.update(Buffer.from(dataB64, "base64url")), decipher.final()]).toString("utf8").trim();
   if (!accessToken) throw new Error("Empty decrypted WhatsApp token");
   return { phoneNumberId, accessToken };
 }
 
 export async function sendGroup(deps: EngineDeps, tenantId: string, group: GroupWork, now: Date, summary: DispatchSummary): Promise<void> {
+  if (group.invoiceIds.length === 0 || group.reminderIds.length === 0) return;
   // M05: last-chance re-check. A payment may have landed between
   // prepareTenant's guard read and this send; a plain re-read would still
   // miss a payment whose transaction is open at read time, so the group's
@@ -609,24 +616,33 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
   // this check commits, during the provider call itself.
   const live = await withTenant(deps.app, tenantId, async (tx) => {
     const [tenantRow] = await tx.select({ settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
-    const [debtorRow] = await tx.select({ optedOutAt: debtors.optedOutAt }).from(debtors).where(eq(debtors.id, group.debtorId)).for("update");
+    const [debtorRow] = await tx.select({ optedOutAt: debtors.optedOutAt, phoneHash: debtors.phoneHash }).from(debtors).where(eq(debtors.id, group.debtorId)).for("update");
     const rows = await tx.select().from(invoices)
       .where(inArray(invoices.id, group.invoiceIds))
       .orderBy(asc(invoices.dueOn), asc(invoices.id)).for("update");
-    if (tenantRow?.settings?.sendingPaused || debtorRow?.optedOutAt) {
-      const cancelReason = tenantRow?.settings?.sendingPaused ? "sending_paused" : "opted_out";
+    const remRows = await tx.select({ id: reminders.id, invoiceId: reminders.invoiceId, status: reminders.status })
+      .from(reminders)
+      .where(inArray(reminders.id, group.reminderIds))
+      .orderBy(asc(reminders.id)).for("update");
+    // Only send reminders that are still queued (prevents duplicate sends if another worker already settled them).
+    const queuedRemRows = remRows.filter((r) => r.status === "queued");
+    if (queuedRemRows.length === 0) return null;
+    const queuedIds = queuedRemRows.map((r) => r.id);
+    const hasOptOutRecord = debtorRow?.phoneHash
+      ? (await tx.select({ id: optOuts.id }).from(optOuts).where(and(eq(optOuts.tenantId, tenantId), eq(optOuts.phoneHash, debtorRow.phoneHash))).limit(1)).length > 0
+      : false;
+    if (tenantRow?.settings?.sendingPaused || !debtorRow || debtorRow.optedOutAt || hasOptOutRecord) {
+      const cancelReason = tenantRow?.settings?.sendingPaused ? "sending_paused" : !debtorRow ? "missing_record" : "opted_out";
       await tx.update(reminders).set({ status: "cancelled", skipReason: cancelReason, updatedAt: now })
-        .where(inArray(reminders.id, group.reminderIds));
+        .where(inArray(reminders.id, queuedIds));
       bump(summary.skipped, cancelReason);
       return null;
     }
     const open = rows.filter((i) => i.status === "open" || i.status === "partially_paid");
     const openIds = new Set(open.map((i) => i.id));
-    const remRows = await tx.select({ id: reminders.id, invoiceId: reminders.invoiceId })
-      .from(reminders).where(inArray(reminders.id, group.reminderIds));
     const statusByInvoice = new Map(rows.map((i) => [i.id, i.status]));
     const deadByReason = new Map<string, string[]>();
-    for (const r of remRows) {
+    for (const r of queuedRemRows) {
       if (openIds.has(r.invoiceId)) continue;
       const reason = statusByInvoice.get(r.invoiceId) === "paid" ? "invoice_paid" : "invoice_closed";
       deadByReason.set(reason, [...(deadByReason.get(reason) ?? []), r.id]);
@@ -636,17 +652,25 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
         .where(inArray(reminders.id, ids));
       bump(summary.skipped, reason);
     }
-    if (open.length === 0) return null;
+    const liveReminderIds = queuedRemRows.filter((r) => openIds.has(r.invoiceId)).map((r) => r.id);
+    if (open.length === 0 || liveReminderIds.length === 0) return null;
+    const outstandingByCurrency = [...open.reduce((map, invoice) => {
+      map.set(invoice.currency, (map.get(invoice.currency) ?? 0n) + invoice.amountMinor - invoice.paidMinor);
+      return map;
+    }, new Map<string, bigint>()).entries()]
+      .filter(([, amountMinor]) => amountMinor > 0n)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([currency, amountMinor]) => ({ currency, amountMinor }));
+    if (outstandingByCurrency.length === 0) {
+      await tx.update(reminders).set({ status: "cancelled", skipReason: "invoice_paid", updatedAt: now })
+        .where(inArray(reminders.id, liveReminderIds));
+      bump(summary.skipped, "invoice_paid");
+      return null;
+    }
     return {
       invoiceIds: open.map((i) => i.id),
-      reminderIds: remRows.filter((r) => openIds.has(r.invoiceId)).map((r) => r.id),
-      outstandingByCurrency: [...open.reduce((map, invoice) => {
-        map.set(invoice.currency, (map.get(invoice.currency) ?? 0n) + invoice.amountMinor - invoice.paidMinor);
-        return map;
-      }, new Map<string, bigint>()).entries()]
-        .filter(([, amountMinor]) => amountMinor > 0n)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([currency, amountMinor]) => ({ currency, amountMinor })),
+      reminderIds: liveReminderIds,
+      outstandingByCurrency,
       earliestDueOn: open.map((i) => i.dueOn).sort()[0] ?? group.earliestDueOn,
       tenantSettings: tenantRow?.settings,
     };
@@ -655,11 +679,14 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
   const locale = group.locale ?? "ar";
   const joiner = locale === "en" ? ", " : "؛ ";
   const business = group.businessName;
+  const formattedAmount = live.outstandingByCurrency
+    .map((item) => `${formatCurrencyMinor(item.amountMinor, item.currency)} ${item.currency}`)
+    .join(joiner);
   const variables: Record<string, string> = {
     business,
-    amount: live.outstandingByCurrency.map((item) => `${formatCurrencyMinor(item.amountMinor, item.currency)} ${item.currency}`).join(joiner),
+    amount: formattedAmount,
     due_date: live.earliestDueOn,
-    remaining: live.outstandingByCurrency.map((item) => `${formatCurrencyMinor(item.amountMinor, item.currency)} ${item.currency}`).join(joiner),
+    remaining: formattedAmount,
   };
   // F10/F5: when the tenant enabled it, the debtor's statement/payment URL
   // rides along as a URL variable. The registry's v1 templates declare no
@@ -746,14 +773,15 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
       await tx.update(debtors).set({ whatsappStatus: "unreachable", updatedAt: now }).where(eq(debtors.id, group.debtorId));
       if (group.channel === "whatsapp" && (live.tenantSettings as TenantSettings | undefined)?.smsFallbackEnabled) {
         // SMS fallback (§7-F3): a sibling SMS step per invoice, due now.
-        for (const rid of live.reminderIds) {
-          const [r] = await tx.select().from(reminders).where(eq(reminders.id, rid));
-          if (!r) continue;
-          await tx.insert(reminders).values({
-            tenantId, invoiceId: r.invoiceId, debtorId: r.debtorId, stepKey: r.stepKey,
-            channel: "sms", templateKey: r.templateKey, dueAt: now,
-            idempotencyKey: `${r.invoiceId}:${r.stepKey}:sms`,
-          }).onConflictDoNothing();
+        const failedRows = await tx.select().from(reminders).where(inArray(reminders.id, live.reminderIds));
+        if (failedRows.length > 0) {
+          await tx.insert(reminders).values(
+            failedRows.map((r) => ({
+              tenantId, invoiceId: r.invoiceId, debtorId: r.debtorId, stepKey: r.stepKey,
+              channel: "sms" as const, templateKey: r.templateKey, dueAt: now,
+              idempotencyKey: `${r.invoiceId}:${r.stepKey}:sms`,
+            })),
+          ).onConflictDoNothing();
         }
       }
     }

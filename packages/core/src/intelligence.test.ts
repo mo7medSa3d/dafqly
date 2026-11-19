@@ -436,5 +436,12 @@ describe("intelligence: planCopilotToolCalls (Dynamic Function-Calling Router)",
     });
     expect(phoneRes.matchedDebtorId).toBe("deb-amal");
     expect(phoneRes.effectiveIntent).toBe("optimize_reminders");
+
+    const arDigitsPhoneRes = planCopilotToolCalls({
+      intent: "custom_question",
+      question: "ابعت تذكير للرقم ٠١٠١٢٣٤٥٦٧٨",
+      debtors: sampleDebtors,
+    });
+    expect(arDigitsPhoneRes.matchedDebtorId).toBe("deb-amal");
   });
 });

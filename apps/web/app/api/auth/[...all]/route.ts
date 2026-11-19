@@ -4,6 +4,8 @@ import { clientIp, rateLimit } from "@/server/rate-limit";
 import { readRequestBodyLimited, RequestBodyTooLargeError } from "@/server/request-body";
 import { toApiErrorBody, AppError } from "@tahseel/core";
 
+export const dynamic = "force-dynamic";
+
 let cachedHandlers: ReturnType<typeof toNextJsHandler> | undefined;
 function getHandlers() {
   cachedHandlers ??= toNextJsHandler(auth.handler);
@@ -24,7 +26,7 @@ export async function GET(req: Request): Promise<Response> {
   if (!result.allowed) {
     return Response.json(
       toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)),
-      { status: 429, headers: { ...NO_STORE, "retry-after": String(result.retryAfterSeconds) } },
+      { status: 429, headers: { ...NO_STORE, "Retry-After": String(result.retryAfterSeconds) } },
     );
   }
   try {
@@ -39,11 +41,12 @@ export async function GET(req: Request): Promise<Response> {
 export async function POST(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const ip = clientIp(req.headers);
-  const result = rateLimit(`${ip}:${url.pathname}`, { limit: 10, windowSeconds: 60 });
+  const normalizedPath = url.pathname.replace(/\/+$/, "") || "/";
+  const result = rateLimit(`${ip}:${normalizedPath}`, { limit: 10, windowSeconds: 60 });
   if (!result.allowed) {
     return Response.json(
       toApiErrorBody(new AppError("RATE_LIMITED", "Too many attempts, please wait and try again", 429)),
-      { status: 429, headers: { ...NO_STORE, "retry-after": String(result.retryAfterSeconds) } },
+      { status: 429, headers: { ...NO_STORE, "Retry-After": String(result.retryAfterSeconds) } },
     );
   }
   let forwardedReq = req;
@@ -52,7 +55,7 @@ export async function POST(req: Request): Promise<Response> {
     forwardedReq = new Request(req.url, {
       method: req.method,
       headers: req.headers,
-      body: rawBytes as never,
+      body: Buffer.from(rawBytes),
     });
   } catch (err) {
     if (err instanceof RequestBodyTooLargeError) {
