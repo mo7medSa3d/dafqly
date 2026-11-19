@@ -63,7 +63,6 @@ d("F10 statement links and disputes (service layer)", () => {
       displayName: "عميل الكشف", phone: "01066662222", notes: "INTERNAL-NOTE-XYZ do not show",
     });
     const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "900.00", issuedOn: "2026-11-01", dueOn: "2026-11-20", reference: "INV-S1" });
-    await new Promise((r) => setTimeout(r, 150));
     await recordPayment(app(), tenantId, user.id, { debtorId: debtor.id, amount: "250.00", method: "instapay", receivedOn: "2026-11-05" });
     const link = await createStatementLink(app(), tenantId, user.id, debtor.id, now);
     const data = await getStatementData(app(), owner(), link.token, new Date());

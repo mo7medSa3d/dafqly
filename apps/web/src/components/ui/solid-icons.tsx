@@ -6,7 +6,7 @@
 import * as React from "react";
 import {
   ArrowDownUp, ArrowLeft as LArrowLeft, ArrowRight as LArrowRight, ArrowUp as LArrowUp, Ban,   Bell as LBell, BellOff, Bot, Building2, CalendarCheck2, CalendarDays, Camera as LCamera, Check as LCheck,
-  CheckCheck, ChevronRight, ChevronUp, ChevronsRight, CircleAlert, CircleCheck, CircleDollarSign, CircleX,
+  CheckCheck, ChevronDown, ChevronRight, ChevronUp, ChevronsRight, CircleAlert, CircleCheck, CircleDollarSign, CircleX,
   ClipboardList, Clock3, CloudUpload, Coins as LCoins, Copy as LCopy, Cpu as LCpu, CreditCard as LCreditCard,
   Crown as LCrown, DollarSign, Download, ExternalLink, Eye as LEye, EyeOff, FileText as LFileText, Gauge as LGauge,
   Globe as LGlobe, HandCoins as LHandCoins, Handshake as LHandshake, Landmark, LayoutDashboard, Link2,
@@ -61,6 +61,8 @@ export const Lightning: LucideIcon = Zap;
 export const Crown: LucideIcon = LCrown;
 export const Gauge: LucideIcon = LGauge;
 export const ChartLineUp: LucideIcon = TrendingUp;
+export const TrendingUpIcon: LucideIcon = TrendingUp;
+export { TrendingUp };
 export const FileText: LucideIcon = LFileText;
 export const FileCsv: LucideIcon = LFileText;
 export const Notebook: LucideIcon = LFileText;
@@ -93,6 +95,7 @@ export const ArrowsClockwise: LucideIcon = RefreshCw;
 export const ArrowsInSimple: LucideIcon = Minimize2;
 export const ArrowsOutSimple: LucideIcon = Maximize2;
 export const CaretDoubleRight: LucideIcon = ChevronsRight;
+export const CaretDown: LucideIcon = ChevronDown;
 export const CaretRight: LucideIcon = ChevronRight;
 export const CaretUp: LucideIcon = ChevronUp;
 export const Check: LucideIcon = LCheck;

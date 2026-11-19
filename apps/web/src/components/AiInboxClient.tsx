@@ -17,11 +17,13 @@ import { InitialAvatar, LoadingState, Panel, btnPrimary, inputCls, labelCls } fr
  */
 interface IntentRow {
   id: string; intent: string; confidence: number; resolvedBy: string; actionTaken: string | null;
-  text: string | null; debtorName: string | null; debtorId: string | null; debtorPhone: string | null; createdAt: string;
+  text: string | null; debtorName: string | null; debtorId: string | null; debtorPhone: string | null; fileId?: string | null; createdAt: string;
 }
+interface ClaimCheck { name?: string; key?: string; passed: boolean; detail?: string }
 interface ClaimRow {
   id: string; debtorId: string; debtorName: string; amountMinor: string; currency?: string;
-  method: string; receivedOn: string; referenceNo: string | null;
+  method: string; receivedOn: string; referenceNo: string | null; evidenceFileId?: string | null;
+  confidence?: number | null; matchKind?: string | null; checks?: ClaimCheck[];
 }
 interface DebtorLite { id: string; displayName: string }
 interface SuggestedReplyState {
@@ -85,8 +87,8 @@ export function AiInboxClient() {
         trpc.receipts.listClaims.query(),
         trpc.debtors.list.query({ limit: 50 }),
       ]);
-      setIntents(i as IntentRow[]);
-      setClaims(c as ClaimRow[]);
+      setIntents(i as unknown as IntentRow[]);
+      setClaims(c as unknown as ClaimRow[]);
       setDebtors((ds.items as DebtorLite[]).map((x) => ({ id: x.id, displayName: x.displayName })));
     } catch (err: unknown) {
       setLoadError(err instanceof Error && err.message ? err.message : t("failed"));
@@ -281,14 +283,30 @@ export function AiInboxClient() {
             <div className="panel-shadow overflow-hidden rounded-xl border border-border bg-surface">
               <ul className="flex flex-col divide-y divide-border">
                 {claims.map((c) => (
-                  <li key={c.id} data-testid={`claim-${c.id}`} className="flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <InitialAvatar name={c.debtorName} size={40} />
-                      <div className="min-w-0">
-                        <p className="break-words font-bold text-text">{c.debtorName}</p>
-                        <p className="text-xs text-text-muted">{c.method} · <span dir="ltr">{c.receivedOn}</span>{c.referenceNo ? ` · ${c.referenceNo}` : ""}</p>
+                  <li key={c.id} data-testid={`claim-${c.id}`} className="flex flex-col gap-3 p-4 sm:p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div className="flex min-w-0 items-center gap-3">
+                        {c.evidenceFileId ? (
+                          <a href={`/api/files/${c.evidenceFileId}`} target="_blank" rel="noreferrer" className="shrink-0 overflow-hidden rounded-lg border border-border bg-surface-muted transition hover:opacity-85" title={isAr ? "عرض صورة الإيصال" : "View receipt image"}>
+                            <img src={`/api/files/${c.evidenceFileId}`} alt={c.debtorName} className="size-14 object-cover" />
+                          </a>
+                        ) : (
+                          <InitialAvatar name={c.debtorName} size={40} />
+                        )}
+                        <div className="min-w-0">
+                          <Link href={`/${locale}/debtors/${c.debtorId}`} className="break-words font-bold text-text hover:underline">{c.debtorName}</Link>
+                          <p className="text-xs text-text-muted">
+                            {c.method} · <span dir="ltr">{c.receivedOn}</span>
+                            {c.referenceNo ? ` · #${c.referenceNo}` : ""}
+                            {typeof c.confidence === "number" ? ` · ${isAr ? "الثقة" : "Conf"}: ${Math.round(c.confidence * 100)}%` : ""}
+                          </p>
+                          {c.evidenceFileId && (
+                            <a href={`/api/files/${c.evidenceFileId}`} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11px] font-bold text-primary underline underline-offset-4">
+                              {isAr ? "فتح الصورة بحجم كامل ↗" : "Open full receipt ↗"}
+                            </a>
+                          )}
+                        </div>
                       </div>
-                    </div>
                     <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                       <span className="tnum text-lg font-extrabold text-primary" dir="ltr">{format(BigInt(c.amountMinor), c.currency ? { currency: c.currency } : undefined)}</span>
                       <div className="flex gap-2">
@@ -312,6 +330,16 @@ export function AiInboxClient() {
                         </button>
                       </div>
                     </div>
+                  </div>
+                  {c.checks && c.checks.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 border-t border-border/60 pt-2.5">
+                        {c.checks.map((chk) => (
+                          <span key={chk.key ?? chk.name ?? "chk"} className={cn("rounded-full px-2.5 py-0.5 text-[11px] font-semibold", chk.passed ? "bg-status-paid-bg text-status-paid-fg" : "bg-danger-bg text-danger")}>
+                            {chk.passed ? "✓" : "!"} {chk.name ?? chk.key}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

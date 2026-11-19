@@ -35,6 +35,7 @@ const CLASSIFICATION: Record<string, RouteClass> = {
   // Everything else requires a session:
   "api/trpc/[trpc]/route.ts": "session", // procedures enforce auth individually (proven below)
   "api/ai/copilot/stream/route.ts": "session", // signed-in SSE Copilot endpoint
+  "api/files/[id]/route.ts": "session", // authenticated tenant file preview
   "[locale]/page.tsx": "session",
   "[locale]/onboarding/page.tsx": "session",
   "[locale]/dashboard/page.tsx": "session",

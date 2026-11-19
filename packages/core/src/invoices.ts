@@ -74,7 +74,6 @@ export function outstandingMinor(amountMinor: bigint, paidMinor: bigint): bigint
  * — it is shown as a separate disputed subtotal instead — so the same
  * debtor can never show two different balances on two screens.
  */
-export const COLLECTIBLE_STATUSES: readonly InvoiceStatus[] = ["open", "partially_paid"];
 export function isCollectibleStatus(status: string): boolean {
   return status === "open" || status === "partially_paid";
 }
@@ -88,7 +87,7 @@ export function disputedFor(invoice: { amountMinor: bigint; paidMinor: bigint; s
 // --------------------------------------------------------------------- dates
 const DAY_MS = 86_400_000;
 function isoToUtcMs(iso: string): number {
-  const [y, m, d] = iso.split("-").map(Number);
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
   return Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1);
 }
 function utcMsToIso(ms: number): string {

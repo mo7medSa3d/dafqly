@@ -44,6 +44,12 @@ export function formatCurrencyAmount(
   minor: bigint | number | string,
   currency: SupportedCurrency | string = "EGP",
 ): string {
-  const b = typeof minor === "bigint" ? minor : BigInt(String(minor || "0"));
+  let b = 0n;
+  if (typeof minor === "bigint") b = minor;
+  else if (typeof minor === "number") b = Number.isFinite(minor) ? BigInt(Math.trunc(minor)) : 0n;
+  else {
+    const trimmed = String(minor ?? "").trim();
+    b = /^-?\d+$/.test(trimmed) ? BigInt(trimmed) : 0n;
+  }
   return formatCurrencyMinor(b, currency, { digits: "latin" });
 }

@@ -46,7 +46,7 @@ const patterns = [
 const allow = /change-me|dev-only|example\.invalid|example\.test|your-|placeholder/i;
 let failed = false;
 for (const file of files) {
-  if (/\.(png|jpg|jpeg|gif|ico|otf|woff2?|zip)$/i.test(file)) continue;
+  if (/\.(png|jpg|jpeg|gif|ico|otf|woff2?|zip|pdf|webp|ttf|eot|dump|gz)$/i.test(file)) continue;
   let text;
   try {
     text = readFileSync(file, "utf8");
@@ -57,11 +57,14 @@ for (const file of files) {
   }
   for (const { name, re, files, allowValues } of patterns) {
     if (files && !files.test(file)) continue;
-    const m = text.match(re);
-    if (!m || allow.test(m[0])) continue;
-    if (allowValues && allowValues.some((v) => m[0].includes(v))) continue;
-    console.error(`${file}: possible ${name}`);
-    failed = true;
+    const globalRe = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+    for (const m of text.matchAll(globalRe)) {
+      if (allow.test(m[0])) continue;
+      if (allowValues && allowValues.some((v) => m[0].includes(v))) continue;
+      console.error(`${file}: possible ${name}`);
+      failed = true;
+      break;
+    }
   }
 }
 if (failed) { console.error("check-secrets: FAILED"); process.exit(1); }

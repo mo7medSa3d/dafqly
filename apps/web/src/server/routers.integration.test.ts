@@ -5,6 +5,7 @@ import { appRouter } from "./routers";
 import { ownerDb, appDb } from "./db";
 import { user as userTable, debtors, memberships, tenants } from "@tahseel/db/schema";
 import { createTenantForUser, hashPhone } from "./services";
+import { drainReplans } from "./engine";
 import { v7 as uuidv7 } from "uuid";
 
 /**
@@ -45,6 +46,7 @@ d("tRPC tenant isolation + onboarding rules", () => {
   });
 
   afterAll(async () => {
+    await drainReplans();
     const owner = ownerDb();
     await owner.delete(userTable).where(eq(userTable.id, userA.id));
     await owner.delete(userTable).where(eq(userTable.id, userB.id));
@@ -81,9 +83,7 @@ d("tRPC tenant isolation + onboarding rules", () => {
           debtorId: debtor.id, amount: "100.5", method: "cash", receivedOn: "2026-11-05",
           allocations: [{ invoiceId: jpy.id, amount: "100.5" }],
         });
-      } catch (e) {
-        caught = e;
-      }
+      } catch (e) { caught = e; }
       expect(caught).toBeDefined();
       // tRPC wraps the thrown AppError as the TRPCError's cause; the
       // route's responseMeta maps that cause to HTTP 400, and the
@@ -91,6 +91,7 @@ d("tRPC tenant isolation + onboarding rules", () => {
       expect((caught as { cause?: { code?: string } }).cause?.code).toBe("INVALID_AMOUNT");
       expect((caught as Error).message).toMatch(/JPY/);
     } finally {
+      await drainReplans();
       await owner.delete(tenants).where(eq(tenants.id, tenant));
       await owner.delete(userTable).where(eq(userTable.id, user.id));
     }

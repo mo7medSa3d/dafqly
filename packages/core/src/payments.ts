@@ -112,13 +112,14 @@ const paymobTransactionSchema = z.object({
  * payload). Returns a deep copy; the caller's payload is untouched.
  */
 export function redactPaymobPayload(payload: unknown): unknown {
-  let copy: Record<string, unknown>;
+  let copy: unknown;
   try {
-    copy = JSON.parse(JSON.stringify(payload ?? null)) as Record<string, unknown>;
+    copy = JSON.parse(JSON.stringify(payload ?? null));
   } catch {
     return { redacted: true };
   }
-  const obj = copy.obj as Record<string, unknown> | undefined;
+  if (!copy || typeof copy !== "object") return copy;
+  const obj = (copy as Record<string, unknown>).obj as Record<string, unknown> | undefined;
   if (obj && typeof obj === "object") {
     delete obj.source_data;
     delete obj.card;

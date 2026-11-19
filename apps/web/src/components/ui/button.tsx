@@ -15,7 +15,7 @@ export const buttonVariants = cva(
         ghost: "text-foreground hover:bg-accent",
         soft: "bg-muted text-foreground hover:bg-primary hover:text-primary-foreground",
         success: "bg-status-paid-bg text-status-paid-fg ring-1 ring-inset ring-status-paid-fg/20 hover:opacity-90",
-        dangerSoft: "border border-destructive/40 bg-danger-bg text-destructive hover:bg-destructive/10",
+        dangerSoft: "border border-danger/40 bg-danger-bg text-danger hover:bg-danger/10",
         link: "h-auto min-h-0 p-0 text-foreground underline-offset-4 hover:underline",
       },
       size: {

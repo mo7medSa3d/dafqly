@@ -60,6 +60,7 @@ d("reminder engine (F4)", () => {
       tenantId, debtorId, direction: "out" as const, channel: "whatsapp" as const, provider: "whatsapp",
       providerMessageId: `wamid.guard-${tenantId}-${i}`,
       status: (i < 20 ? "failed" : "delivered") as "failed" | "delivered",
+      createdAt: new Date("2026-11-10T00:00:00Z"),
     }));
     await owner.insert(messages).values(rows as never);
     await planForInvoice(deps(), tenantId, invoiceId, new Date("2026-11-10T00:00:00Z"));

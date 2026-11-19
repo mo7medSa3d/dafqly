@@ -23,6 +23,8 @@ export interface KpiServiceResult extends KpiReport {
   currency: string;
   /** Per-currency breakdown so other-currency money is visible, not hidden. */
   byCurrency: { currency: string; outstandingMinor: number; overdueMinor: number; collectedInMonthMinor: number; refundedInMonthMinor: number }[];
+  weeklyInvoiced?: { weekStart: string; amountMinor: number }[];
+  weeklyCollected?: { weekStart: string; amountMinor: number }[];
 }
 
 async function loadPaidOnByInvoice(tx: Db): Promise<Map<string, string>> {
@@ -58,7 +60,7 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
     // is frozen and never counts toward outstanding, overdue or aging.
     const currency = tenant?.settings.currency ?? "EGP";
     const timezone = tenant?.timezone ?? "Africa/Cairo";
-    const [[agg], top, byCurrency, collectedByCurrency, [perf]] = await Promise.all([
+    const [[agg], top, byCurrency, collectedByCurrency, [perf], weeklyInvRows, weeklyColRows] = await Promise.all([
       tx.execute(sql`
         select
           coalesce(sum(amount_minor - paid_minor) filter (where status in ('open','partially_paid') and amount_minor > paid_minor), 0)::bigint as outstanding,
@@ -113,6 +115,24 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
             count(*) filter (where status in ('delivered','read'))::int as delivered
           from messages where direction = 'out'
         ) out_agg`) as unknown as Promise<[{ sent: number; delivered: number; replied: number; paid_within_7d: number }]>,
+      tx.execute(sql`
+        with weeks as (
+          select generate_series(date_trunc('week', ${todayIso}::date) - interval '5 weeks', date_trunc('week', ${todayIso}::date), interval '1 week')::date as ws
+        )
+        select to_char(w.ws, 'MM-DD') as "weekStart",
+          coalesce(sum(i.amount_minor) filter (where i.currency = ${currency} and i.status not in ('cancelled','written_off')), 0)::bigint as amount
+        from weeks w
+        left join invoices i on i.issued_on >= w.ws and i.issued_on < (w.ws + interval '7 days')::date
+        group by w.ws order by w.ws`) as unknown as Promise<{ weekStart: string; amount: string }[]>,
+      tx.execute(sql`
+        with weeks as (
+          select generate_series(date_trunc('week', ${todayIso}::date) - interval '5 weeks', date_trunc('week', ${todayIso}::date), interval '1 week')::date as ws
+        )
+        select to_char(w.ws, 'MM-DD') as "weekStart",
+          coalesce(sum(p.amount_minor) filter (where p.currency = ${currency} and p.status = 'confirmed' and p.amount_minor > 0), 0)::bigint as amount
+        from weeks w
+        left join payments p on p.received_on >= w.ws and p.received_on < (w.ws + interval '7 days')::date
+        group by w.ws order by w.ws`) as unknown as Promise<{ weekStart: string; amount: string }[]>,
     ]);
     const collectedMap = new Map(collectedByCurrency.map((c) => [c.currency, toSafeMinor(BigInt(c.collected), `collected ${c.currency}`)]));
     const refundedMap = new Map(collectedByCurrency.map((c) => [c.currency, toSafeMinor(BigInt(c.refunded), `refunded ${c.currency}`)]));
@@ -162,6 +182,8 @@ export async function getKpis(app: Db, tenantId: string, todayIso: string): Prom
         outstandingMinor: toSafeMinor(BigInt(t.outstanding), `topDebtor ${t.debtorId}`),
       })),
       reminderPerformance: { sent: perf!.sent, delivered: perf!.delivered, replied: perf!.replied, paidWithin7d: perf!.paid_within_7d },
+      weeklyInvoiced: weeklyInvRows.map((r) => ({ weekStart: r.weekStart, amountMinor: toSafeMinor(BigInt(r.amount), `weeklyInvoiced ${r.weekStart}`) })),
+      weeklyCollected: weeklyColRows.map((r) => ({ weekStart: r.weekStart, amountMinor: toSafeMinor(BigInt(r.amount), `weeklyCollected ${r.weekStart}`) })),
       currency,
       byCurrency: byCurrencyMerged,
     };

@@ -76,20 +76,7 @@ export async function processReceiptImage(
   }
   if (!fileId || !bytes) throw new AppError("NO_FILE", "A receipt image is required", 400);
 
-  let extractionResult;
-  try {
-    extractionResult = await deps.llm.extractReceipt(bytes, mime);
-  } catch (err) {
-    console.warn("[receipts] AI extraction failed, falling back to unreadable receipt:", err);
-    extractionResult = {
-      data: null,
-      model: "fallback",
-      promptVersion: "error",
-      inputTokens: 0,
-      outputTokens: 0,
-      latencyMs: 0,
-    };
-  }
+  const extractionResult = await deps.llm.extractReceipt(bytes, mime);
   const extraction = extractionResult.data;
   const extractedCurrency = (extraction?.currency ?? "").toUpperCase();
 
@@ -158,7 +145,7 @@ export async function processReceiptImage(
     const checksResult = evaluateReceiptChecks({ extraction, sha256, seenHashes, seenReferences, now });
     const checks = checksResult.checks;
 
-    if (!extraction.is_receipt || extraction.amount_minor === null) {
+    if (!extraction.is_receipt || extraction.amount_minor === null || !Number.isSafeInteger(extraction.amount_minor) || extraction.amount_minor <= 0) {
       await tx.insert(auditLog).values({
         tenantId, actorUserId: actor, action: "payment.receipt_not_a_receipt", entity: "file", entityId: fileId!,
         after: { debtorId: debtor?.id ?? null, isReceipt: extraction.is_receipt, checks } as never,
@@ -341,11 +328,25 @@ export async function listReceiptClaims(app: Db, tenantId: string) {
       : [];
     const debtorMap = new Map(debtorList.map((d) => [d.id, d.displayName]));
 
-    return rows.map((p) => ({
-      id: p.id, debtorId: p.debtorId, debtorName: debtorMap.get(p.debtorId) ?? "",
-      amountMinor: p.amountMinor.toString(), currency: p.currency, method: p.method, receivedOn: p.receivedOn,
-      referenceNo: p.referenceNo, evidenceFileId: p.evidenceFileId,
-      createdAt: p.createdAt.toISOString(),
-    }));
+    const paymentIds = rows.map((p) => p.id);
+    const auditRows = paymentIds.length > 0
+      ? await tx.select({ entityId: auditLog.entityId, after: auditLog.after })
+          .from(auditLog)
+          .where(and(eq(auditLog.tenantId, tenantId), eq(auditLog.entity, "payment"), inArray(auditLog.entityId, paymentIds)))
+      : [];
+    const auditMap = new Map(auditRows.map((a) => [a.entityId, (a.after ?? {}) as Record<string, unknown>]));
+
+    return rows.map((p) => {
+      const meta = auditMap.get(p.id) ?? {};
+      return {
+        id: p.id, debtorId: p.debtorId, debtorName: debtorMap.get(p.debtorId) ?? "",
+        amountMinor: p.amountMinor.toString(), currency: p.currency, method: p.method, receivedOn: p.receivedOn,
+        referenceNo: p.referenceNo, evidenceFileId: p.evidenceFileId,
+        confidence: typeof meta.confidence === "number" ? meta.confidence : null,
+        matchKind: typeof meta.matchKind === "string" ? meta.matchKind : null,
+        checks: Array.isArray(meta.checks) ? (meta.checks as ReceiptCheck[]) : [],
+        createdAt: p.createdAt.toISOString(),
+      };
+    });
   });
 }

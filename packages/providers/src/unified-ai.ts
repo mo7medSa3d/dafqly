@@ -430,9 +430,11 @@ export class UnifiedAiProvider implements OcrLlmProvider {
       if (event.type === "error") throw new Error(`anthropic stream error: ${event.error?.message ?? "unknown"}`);
       if (event.type === "message_start") inputTokens += event.message?.usage?.input_tokens ?? 0;
       else if (event.type === "content_block_start" && event.index !== undefined && event.content_block) {
+        if (event.index < 0 || event.index > 64) continue;
         const b = event.content_block;
         blocks[event.index] = { type: b.type ?? "text", id: b.id, name: b.name, text: b.text ?? "", json: "" };
       } else if (event.type === "content_block_delta" && event.index !== undefined) {
+        if (event.index < 0 || event.index > 64) continue;
         const block = blocks[event.index];
         if (!block) continue;
         if (event.delta?.type === "text_delta" && event.delta.text) {
@@ -442,6 +444,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
           block.json = (block.json ?? "") + event.delta.partial_json;
         }
       } else if (event.type === "content_block_stop" && event.index !== undefined) {
+        if (event.index < 0 || event.index > 64) continue;
         const block = blocks[event.index];
         if (block?.type === "tool_use") {
           try { block.input = block.json ? JSON.parse(block.json) : {}; } catch { block.input = {}; }
@@ -458,8 +461,8 @@ export class UnifiedAiProvider implements OcrLlmProvider {
           ? { type: "tool_use", id: b.id, name: b.name, input: b.input ?? {} }
           : { type: "text", text: b.text ?? "" },
       );
-    const text = content.filter((b) => b.type === "text").map((b) => ("text" in b ? b.text ?? "" : "")).join("\n").trim();
-    const toolCalls = content
+    const text = blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n").trim();
+    const toolCalls = blocks
       .filter((b) => b.type === "tool_use" && Boolean(b.name))
       .map((b, i) => ({
         id: b.id ?? `call_${i}`,
@@ -509,7 +512,7 @@ export class UnifiedAiProvider implements OcrLlmProvider {
     const turn = await this.request(args.system, [userMessage], {
       tools: [{ name: args.toolName, description: args.toolDescription, inputSchema: args.toolSchema }],
       forcedToolName: args.toolName,
-      maxTokens: 2000,
+      maxTokens: 4096,
     });
 
     const call = turn.toolCalls.find((c) => c.name === args.toolName);

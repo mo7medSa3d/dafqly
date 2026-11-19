@@ -127,7 +127,7 @@ export async function POST(request: Request): Promise<Response> {
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
+      "Cache-Control": "no-store, no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     },

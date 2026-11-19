@@ -188,7 +188,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
                 </div>
               )}
             </label>
-            {error && <p role="alert" className="ai-rise rounded-xl bg-danger-bg px-3.5 py-2.5 text-sm font-semibold text-destructive">{error}</p>}
+            {error && <p role="alert" className="ai-rise rounded-xl bg-danger-bg px-3.5 py-2.5 text-sm font-semibold text-danger">{error}</p>}
             <button data-testid="auth-submit" type="submit" disabled={busy} className={`${btnPrimary} w-full rounded-full`}>
               {busy ? <SpinnerGap size={18} className="animate-spin" aria-hidden /> : <LockKey size={18} aria-hidden />}
               {mode === "signup" ? t("signupCta") : t("loginCta")}

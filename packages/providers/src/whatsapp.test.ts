@@ -138,4 +138,26 @@ describe("WhatsAppCloudProvider (mocked fetch, Meta-shaped responses)", () => {
     await expect(p.sendTemplate({ toE164: "+201001234567", templateKey: "x", variables: {}, idempotencyKey: "k4", channel: "whatsapp" }))
       .rejects.toMatchObject({ providerCode: 0 });
   });
+
+  it("maps network/timeout errors to retryable 503/504 ProviderError and HTTP 429 to 130429", async () => {
+    const timeoutErr = Object.assign(new Error("timed out"), { name: "TimeoutError" });
+    const pTimeout = new WhatsAppCloudProvider({
+      ...config,
+      fetchImpl: (async () => { throw timeoutErr; }) as unknown as typeof fetch,
+    });
+    await expect(pTimeout.sendTemplate({ toE164: "+201001234567", templateKey: "x", variables: {}, idempotencyKey: "k5", channel: "whatsapp" }))
+      .rejects.toMatchObject({ providerCode: 504 });
+
+    const pNet = new WhatsAppCloudProvider({
+      ...config,
+      fetchImpl: (async () => { throw new TypeError("fetch failed"); }) as unknown as typeof fetch,
+    });
+    await expect(pNet.sendTemplate({ toE164: "+201001234567", templateKey: "x", variables: {}, idempotencyKey: "k6", channel: "whatsapp" }))
+      .rejects.toMatchObject({ providerCode: 503 });
+
+    const { fetchImpl: fetch429 } = stubFetch({}, 429);
+    const p429 = new WhatsAppCloudProvider({ ...config, fetchImpl: fetch429 });
+    await expect(p429.sendTemplate({ toE164: "+201001234567", templateKey: "x", variables: {}, idempotencyKey: "k7", channel: "whatsapp" }))
+      .rejects.toMatchObject({ providerCode: 130429 });
+  });
 });

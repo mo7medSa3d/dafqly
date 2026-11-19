@@ -384,6 +384,20 @@ describe("intelligence: computeOptimalReminderWindow (Hard Rule #3 + Quiet Hours
     expect(settledWin.blockReasonEn).toContain("No open or partially paid invoices");
     expect(settledWin.windowLabelEn).toContain("settled");
   });
+
+  it("falls back safely when policy timezone is invalid", () => {
+    const win = computeOptimalReminderWindow({
+      now: new Date("2026-11-11T11:00:00Z"),
+      policy: { timezone: "Invalid/Zone" },
+      daysOverdue: 5,
+      riskTier: "watch",
+      optedOut: false,
+      openDisputesCount: 0,
+      hasOpenInvoice: true,
+    });
+    expect(win.canSend).toBe(true);
+    expect(win.localTimeFormatted).toMatch(/^\d{2}:\d{2}$/);
+  });
 });
 
 describe("intelligence: planCopilotToolCalls (Dynamic Function-Calling Router)", () => {

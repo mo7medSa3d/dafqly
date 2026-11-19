@@ -72,6 +72,8 @@ describe("resolveTenantWhatsappOverride", () => {
       accessToken: "wa-token-secret",
     });
     expect(resolveTenantWhatsappOverride({}, secret)).toBeUndefined();
+    expect(() => resolveTenantWhatsappOverride({ whatsapp: { phoneNumberId: "987654" } }, secret)).toThrow(/Incomplete/);
+    expect(() => resolveTenantWhatsappOverride({ whatsapp: { phoneNumberId: "987654", encryptedAccessToken: "v1.a.b.c.d" } }, secret)).toThrow(/Malformed/);
   });
 });
 

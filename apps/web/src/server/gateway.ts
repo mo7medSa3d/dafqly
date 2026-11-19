@@ -2,13 +2,13 @@ import { and, desc, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import {
-  AppError, allocatePayment, decideGatewayCallback, isTerminalStatus, localDateOf, outstandingForLink,
+  AppError, allocatePayment, decideGatewayCallback, isTerminalStatus, localDateOf, normalizeCurrencyCode, outstandingForLink,
   parseMoney, parsePaymobCallback, planReversalAllocations, redactPaymobPayload,
-  reconcileGateway, type PaymobCallback, type PaymobTxnLike,
+  reconcileGateway, type SupportedCurrency, type PaymobCallback, type PaymobTxnLike,
 } from "@tahseel/core";
 import { verifyPaymobHmac } from "@tahseel/core/payments-crypto";
 import {
-  auditLog, debtors, invoices, paymentAllocations, paymentLinks, payments, tenants, webhookEvents,
+  auditLog, debtors, invoices, paymentAllocations, paymentLinks, payments, subscriptionInvoices, tenants, webhookEvents,
 } from "@tahseel/db/schema";
 import { withTenant, type Db } from "@tahseel/db";
 import { FakePaymentProvider, PaymobProvider, type PaymentProvider } from "@tahseel/providers";
@@ -126,11 +126,11 @@ export async function createGatewayLink(
       .where(and(eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
     if (!debtor) throw new AppError("NOT_FOUND", "Debtor not found", 404);
     const invs = await tx.select().from(invoices).where(eq(invoices.debtorId, input.debtorId));
-    let currency = tenant.settings.currency ?? "EGP";
+    let currency: SupportedCurrency = normalizeCurrencyCode(tenant.settings.currency);
     if (input.invoiceId) {
       const inv = invs.find((i) => i.id === input.invoiceId);
       if (!inv) throw new AppError("NOT_FOUND", "Invoice not found", 404);
-      currency = inv.currency as typeof currency;
+      currency = normalizeCurrencyCode(inv.currency);
     }
     const scopedInvoices = input.invoiceId ? invs : invs.filter((i) => i.currency === currency);
     const amountMinor = outstandingForLink(
@@ -337,6 +337,54 @@ export async function handlePaymobCallback(
   const [link] = await deps.owner.select().from(paymentLinks)
     .where(eq(paymentLinks.specialReference, cb.specialReference));
   if (!link) {
+    if (cb.specialReference.startsWith("sub_")) {
+      const subInvoiceId = cb.specialReference.slice(4);
+      const [sub] = z.string().uuid().safeParse(subInvoiceId).success
+        ? await deps.owner.select().from(subscriptionInvoices).where(eq(subscriptionInvoices.id, subInvoiceId))
+        : [];
+      if (sub) {
+        let subResult: WebhookOutcome;
+        try {
+          if (!cb.success || cb.pending || cb.isRefunded || cb.isVoided) {
+            subResult = {
+              outcome: "ignored",
+              reason: cb.isRefunded || cb.isVoided ? "subscription_reversal_ignored" : cb.pending ? "pending" : "failed",
+            };
+          } else if (cb.amountMinor !== sub.amountMinor) {
+            subResult = { outcome: "ignored", reason: "amount_mismatch" };
+          } else {
+            subResult = await withTenant(deps.app, sub.tenantId, async (tx): Promise<WebhookOutcome> => {
+              const [lockedSub] = await tx.select().from(subscriptionInvoices)
+                .where(eq(subscriptionInvoices.id, sub.id))
+                .for("update");
+              if (!lockedSub) return { outcome: "unmatched", reason: "unknown special_reference" };
+              if (lockedSub.status === "paid") return { outcome: "duplicate" };
+              if (lockedSub.status === "void") return { outcome: "ignored", reason: "subscription_invoice_void" };
+              await tx.update(subscriptionInvoices)
+                .set({ status: "paid", providerRef: cb.transactionId, updatedAt: now })
+                .where(eq(subscriptionInvoices.id, lockedSub.id));
+              await tx.update(tenants)
+                .set({ plan: lockedSub.planKey, updatedAt: now })
+                .where(eq(tenants.id, lockedSub.tenantId));
+              await audit(tx, lockedSub.tenantId, null, "tenant.plan_changed", "tenant", lockedSub.tenantId, {
+                planKey: lockedSub.planKey, invoiceId: lockedSub.id, transactionId: cb.transactionId, via: "paymob_webhook",
+              });
+              return { outcome: "fulfilled" };
+            });
+          }
+          await deps.owner.update(webhookEvents)
+            .set({ processedAt: now, processError: null })
+            .where(eq(webhookEvents.dedupeKey, dedupeKey));
+          return subResult;
+        } catch (err) {
+          await deps.owner.update(webhookEvents)
+            .set({ processError: err instanceof Error ? err.message : String(err) })
+            .where(eq(webhookEvents.dedupeKey, dedupeKey))
+            .catch(() => undefined);
+          throw err;
+        }
+      }
+    }
     await deps.owner.update(webhookEvents).set({ processedAt: now, processError: null }).where(eq(webhookEvents.dedupeKey, dedupeKey));
     return { outcome: "unmatched", reason: "unknown special_reference" };
   }

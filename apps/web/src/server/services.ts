@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
+import { createCipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 import { asc, count, eq, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
@@ -31,30 +31,11 @@ export function encryptWhatsappToken(plaintext: string): string {
   return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${encrypted.toString("base64url")}`;
 }
 
-export function decryptWhatsappToken(payload: string): string {
-  const [version, ivB64, tagB64, dataB64] = payload.split(".");
-  if (version !== "v1" || !ivB64 || !tagB64 || !dataB64) {
-    throw new AppError("INVALID_SECRET", "Malformed encrypted WhatsApp token", 500);
-  }
-  const iv = Buffer.from(ivB64, "base64url");
-  const tag = Buffer.from(tagB64, "base64url");
-  if (iv.length !== 12 || tag.length !== 16) {
-    throw new AppError("INVALID_SECRET", "Malformed encrypted WhatsApp token", 500);
-  }
-  try {
-    const decipher = createDecipheriv("aes-256-gcm", whatsappSecretKey(), iv);
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(Buffer.from(dataB64, "base64url")), decipher.final()]).toString("utf8");
-  } catch {
-    throw new AppError("INVALID_SECRET", "Malformed encrypted WhatsApp token", 500);
-  }
-}
-
 function sanitizeTenantSettings(s: TenantSettings) {
   const { whatsapp: _wa, ...rest } = s;
   return {
     ...rest,
-    gatewayEnabled: s.gatewayEnabled ?? false,
+    gatewayEnabled: s.gatewayEnabled ?? true,
     paymentInstructions: s.paymentInstructions ?? "",
   };
 }
@@ -113,7 +94,7 @@ export async function createTenantForUser(app: Db, userId: string, input: Create
     fridayMorningSkip: input.fridayMorningSkip, autoCloseEnabled: false,
     defaultChannel: "whatsapp", tone: input.tone,
     defaultTermsDays: input.defaultTermsDays, easternDigits: false,
-    gatewayEnabled: false,
+    gatewayEnabled: true,
   };
   await withTenant(app, tenantId, async (tx) => {
     await tx.insert(tenants).values({

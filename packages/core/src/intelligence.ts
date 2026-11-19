@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { sanitizePromptData, type NotificationTone, type ReplyIntent } from "./ai";
 import { formatCurrencyMinor, getCurrencySymbol, normalizeCurrencyCode, type SupportedCurrency } from "./money";
-import { isInQuietHours, nextAllowedSlot, localDateOf, DEFAULT_POLICY, type SchedulePolicy } from "./time";
+import { isInQuietHours, nextAllowedSlot, localDateOf, safeTimezone, DEFAULT_POLICY, type SchedulePolicy } from "./time";
 
 /**
  * Pure single-tenant AI & Collections Intelligence engine.
@@ -917,12 +917,12 @@ export interface NotificationCandidate {
     | "quota_alert"
     | "ai_briefing"
     | "payment_confirmed"
-    | "task_overdue"
     | "task_assigned"
+    | "task_overdue"
     | "ai_approval_pending"
     | "ai_approval_executed"
-    | "ai_copilot_alert"
-    | "promise_due";
+    | "promise_due"
+    | "ai_copilot_alert";
   severity: NotificationSeverity;
   titleAr: string;
   titleEn: string;
@@ -1129,7 +1129,7 @@ export interface OptimalReminderWindowResult {
 
 function formatLocalTimeHHMM(at: Date, timezone: string): string {
   const fmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone: timezone,
+    timeZone: safeTimezone(timezone),
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",
@@ -1146,7 +1146,7 @@ function formatLocalTimeHHMM(at: Date, timezone: string): string {
  */
 export function computeOptimalReminderWindow(input: OptimalReminderWindowInput): OptimalReminderWindowResult {
   const policy: SchedulePolicy = {
-    timezone: input.policy?.timezone ?? DEFAULT_POLICY.timezone,
+    timezone: safeTimezone(input.policy?.timezone, DEFAULT_POLICY.timezone),
     quietStart: input.policy?.quietStart ?? DEFAULT_POLICY.quietStart,
     quietEnd: input.policy?.quietEnd ?? DEFAULT_POLICY.quietEnd,
     fridayMorningSkip: input.policy?.fridayMorningSkip ?? DEFAULT_POLICY.fridayMorningSkip,

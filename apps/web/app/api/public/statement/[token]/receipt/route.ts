@@ -1,11 +1,13 @@
 import { AppError, toApiErrorBody } from "@tahseel/core";
 import { withTenant } from "@tahseel/db";
+import { messageIntents, messages } from "@tahseel/db/schema";
 import { appDb, ownerDb } from "@/server/db";
 import { aiDeps } from "@/server/engine";
 import { withAiTenantContext } from "@/server/ai-budget";
 import { upsertNotificationInTx } from "@/server/notifications";
 import { clientIp, rateLimit, tokenBucketKey } from "@/server/rate-limit";
 import { processReceiptImage } from "@/server/receipts";
+import { readRequestBodyLimited, RequestBodyTooLargeError } from "@/server/request-body";
 import { resolveStatement } from "@/server/statements";
 
 const HEADERS = { "X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store" };
@@ -27,14 +29,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   if (!TOKEN_RE.test(token)) {
     return Response.json(toApiErrorBody(new AppError("NOT_FOUND", "Not found", 404)), { status: 404, headers: HEADERS });
   }
-  const contentLength = Number(req.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > MAX_RECEIPT_BYTES + 65_536) {
-    return Response.json(toApiErrorBody(new AppError("BODY_TOO_LARGE", "Receipt file exceeds 10 MB", 413)), { status: 413, headers: HEADERS });
-  }
   let formData: FormData;
   try {
-    formData = await req.formData();
-  } catch {
+    const rawBytes = await readRequestBodyLimited(req, MAX_RECEIPT_BYTES + 65_536);
+    const boundedReq = new Request(req.url, { method: req.method, headers: req.headers, body: rawBytes as never });
+    formData = await boundedReq.formData();
+  } catch (err) {
+    if (err instanceof RequestBodyTooLargeError) {
+      return Response.json(toApiErrorBody(new AppError("BODY_TOO_LARGE", "Receipt file exceeds 10 MB", 413)), { status: 413, headers: HEADERS });
+    }
     return Response.json(toApiErrorBody(new AppError("BAD_REQUEST", "Invalid multipart form data", 400)), { status: 400, headers: HEADERS });
   }
   const file = formData.get("file");
@@ -72,16 +75,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
           titleEn: "New receipt attachment from customer portal needs review",
           bodyAr: "رفع العميل صورة إيصال عبر رابط كشف الحساب ولم يتم استخراج بياناتها آلياً.",
           bodyEn: "A customer uploaded a receipt via the statement link that needs manual review.",
-          actionUrl: `/debtors/${link.debtorId}`,
+          actionUrl: "/ai-inbox",
           entityType: "file",
           entityId: out.fileId,
           dedupeKey: `portal_receipt:${out.fileId}`,
+        });
+        const [msgRow] = await tx.insert(messages).values({
+          tenantId: link.tenantId, debtorId: link.debtorId, direction: "in", channel: "whatsapp",
+          provider: "portal", bodyText: "Customer uploaded receipt via statement portal",
+          mediaId: out.fileId, status: "received",
+        }).returning({ id: messages.id });
+        await tx.insert(messageIntents).values({
+          tenantId: link.tenantId, messageId: msgRow!.id, intent: "receipt_image_pending",
+          extracted: { fileId: out.fileId, sha256: out.sha256, outcome: out.outcome, checks: out.checks } as never,
+          confidence: out.extraction?.confidence ?? 0, resolvedBy: "human", actionTaken: "human_inbox",
         });
       });
     }
     return Response.json({ ok: true, outcome: out.outcome, paymentId: out.paymentId, fileId: out.fileId }, { status: 201, headers: HEADERS });
   } catch (err) {
-    console.error("[public/statement/receipt] error:", err);
     const status = err instanceof AppError ? err.status : 500;
     return Response.json(toApiErrorBody(err), { status, headers: HEADERS });
   }

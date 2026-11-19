@@ -47,23 +47,31 @@ export class WhatsAppCloudProvider implements TextCapableProvider {
   }
 
   private async post(body: Record<string, unknown>, override?: WhatsAppCallOverride): Promise<SendResult> {
-    const phoneNumberId = override?.phoneNumberId || this.config.phoneNumberId;
-    const accessToken = override?.accessToken || this.config.accessToken;
-    if (!this.config.apiVersion || !phoneNumberId || !accessToken) {
+    const phoneNumberId = (override?.phoneNumberId || this.config.phoneNumberId).trim();
+    const accessToken = (override?.accessToken || this.config.accessToken).trim();
+    const apiVersion = this.config.apiVersion.trim();
+    if (!apiVersion || !phoneNumberId || !accessToken) {
       throw new ProviderError(0, "WhatsApp provider is not configured (WHATSAPP_API_VERSION / WHATSAPP_PHONE_NUMBER_ID / WHATSAPP_ACCESS_TOKEN)");
     }
-    const res = await this.fetchImpl(
-      `https://graph.facebook.com/${this.config.apiVersion}/${phoneNumberId}/messages`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(15_000),
-      },
-    );
+    let res: Response;
+    try {
+      res = await this.fetchImpl(
+        `https://graph.facebook.com/${encodeURIComponent(apiVersion)}/${encodeURIComponent(phoneNumberId)}/messages`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(15_000),
+        },
+      );
+    } catch (err) {
+      if (err instanceof ProviderError) throw err;
+      const isTimeout = err instanceof Error && err.name === "TimeoutError";
+      throw new ProviderError(isTimeout ? 504 : 503, err instanceof Error ? err.message : "WhatsApp network error");
+    }
     const json = (await res.json().catch(() => ({}))) as GraphSendOk & GraphError;
     if (!res.ok || json.error) {
-      const code = json.error?.code ?? res.status;
+      const code = json.error?.code ?? (res.status === 429 ? 130429 : res.status);
       throw new ProviderError(code, json.error?.message ?? `WhatsApp send failed with HTTP ${res.status}`);
     }
     const id = json.messages?.[0]?.id;
@@ -88,7 +96,7 @@ export class WhatsAppCloudProvider implements TextCapableProvider {
       throw new ProviderError(0, "WhatsAppCloudProvider only sends on the whatsapp channel");
     }
     const parameters = input.parameters ?? Object.values(input.variables);
-    const cacheKey = `${input.override?.phoneNumberId ?? this.config.phoneNumberId}:${input.idempotencyKey}`;
+    const cacheKey = `${(input.override?.phoneNumberId || this.config.phoneNumberId).trim()}:${input.idempotencyKey}`;
     return this.dedupe(cacheKey, () => this.post({
       messaging_product: "whatsapp",
       recipient_type: "individual",
@@ -106,7 +114,7 @@ export class WhatsAppCloudProvider implements TextCapableProvider {
 
   /** Free-form text — valid only inside the 24h customer-service window (else Meta returns 131047). */
   async sendText(input: { toE164: string; body: string; idempotencyKey: string; override?: WhatsAppCallOverride }): Promise<SendResult> {
-    const cacheKey = `${input.override?.phoneNumberId ?? this.config.phoneNumberId}:${input.idempotencyKey}`;
+    const cacheKey = `${(input.override?.phoneNumberId || this.config.phoneNumberId).trim()}:${input.idempotencyKey}`;
     return this.dedupe(cacheKey, () => this.post({
       messaging_product: "whatsapp",
       recipient_type: "individual",

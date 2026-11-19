@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import {
   auditLog, debtors, invoices, messages, optOuts, plans, reminders, statementLinks, tenants, usageLedger,
   withTenant, type Db, type TenantSettings,
@@ -114,16 +114,20 @@ export async function quotaExceededFromDb(app: Db, tenantId: string, now: Date):
     if (!tenant) return false;
     const tz = safeTimezone(tenant.timezone);
     const month = localDateOf(now, tz).slice(0, 7);
-    const lookback = new Date(now.getTime() - 32 * 86_400_000);
-    const rows = await tx.select().from(usageLedger).where(and(
-      eq(usageLedger.tenantId, tenantId),
-      inArray(usageLedger.kind, ["whatsapp_utility", "sms"]),
-      gte(usageLedger.at, lookback),
-    ));
-    let used = 0;
-    for (const r of rows) {
-      if ((r.kind === "whatsapp_utility" || r.kind === "sms") && localDateOf(r.at, tz).slice(0, 7) === month) used += r.units;
-    }
+    const [year, mon] = month.split("-").map(Number);
+    const startUtc = zonedTimeToUtc(`${month}-01`, "00:00", tz);
+    const nextMonthIso = new Date(Date.UTC(year!, mon!, 1)).toISOString().slice(0, 10);
+    const endUtc = zonedTimeToUtc(nextMonthIso, "00:00", tz);
+    const [agg] = await tx
+      .select({ total: sql<string>`COALESCE(SUM(${usageLedger.units}), 0)::bigint` })
+      .from(usageLedger)
+      .where(and(
+        eq(usageLedger.tenantId, tenantId),
+        inArray(usageLedger.kind, ["whatsapp_utility", "sms"]),
+        gte(usageLedger.at, startUtc),
+        lt(usageLedger.at, endUtc),
+      ));
+    const used = Number(agg?.total ?? 0);
     const planRow = planRows.find((p) => p.key === tenant.plan);
     const quota = planRow ? planRow.monthlyMessageQuota : tenant.plan === "trial" ? 100 : null;
     return quotaStatus({ usedUnits: used, quota }).state === "exceeded";
@@ -160,8 +164,12 @@ export interface PlanResult { planned: number; cancelled: number }
 export async function planForInvoice(deps: EngineDeps, tenantId: string, invoiceId: string, now: Date, opts: { notBefore?: Date } = {}): Promise<PlanResult> {
   return withTenant(deps.app, tenantId, async (tx) => {
     const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
+    const [invRef] = await tx.select({ id: invoices.id, debtorId: invoices.debtorId }).from(invoices).where(eq(invoices.id, invoiceId));
+    if (!tenant || !invRef) return { planned: 0, cancelled: 0 };
+    // Lock debtor first (same hierarchy as recordPayment / ledger operations to prevent deadlocks)
+    await tx.select({ id: debtors.id }).from(debtors).where(eq(debtors.id, invRef.debtorId)).for("update");
     const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for("update");
-    if (!tenant || !invoice) return { planned: 0, cancelled: 0 };
+    if (!invoice) return { planned: 0, cancelled: 0 };
     const steps = planReminders(
       { id: invoice.id, status: invoice.status, dueOn: invoice.dueOn },
       policyFor(tenant),
@@ -565,17 +573,27 @@ export function resolveTenantWhatsappOverride(
   sessionSecret = process.env.SESSION_SECRET,
 ): WhatsAppCallOverride | undefined {
   const wa = (settings as { whatsapp?: { phoneNumberId?: string; encryptedAccessToken?: string } } | null | undefined)?.whatsapp;
-  if (!wa?.phoneNumberId || !wa?.encryptedAccessToken) return undefined;
+  const phoneNumberId = wa?.phoneNumberId?.trim() ?? "";
+  const encryptedAccessToken = wa?.encryptedAccessToken?.trim() ?? "";
+  if (!phoneNumberId && !encryptedAccessToken) return undefined;
+  if (!phoneNumberId || !encryptedAccessToken) {
+    throw new Error("Incomplete tenant WhatsApp override configuration");
+  }
   if (!sessionSecret) throw new Error("SESSION_SECRET is required to decrypt tenant WhatsApp token");
-  const [version, ivB64, tagB64, dataB64] = wa.encryptedAccessToken.split(".");
+  const parts = encryptedAccessToken.split(".");
+  if (parts.length !== 4) {
+    throw new Error("Malformed encrypted WhatsApp token");
+  }
+  const [version, ivB64, tagB64, dataB64] = parts;
   if (version !== "v1" || !ivB64 || !tagB64 || !dataB64) {
     throw new Error("Malformed encrypted WhatsApp token");
   }
   const key = createHash("sha256").update(sessionSecret).digest();
   const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivB64, "base64url"));
   decipher.setAuthTag(Buffer.from(tagB64, "base64url"));
-  const accessToken = Buffer.concat([decipher.update(Buffer.from(dataB64, "base64url")), decipher.final()]).toString("utf8");
-  return { phoneNumberId: wa.phoneNumberId, accessToken };
+  const accessToken = Buffer.concat([decipher.update(Buffer.from(dataB64, "base64url")), decipher.final()]).toString("utf8").trim();
+  if (!accessToken) throw new Error("Empty decrypted WhatsApp token");
+  return { phoneNumberId, accessToken };
 }
 
 export async function sendGroup(deps: EngineDeps, tenantId: string, group: GroupWork, now: Date, summary: DispatchSummary): Promise<void> {
@@ -726,6 +744,18 @@ export async function sendGroup(deps: EngineDeps, tenantId: string, group: Group
     summary.failed += live.reminderIds.length;
     if (classified.kind === "not_reachable") {
       await tx.update(debtors).set({ whatsappStatus: "unreachable", updatedAt: now }).where(eq(debtors.id, group.debtorId));
+      if (group.channel === "whatsapp" && (live.tenantSettings as TenantSettings | undefined)?.smsFallbackEnabled) {
+        // SMS fallback (§7-F3): a sibling SMS step per invoice, due now.
+        for (const rid of live.reminderIds) {
+          const [r] = await tx.select().from(reminders).where(eq(reminders.id, rid));
+          if (!r) continue;
+          await tx.insert(reminders).values({
+            tenantId, invoiceId: r.invoiceId, debtorId: r.debtorId, stepKey: r.stepKey,
+            channel: "sms", templateKey: r.templateKey, dueAt: now,
+            idempotencyKey: `${r.invoiceId}:${r.stepKey}:sms`,
+          }).onConflictDoNothing();
+        }
+      }
     }
   });
 }

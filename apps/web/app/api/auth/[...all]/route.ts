@@ -4,13 +4,31 @@ import { clientIp, rateLimit } from "@/server/rate-limit";
 import { readRequestBodyLimited, RequestBodyTooLargeError } from "@/server/request-body";
 import { toApiErrorBody, AppError } from "@tahseel/core";
 
-const handlers = toNextJsHandler(auth.handler);
+let cachedHandlers: ReturnType<typeof toNextJsHandler> | undefined;
+function getHandlers() {
+  cachedHandlers ??= toNextJsHandler(auth.handler);
+  return cachedHandlers;
+}
 const NO_STORE = { "Cache-Control": "no-store" };
 const MAX_AUTH_BODY_BYTES = 65_536;
 
+function withNoStore(res: Response): Response {
+  const headers = new Headers(res.headers);
+  headers.set("Cache-Control", "no-store");
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 export async function GET(req: Request): Promise<Response> {
+  const ip = clientIp(req.headers);
+  const result = rateLimit(`auth:get:${ip}`, { limit: 120, windowSeconds: 60 });
+  if (!result.allowed) {
+    return Response.json(
+      toApiErrorBody(new AppError("RATE_LIMITED", "Too many requests", 429)),
+      { status: 429, headers: { ...NO_STORE, "retry-after": String(result.retryAfterSeconds) } },
+    );
+  }
   try {
-    return await handlers.GET(req);
+    return withNoStore(await getHandlers().GET(req));
   } catch (err) {
     const status = err instanceof AppError ? err.status : 500;
     return Response.json(toApiErrorBody(err), { status, headers: NO_STORE });
@@ -49,7 +67,7 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
   try {
-    return await handlers.POST(forwardedReq);
+    return withNoStore(await getHandlers().POST(forwardedReq));
   } catch (err) {
     const status = err instanceof AppError ? err.status : 500;
     return Response.json(toApiErrorBody(err), { status, headers: NO_STORE });

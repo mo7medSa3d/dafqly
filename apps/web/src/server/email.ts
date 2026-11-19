@@ -36,7 +36,12 @@ const transportPool = new Map<string, Transporter>();
 function getPooledTransport(smtpUrl: string): Transporter {
   let transport = transportPool.get(smtpUrl);
   if (!transport) {
-    transport = nodemailer.createTransport(smtpUrl as never);
+    transport = nodemailer.createTransport({
+      url: smtpUrl,
+      pool: true,
+      connectionTimeout: 10_000,
+      socketTimeout: 15_000,
+    } as unknown as Parameters<typeof nodemailer.createTransport>[0]);
     transportPool.set(smtpUrl, transport);
   }
   return transport;
@@ -59,7 +64,11 @@ export async function sendEmail(
   }
   const isOverride = Boolean(overrides.smtpUrl);
   const transport = isOverride
-    ? nodemailer.createTransport(smtpUrl as never)
+    ? nodemailer.createTransport({
+        url: smtpUrl,
+        connectionTimeout: 10_000,
+        socketTimeout: 15_000,
+      } as unknown as Parameters<typeof nodemailer.createTransport>[0])
     : getPooledTransport(smtpUrl);
   try {
     await transport.sendMail({

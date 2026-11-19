@@ -15,10 +15,18 @@ import { axisLabel } from "./charts";
 const SERIES = [
   "var(--status-paid-fg)",
   "var(--chart-2)",
-  "var(--status-due-fg)",
+  "var(--status-due_soon-fg)",
   "var(--chart-1)",
-  "var(--destructive)",
+  "var(--status-overdue-fg)",
 ];
+
+const AGING_COLOR: Record<string, string> = {
+  current: "var(--status-paid-fg)",
+  "0-7": "var(--chart-2)",
+  "8-30": "var(--status-due_soon-fg)",
+  "31-60": "var(--chart-1)",
+  "60+": "var(--status-overdue-fg)",
+};
 
 function smoothPath(pts: [number, number][]): string {
   if (pts.length < 2) return "";
@@ -67,7 +75,6 @@ export function MosaicSparkCard({
   const uid = useId().replace(/:/g, "");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const pts = series.length >= 2 ? series : [0, ...series, 0];
-  const hasRealTrend = series.length >= 3 && Math.max(...series) > Math.min(...series);
   const allZero = pts.every((v) => v === 0);
   const W = 320;
   const H = 72;
@@ -111,22 +118,20 @@ export function MosaicSparkCard({
         {extra && <div className="mt-1.5 text-xs text-muted-foreground">{extra}</div>}
       </div>
 
-      {!hasRealTrend && ratioBar ? (
-        <div className="mt-4 px-5 pb-4">
-          <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-semibold text-muted-foreground">
-            <span className="truncate">{ratioBar.label}</span>
-            <span className="tnum font-bold text-foreground" dir="ltr">{Math.round(Math.max(0, Math.min(100, ratioBar.pct)))}%</span>
+      <div className="relative mt-3 h-[84px] w-full">
+        {(sourceLabel || ratioBar) && (
+          <div className="pointer-events-none absolute inset-x-5 top-0 z-10 flex items-center justify-between gap-2 text-[10px] font-semibold text-muted-foreground">
+            <span className="truncate">
+              {hoverIdx !== null && seriesLabels?.[hoverIdx] ? seriesLabels[hoverIdx] : (sourceLabel ?? ratioBar?.label)}
+            </span>
+            {hoverIdx !== null && pts[hoverIdx] !== undefined ? (
+              <span className="tnum font-bold text-foreground" dir="ltr">
+                {(pts[hoverIdx]! / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            ) : ratioBar ? (
+              <span className="tnum font-bold text-foreground" dir="ltr">{Math.round(Math.max(0, Math.min(100, ratioBar.pct)))}%</span>
+            ) : null}
           </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-            <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.max(0, Math.min(100, ratioBar.pct))}%`, background: color }} />
-          </div>
-        </div>
-      ) : (
-      <div className="relative mt-3 h-[72px] w-full">
-        {sourceLabel && (
-          <span className="pointer-events-none absolute start-5 top-0 z-10 text-[10px] font-semibold text-muted-foreground">
-            {hoverIdx !== null && seriesLabels?.[hoverIdx] ? seriesLabels[hoverIdx] : sourceLabel}
-          </span>
         )}
         <svg
           viewBox={`0 0 ${W} ${H}`}
@@ -156,7 +161,6 @@ export function MosaicSparkCard({
           )}
         </svg>
       </div>
-      )}
     </div>
   );
 }
@@ -440,7 +444,7 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
                 cy="80"
                 r={R}
                 fill="none"
-                stroke={SERIES[i % SERIES.length]}
+                stroke={AGING_COLOR[b.key] ?? SERIES[i % SERIES.length]}
                 strokeWidth={active === b.key ? 23 : 18}
                 strokeDasharray={`${seg} ${C - seg}`}
                 strokeDashoffset={off}
@@ -472,7 +476,7 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
             className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 transition-colors hover:bg-accent"
           >
             <span className="flex items-center gap-2 font-semibold">
-              <i className="size-2.5 rounded-full" style={{ background: SERIES[i % SERIES.length] }} />
+              <i className="size-2.5 rounded-full" style={{ background: AGING_COLOR[b.key] ?? SERIES[i % SERIES.length] }} />
               {b.label}
             </span>
             <span className="tnum font-bold text-muted-foreground" dir="ltr">
@@ -481,7 +485,7 @@ export function AgingDonut({ buckets }: { buckets: DonutItem[] }) {
           </li>
         ))}
         {severe > 0 && (
-          <li className="mt-1 rounded-lg bg-danger-bg px-2.5 py-1.5 font-bold text-destructive">
+          <li className="mt-1 rounded-lg bg-danger-bg px-2.5 py-1.5 font-bold text-danger">
             {isAr ? `${formatPct(sevRatio)} من الرصيد تجاوز 30 يوماً` : `${formatPct(sevRatio)} over 30 days`}
           </li>
         )}

@@ -324,6 +324,11 @@ describe("redactPaymobPayload (M3)", () => {
     expect(redacted.obj.order.merchant_order_id).toBe("link-1");
     expect(JSON.stringify(payload)).toContain("512345"); // input untouched
   });
+  it("handles null/undefined/primitive payloads without throwing", () => {
+    expect(redactPaymobPayload(null)).toBeNull();
+    expect(redactPaymobPayload(undefined)).toBeNull();
+    expect(redactPaymobPayload("raw")).toBe("raw");
+  });
   it("paymobHmacMessage tolerates missing nested order/source_data without throwing TypeError", () => {
     expect(() => paymobHmacMessage({ amount_cents: 1000, created_at: "2026-01-01", currency: "EGP" } as never)).not.toThrow();
   });

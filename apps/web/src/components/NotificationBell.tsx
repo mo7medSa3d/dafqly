@@ -237,7 +237,7 @@ export function NotificationBell({ locale }: { locale: string }) {
           role="dialog"
           aria-label={isEn ? "Workspace Notifications" : "إشعارات مساحة العمل"}
           data-testid="notification-popover"
-          className="absolute top-11 end-0 z-50 w-[min(92vw,390px)] overflow-hidden rounded-xl border border-border bg-surface panel-shadow"
+          className="fixed inset-x-3 top-14 z-50 w-auto overflow-hidden rounded-xl border border-border bg-surface panel-shadow sm:absolute sm:inset-x-auto sm:top-11 sm:end-0 sm:w-[min(92vw,390px)]"
         >
           {/* Header */}
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 px-4 py-3">

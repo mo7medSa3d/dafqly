@@ -1472,7 +1472,7 @@ export function AiCopilotDrawer({
                         aria-label={isEn ? "Delete chat" : "حذف المحادثة"}
                         disabled={asking || loadingConversation}
                         onClick={() => void handleDeleteConversation(conversationId)}
-                        className={cn(buttonVariants({ variant: "outline", size: "iconSm" }), "size-8 shrink-0 text-destructive hover:bg-danger-bg")}
+                        className={cn(buttonVariants({ variant: "outline", size: "iconSm" }), "size-8 shrink-0 text-danger hover:bg-danger-bg")}
                       >
                         <Trash size={13} />
                       </button>
@@ -1492,7 +1492,7 @@ export function AiCopilotDrawer({
                       onClick={() => void handleClearAllConversations()}
                       disabled={asking || loadingConversation}
                       title={isEn ? "Clear all chats" : "مسح كل المحادثات"}
-                      className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "h-8 shrink-0 text-destructive hover:bg-danger-bg")}
+                      className={cn(buttonVariants({ variant: "ghost", size: "xs" }), "h-8 shrink-0 text-danger hover:bg-danger-bg")}
                     >
                       {isEn ? "Clear all" : "مسح الكل"}
                     </button>
@@ -1500,7 +1500,7 @@ export function AiCopilotDrawer({
                 </div>
               )}
               {loadingConversation && <p className="text-[11px] text-muted-foreground">{isEn ? "Loading…" : "جارٍ التحميل…"}</p>}
-              {copilotError && <p role="alert" className="rounded-lg border border-destructive/20 bg-danger-bg px-3 py-2 text-xs text-destructive">{copilotError}</p>}
+              {copilotError && <p role="alert" className="rounded-lg border border-danger/30 bg-danger-bg px-3 py-2 text-xs text-danger">{copilotError}</p>}
             </div>
 
             {/* Middle Scrollable Q&A Chat Area (Questions + Answers + Tool Trace) */}
@@ -1614,7 +1614,7 @@ export function AiCopilotDrawer({
                     <div className="rounded-xl border border-border bg-card p-2.5">
                       <div className="flex min-w-0 items-center justify-between gap-2">
                         <span className="min-w-0 truncate text-xs font-bold text-foreground">{copilotAnswer.matchedDebtor.displayName}</span>
-                        <span className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-bold ${copilotAnswer.matchedDebtor.optimalWindow.canSend ? "bg-status-paid-bg text-status-paid-fg" : "bg-danger-bg text-destructive"}`}>
+                        <span className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-bold ${copilotAnswer.matchedDebtor.optimalWindow.canSend ? "bg-status-paid-bg text-status-paid-fg" : "bg-danger-bg text-danger"}`}>
                           {isEn ? copilotAnswer.matchedDebtor.optimalWindow.windowLabelEn : copilotAnswer.matchedDebtor.optimalWindow.windowLabelAr}
                         </span>
                       </div>

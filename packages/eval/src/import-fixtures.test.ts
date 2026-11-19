@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   detectHeaderRow, parseImportGrid, dedupeImportRows, readWorkbookGrid, parseCsvText, type Grid,
 } from "@tahseel/core/import";
@@ -24,7 +25,7 @@ interface Expected {
   rows: ExpectedRow[];
 }
 
-const dir = resolve(process.cwd(), "fixtures/import/test");
+const dir = fileURLToPath(new URL("../fixtures/import/test", import.meta.url));
 const fixtureFiles = readdirSync(dir).filter((f) => !f.startsWith(".") && !f.endsWith(".expected.json")).sort();
 
 describe("F2 golden import fixtures", () => {

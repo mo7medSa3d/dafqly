@@ -370,20 +370,7 @@ export async function extractChequePhoto(
   input: { bytes: Uint8Array; mime: string },
 ): Promise<ExtractChequePhotoResult> {
   const stored = await storeUpload(app, deps.storage, tenantId, actor, { bytes: input.bytes, mime: input.mime, kind: "other" });
-  let result;
-  try {
-    result = await deps.llm.extractCheque(stored.bytes, stored.mime);
-  } catch (err) {
-    console.warn("[cheques] AI extraction failed, falling back to empty extraction:", err);
-    result = {
-      data: null,
-      model: "fallback",
-      promptVersion: "error",
-      inputTokens: 0,
-      outputTokens: 0,
-      latencyMs: 0,
-    };
-  }
+  const result = await deps.llm.extractCheque(stored.bytes, stored.mime);
 
   let matchedDebtor: MatchedDebtorLite | null = null;
   let matchedInvoice: MatchedInvoiceLite | null = null;

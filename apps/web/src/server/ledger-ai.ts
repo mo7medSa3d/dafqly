@@ -285,7 +285,13 @@ export async function updateLedgerRow(
     }
     if (input.date !== undefined) data.date = input.date;
     if (input.note !== undefined) data.note = input.note;
-    if (input.debtorId !== undefined) data.debtorId = input.debtorId;
+    if (input.debtorId !== undefined) {
+      if (input.debtorId !== null) {
+        const [deb] = await tx.select({ id: debtors.id }).from(debtors).where(and(eq(debtors.id, input.debtorId), isNull(debtors.deletedAt)));
+        if (!deb) throw new AppError("NOT_FOUND", "Debtor not found", 404);
+      }
+      data.debtorId = input.debtorId;
+    }
     const errors = validateRowData(data);
     const next: LedgerStoredRow = { ...stored, data, status: errors.length === 0 ? "valid" : "invalid" };
     await tx.update(importRows).set({ parsed: next as never, errors: errors as never, updatedAt: new Date() })

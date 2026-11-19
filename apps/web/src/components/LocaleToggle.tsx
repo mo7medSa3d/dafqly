@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { useLocale } from "next-intl";
 import { Globe, SpinnerGap } from "@/components/ui/solid-icons";
 
 export function LocaleToggle({
@@ -10,17 +11,19 @@ export function LocaleToggle({
   compact = false,
   className = "",
 }: {
-  currentLocale: string;
+  currentLocale?: string;
   compact?: boolean;
   className?: string;
 }) {
+  const defaultLocale = useLocale();
+  const activeLocale = currentLocale || defaultLocale;
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [isSwitching, setIsSwitching] = useState(false);
-  const targetLocale = currentLocale === "ar" ? "en" : "ar";
+  const targetLocale = activeLocale === "ar" ? "en" : "ar";
   const switchedPath = pathname
-    ? pathname.replace(new RegExp(`^/${currentLocale}(/|$)`), `/${targetLocale}$1`)
+    ? pathname.replace(new RegExp(`^/${activeLocale}(/|$)`), `/${targetLocale}$1`)
     : `/${targetLocale}`;
 
   function handleSwitch(e: React.MouseEvent) {

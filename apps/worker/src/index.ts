@@ -64,6 +64,7 @@ const engine = createEngineDeps({
   whatsappPhoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID,
   whatsappAccessToken: env.WHATSAPP_ACCESS_TOKEN,
   appUrl: env.APP_URL,
+  sessionSecret: env.SESSION_SECRET,
 });
 const deps = { clock: new SystemClock(), dryRun: env.DRY_RUN_MESSAGING, engine };
 
@@ -98,7 +99,7 @@ async function main(): Promise<void> {
       }
       return processPlannerTick(deps);
     },
-    { connection: workerConnection },
+    { connection: workerConnection, lockDuration: 120_000 },
   );
   dispatcherWorker = new Worker(
     "reminders-dispatcher",
@@ -106,9 +107,9 @@ async function main(): Promise<void> {
       const tenantId = (job.data as { tenantId?: string } | undefined)?.tenantId;
       return processDispatchTick(tenantId ? { ...deps, tenantId } : deps);
     },
-    { connection: workerConnection },
+    { connection: workerConnection, lockDuration: 120_000 },
   );
-  maintenanceWorker = new Worker("maintenance", async () => processMaintenanceTick(deps), { connection: workerConnection });
+  maintenanceWorker = new Worker("maintenance", async () => processMaintenanceTick(deps), { connection: workerConnection, lockDuration: 120_000 });
   plannerWorker.on("completed", (job, result) => log.info({ job: job.id, name: job.name, result }, "planner tick done"));
   dispatcherWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "dispatch tick done"));
   maintenanceWorker.on("completed", (job, result) => log.info({ job: job.id, result }, "maintenance tick done"));

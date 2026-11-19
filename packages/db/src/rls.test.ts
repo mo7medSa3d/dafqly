@@ -129,7 +129,7 @@ d("RLS cross-tenant isolation (generic, every tenant table)", () => {
     await owner`insert into tenants (id, name, business_name_ar, settings) values (${tenantA}, 'Tenant A', 'شركة أ', ${settings}), (${tenantB}, 'Tenant B', 'شركة ب', ${settings})`;
     await owner`insert into "user" (id, name, email) values (${userA}, 'A', ${`a-${userA}@example.test`}), (${userB}, 'B', ${`b-${userB}@example.test`})`;
     // Dependency order: debtors -> invoices/import_jobs -> payments -> allocations/rows.
-    const depOrder = ["ai_conversations", "ai_messages", "debtors", "files", "invoices", "import_jobs", "payments", "payment_allocations", "import_rows", "reminders", "messages", "opt_outs", "payment_links", "statement_links", "disputes", "message_intents", "promises_to_pay", "collection_tasks", "ai_action_approvals", "invoice_sequences"];
+    const depOrder = ["ai_conversations", "ai_messages", "debtors", "files", "invoices", "import_jobs", "payments", "payment_allocations", "import_rows", "reminders", "messages", "opt_outs", "payment_links", "statement_links", "disputes", "message_intents", "cheques", "cheque_alerts", "promises_to_pay", "collection_tasks", "ai_action_approvals", "invoice_sequences"];
     const ordered = [...TENANT_TABLES].sort((x, y) => {
       const ix = depOrder.indexOf(x.name); const iy = depOrder.indexOf(y.name);
       return (ix === -1 ? 99 : ix) - (iy === -1 ? 99 : iy);

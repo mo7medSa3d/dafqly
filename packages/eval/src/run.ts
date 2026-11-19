@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   scoreLedger, scoreReceiptSet, scoreReplySet, evaluateReceiptChecks, decideReceiptOutcome,
   type LedgerRow, type ReplyIntent,
@@ -21,7 +22,7 @@ import { baselineClassify, scoreReplies, type LabeledReply } from "./baseline";
  * data — they do NOT measure a live LLM on real customer data. The live
  * run is a RUNBOOK human step (fixtures/private + ANTHROPIC_API_KEY).
  */
-const fixturesRoot = resolve(new URL("../fixtures", import.meta.url).pathname);
+const fixturesRoot = fileURLToPath(new URL("../fixtures", import.meta.url));
 const aiEnv = { ...process.env, AI_PROVIDER: process.env.AI_PROVIDER ?? "gemini" };
 let llm: OcrLlmProvider;
 if (process.env.EVAL_LIVE === "1") {

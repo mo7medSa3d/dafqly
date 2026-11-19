@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { ownerDb, appDb } from "./db";
-import { user as userTable, tenants, paymentLinks, payments, webhookEvents } from "@tahseel/db/schema";
+import { user as userTable, tenants, paymentLinks, payments, subscriptionInvoices, auditLog, webhookEvents } from "@tahseel/db/schema";
 import { createTenantForUser } from "./services";
 import { createDebtor, createInvoice, recordPayment, getDebtorDetail } from "./ledger";
 import {
@@ -26,7 +26,7 @@ if (!hasDb && process.env.REQUIRE_DB_TESTS === "1") throw new Error("REQUIRE_DB_
 const d = hasDb ? describe : describe.skip;
 
 const HMAC_SECRET = "m3-test-hmac-secret-0123456789abcdef";
-let txnSeq = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 10000);
+let txnSeq = Math.floor(Date.now() / 1000);
 function callbackPayload(opts: {
   reference: string; amountCents: number; overrides?: Record<string, unknown>;
 }) {
@@ -60,10 +60,6 @@ d("F5 gateway payments (service layer)", () => {
       businessNameAr: "شركة ف٥", timezone: "Africa/Cairo", quietStart: "21:00", quietEnd: "09:00",
       fridayMorningSkip: false, defaultTermsDays: 14, tone: "polite", consent: true,
     })).tenantId;
-    const [t] = await ownerDb().select().from(tenants).where(eq(tenants.id, tenantId));
-    if (t) {
-      await ownerDb().update(tenants).set({ settings: { ...t.settings, gatewayEnabled: true } }).where(eq(tenants.id, tenantId));
-    }
   });
   afterAll(async () => {
     const owner = ownerDb();
@@ -74,7 +70,6 @@ d("F5 gateway payments (service layer)", () => {
   it("prices a per-invoice link from the ledger (outstanding after a partial manual payment)", async () => {
     const debtor = await newDebtor("رابط فاتورة");
     const inv = await createInvoice(app(), tenantId, user.id, { debtorId: debtor.id, amount: "1000.00", issuedOn: "2026-11-01", dueOn: "2026-11-20" });
-    await new Promise((r) => setTimeout(r, 150));
     await recordPayment(app(), tenantId, user.id, { debtorId: debtor.id, amount: "400.00", method: "cash", receivedOn: "2026-11-05" });
     const link = await createGatewayLink(deps(), tenantId, user.id, { debtorId: debtor.id, invoiceId: inv.id });
     expect(link.amountMinor).toBe("60000");
@@ -96,7 +91,6 @@ d("F5 gateway payments (service layer)", () => {
     expect(link.amountMinor).toBe("50000");
     const settled = await newDebtor("مسدد بالكامل");
     const inv = await createInvoice(app(), tenantId, user.id, { debtorId: settled.id, amount: "10.00", issuedOn: "2026-11-01", dueOn: "2026-11-10" });
-    await new Promise((r) => setTimeout(r, 150));
     await recordPayment(app(), tenantId, user.id, { debtorId: settled.id, amount: "10.00", method: "cash", receivedOn: "2026-11-05" });
     await expect(createGatewayLink(deps(), tenantId, user.id, { debtorId: settled.id, invoiceId: inv.id }))
       .rejects.toMatchObject({ code: "NOTHING_DUE" });
@@ -435,5 +429,29 @@ d("F5 gateway payments (service layer)", () => {
     expect(rows).toHaveLength(1);
     const detail = await getDebtorDetail(app(), tenantId, debtor.id);
     expect(detail.invoices[0]).toMatchObject({ paidMinor: "70000", status: "paid" });
+  });
+
+  it("fulfils a sub_<id> Paymob callback by marking the subscription invoice paid and upgrading the tenant plan", async () => {
+    const [subInv] = await ownerDb().insert(subscriptionInvoices).values({
+      tenantId, planKey: "starter", periodStart: "2026-11-01", periodEnd: "2026-12-01",
+      amountMinor: 50000n, status: "issued",
+    }).returning();
+    const { payload, obj, hmac } = callbackPayload({ reference: `sub_${subInv!.id}`, amountCents: 50000 });
+    const out = await handlePaymobCallback(deps(), payload, hmac, new Date());
+    expect(out).toEqual({ outcome: "fulfilled" });
+
+    const [updatedSub] = await ownerDb().select().from(subscriptionInvoices).where(eq(subscriptionInvoices.id, subInv!.id));
+    expect(updatedSub).toMatchObject({ status: "paid", providerRef: String(obj.id) });
+    const [updatedTenant] = await ownerDb().select().from(tenants).where(eq(tenants.id, tenantId));
+    expect(updatedTenant!.plan).toBe("starter");
+    const audits = await ownerDb().select().from(auditLog)
+      .where(and(eq(auditLog.tenantId, tenantId), eq(auditLog.action, "tenant.plan_changed")));
+    expect(audits.length).toBeGreaterThanOrEqual(1);
+
+    const replay = await handlePaymobCallback(deps(), payload, hmac, new Date());
+    expect(replay).toEqual({ outcome: "duplicate" });
+    const secondTxn = callbackPayload({ reference: `sub_${subInv!.id}`, amountCents: 50000 });
+    const dup = await handlePaymobCallback(deps(), secondTxn.payload, secondTxn.hmac, new Date());
+    expect(dup).toEqual({ outcome: "duplicate" });
   });
 });

@@ -62,13 +62,12 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
   const perf = kpisFull.reminderPerformance;
 
   // Strictly real data series — never fabricated fallback numbers
-  const weekSeries = forecast.weeks.length >= 3
-    ? forecast.weeks.map((w) => w.expectedMinor)
-    : [];
-  const weekLabels = forecast.weeks.map((w) => w.weekStart);
-  const collectedSeries = forecast.weeks.length >= 3
-    ? forecast.weeks.map((w) => w.conservativeMinor)
-    : [];
+  const weekSeries = (kpisFull.weeklyInvoiced ?? []).map((w) => w.amountMinor);
+  const weekLabels = (kpisFull.weeklyInvoiced ?? []).map((w) => w.weekStart);
+  const collectedSeries = (kpisFull.weeklyCollected ?? []).map((w) => w.amountMinor);
+  const collectedLabels = (kpisFull.weeklyCollected ?? []).map((w) => w.weekStart);
+  const overdueSeries = aging.map((b) => b.amountMinor);
+  const overdueLabels = aging.map((b) => b.label);
   const totalOutNum = Number(summary.totalOutstandingMinor);
   const overdueNum = Number(summary.overdueMinor);
   const currentRatioPct = totalOutNum > 0 ? Math.round(((totalOutNum - overdueNum) / totalOutNum) * 100) : 100;
@@ -113,7 +112,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             badge={`${formatCount(summary.openInvoices, locale)} ${t("openInvoices")}`}
             series={weekSeries}
             seriesLabels={weekLabels}
-            sourceLabel={isAr ? "توقع التحصيل (8 أسابيع)" : "8-week expected inflow"}
+            sourceLabel={isAr ? "فواتير آخر 6 أسابيع" : "Last 6 weeks invoiced"}
             ratioBar={{ pct: currentRatioPct, label: isAr ? "نسبة الأرصدة غير المستحقة بعد" : "Not yet due share" }}
             color="var(--status-paid-fg)"
             testId="kpi-outstanding"
@@ -136,8 +135,8 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             badge={formatPercent(kpisFull.collectionRate, locale)}
             badgeTone="positive"
             series={collectedSeries}
-            seriesLabels={weekLabels}
-            sourceLabel={isAr ? "التحصيل المتحفظ (8 أسابيع)" : "8-week conservative inflow"}
+            seriesLabels={collectedLabels}
+            sourceLabel={isAr ? "تحصيلات آخر 6 أسابيع" : "Last 6 weeks collected"}
             ratioBar={{ pct: kpisFull.collectionRate * 100, label: isAr ? "معدل التحصيل الشهري" : "Monthly collection rate" }}
             color="var(--chart-2)"
             testId="kpi-collected"
@@ -161,8 +160,10 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             unit={currencySymbol}
             badge={BigInt(summary.overdueMinor) > 0n ? (isAr ? "متأخر" : "Overdue") : (isAr ? "سليم" : "Clear")}
             badgeTone={BigInt(summary.overdueMinor) > 0n ? "danger" : "positive"}
-            series={[]}
-            ratioBar={{ pct: overdueRatioPct, label: isAr ? "نسبة المتأخرات من المحفظة" : "Overdue share of portfolio" }}
+            series={overdueSeries}
+            seriesLabels={overdueLabels}
+            sourceLabel={isAr ? "توزيع الأعمار" : "Aging distribution"}
+            ratioBar={{ pct: overdueRatioPct, label: isAr ? "نسبة المتأخرات" : "Overdue share" }}
             color="var(--destructive)"
             testId="kpi-overdue"
             extra={

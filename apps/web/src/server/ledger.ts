@@ -596,10 +596,6 @@ export async function recomputeInvoicesPaid(tx: Db, tenantId: string, invoiceIds
   }
 }
 
-/** Recomputes an invoice's paid_minor from CONFIRMED allocations only (§6) and re-derives its status. Exported for the M3 gateway/statement services, which settle money through the same rule. */
-export async function recomputeInvoicePaid(tx: Db, tenantId: string, invoiceId: string) {
-  await recomputeInvoicesPaid(tx, tenantId, [invoiceId]);
-}
 
 /** A promise is kept only when confirmed allocations recorded after acceptance cover its agreed amount. */
 async function reconcileAcceptedPromises(tx: Db, tenantId: string, debtorId: string): Promise<void> {

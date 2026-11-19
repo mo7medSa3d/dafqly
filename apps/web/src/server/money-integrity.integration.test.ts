@@ -1,13 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-
-vi.mock("./engine", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./engine")>();
-  return {
-    ...actual,
-    replanLater: vi.fn(),
-    replanTenantLater: vi.fn(),
-  };
-});
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { ownerDb, appDb } from "./db";

@@ -122,6 +122,8 @@ async function enqueueOrFallback(
   await fallback();
 }
 
+const activeReplans = new Set<Promise<unknown>>();
+
 /**
  * Best-effort re-planning hooks (BUILD_PLAN §7-F4: the planner re-runs on
  * invoice/payment change). Enqueues to BullMQ when Redis is reachable, and
@@ -129,23 +131,33 @@ async function enqueueOrFallback(
  * fail the ledger write that triggered it.
  */
 export function replanLater(tenantId: string, invoiceId: string): void {
-  void enqueueOrFallback(
+  const p = enqueueOrFallback(
     "replan-invoice",
     { tenantId, invoiceId },
     () => planForInvoice(engineDeps(), tenantId, invoiceId, new Date()),
   ).catch((err) => {
     console.error("[replan] invoice planning failed", { tenantId, invoiceId, err });
+  }).finally(() => {
+    activeReplans.delete(p);
   });
+  activeReplans.add(p);
 }
 
 export function replanTenantLater(tenantId: string): void {
-  void enqueueOrFallback(
+  const p = enqueueOrFallback(
     "replan-tenant",
     { tenantId },
     () => planForTenant(engineDeps(), tenantId, new Date()),
   ).catch((err) => {
     console.error("[replan] tenant planning failed", { tenantId, err });
+  }).finally(() => {
+    activeReplans.delete(p);
   });
+  activeReplans.add(p);
+}
+
+export async function drainReplans(): Promise<void> {
+  await Promise.all(Array.from(activeReplans));
 }
 
 /**

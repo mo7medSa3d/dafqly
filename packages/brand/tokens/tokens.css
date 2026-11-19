@@ -111,6 +111,7 @@
   /* Status tokens (high contrast) */
   --status-paid-fg: oklch(0.42 0.14 155);
   --status-paid-bg: oklch(0.95 0.04 155);
+  --status-due-fg: var(--status-due_soon-fg);
   --status-due_soon-fg: oklch(0.52 0.16 75);
   --status-due_soon-bg: oklch(0.96 0.05 80);
   /* Overdue fg is NOT var(--destructive): the mid-red destructive
@@ -211,6 +212,7 @@
 
   --status-paid-fg: oklch(0.78 0.14 155);
   --status-paid-bg: oklch(0.22 0.05 155);
+  --status-due-fg: var(--status-due_soon-fg);
   --status-due_soon-fg: oklch(0.84 0.14 80);
   --status-due_soon-bg: oklch(0.24 0.06 80);
   --status-overdue-fg: var(--destructive);
@@ -289,7 +291,8 @@
 
     --status-paid-fg: oklch(0.78 0.14 155);
     --status-paid-bg: oklch(0.22 0.05 155);
-    --status-due_soon-fg: oklch(0.84 0.14 80);
+    --status-due-fg: var(--status-due_soon-fg);
+  --status-due_soon-fg: oklch(0.84 0.14 80);
     --status-due_soon-bg: oklch(0.24 0.06 80);
     --status-overdue-fg: var(--destructive);
     --status-overdue-bg: oklch(0.24 0.07 23);

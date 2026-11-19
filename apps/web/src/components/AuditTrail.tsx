@@ -52,7 +52,7 @@ function formatAction(action: string, isAr: boolean): { label: string; color: st
 
 function formatDate(iso: string, locale: string): string {
   try {
-    return new Intl.DateTimeFormat(locale, {
+    return new Intl.DateTimeFormat(locale === "ar" ? "ar-EG-u-nu-latn" : "en-GB", {
       dateStyle: "medium",
       timeStyle: "short",
     }).format(new Date(iso));

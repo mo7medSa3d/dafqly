@@ -94,8 +94,12 @@ export async function processInboundReply(
         resolvedBy: "human", actionTaken: "human_inbox",
       }).returning();
       return {
-        intent: "unclassified", confidence: 0, action: "human_inbox" as ReplyAction,
-        resolvedBy: "human" as const, intentId: row!.id, promisedDate: null,
+        outcome: {
+          intent: "greeting_or_other" as const, confidence: 0, action: "human_inbox" as ReplyAction,
+          resolvedBy: "human" as const, intentId: row!.id, promisedDate: null,
+        },
+        needPlanInvoices: false,
+        receiptAskBody: null,
       };
     }
 
@@ -200,26 +204,23 @@ export async function processInboundReply(
       receiptAskBody,
     };
   });
-  if ("needPlanInvoices" in txResult && txResult.outcome) {
-    if (txResult.needPlanInvoices && txResult.outcome.promisedDate) {
-      const notBefore = zonedTimeToUtc(addDaysIso(txResult.outcome.promisedDate, 1), "00:00", setup.tenant.timezone);
-      for (const inv of setup.openInvoices) {
-        await planForInvoice(deps.engine, tenantId, inv.id, now, { notBefore }).catch(() => undefined);
-      }
+  if (txResult.needPlanInvoices && txResult.outcome.promisedDate) {
+    const notBefore = zonedTimeToUtc(addDaysIso(txResult.outcome.promisedDate, 1), "00:00", setup.tenant.timezone);
+    for (const inv of setup.openInvoices) {
+      await planForInvoice(deps.engine, tenantId, inv.id, now, { notBefore }).catch(() => undefined);
     }
-    if (txResult.receiptAskBody) {
-      try {
-        await deps.engine.providers.whatsapp.sendText({
-          toE164: setup.debtor.phoneE164, body: txResult.receiptAskBody, idempotencyKey: `receipt-ask:${input.messageId}`,
-        });
-      } catch { /* recorded; send failure never undoes the classification */ }
-    }
-    if (txResult.outcome.action === "opt_out") {
-      await applyOptOut(deps.engine, tenantId, setup.debtor.id, now, "llm");
-    }
-    return txResult.outcome;
   }
-  return txResult as ReplyOutcome;
+  if (txResult.receiptAskBody) {
+    try {
+      await deps.engine.providers.whatsapp.sendText({
+        toE164: setup.debtor.phoneE164, body: txResult.receiptAskBody, idempotencyKey: `receipt-ask:${input.messageId}`,
+      });
+    } catch { /* recorded; send failure never undoes the classification */ }
+  }
+  if (txResult.outcome.action === "opt_out") {
+    await applyOptOut(deps.engine, tenantId, setup.debtor.id, now, "llm");
+  }
+  return txResult.outcome;
 }
 
 /**
@@ -275,7 +276,7 @@ export async function listIntents(app: Db, tenantId: string, opts: { onlyHuman?:
       return {
         id: r.id, messageId: r.messageId, intent: r.intent, confidence: r.confidence,
         resolvedBy: r.resolvedBy, actionTaken: r.actionTaken,
-        extracted: r.extracted, createdAt: r.createdAt.toISOString(),
+        extracted: r.extracted, fileId: (r.extracted as Record<string, unknown> | null)?.fileId as string | undefined ?? null, createdAt: r.createdAt.toISOString(),
         text: msg?.bodyText ?? null, debtorId: msg?.debtorId ?? null,
         debtorName: debtor?.displayName ?? null,
         debtorPhone: debtor?.phoneE164 ?? null,
