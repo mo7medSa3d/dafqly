@@ -19,6 +19,10 @@ env:
   FEATURE_SHARED_BEHAVIOR: "false"
   NEXT_PUBLIC_BRAND_FONT: "off"
   REQUIRE_DB_TESTS: "1"
+  # docker compose config -q interpolates these from .env locally; CI has no
+  # .env file, so supply throwaway values for the validation step.
+  POSTGRES_PASSWORD: tahseel
+  MINIO_ROOT_PASSWORD: ci-only-minio-password-0123456789
 
 jobs:
   build-test:
